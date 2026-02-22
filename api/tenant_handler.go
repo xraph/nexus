@@ -19,7 +19,7 @@ func (a *API) handleCreateTenant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	var input tenant.CreateInput
 	if err := json.Unmarshal(body, &input); err != nil {
@@ -83,7 +83,7 @@ func (a *API) handleUpdateTenant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	var input tenant.UpdateInput
 	if err := json.Unmarshal(body, &input); err != nil {

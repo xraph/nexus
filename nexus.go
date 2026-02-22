@@ -22,7 +22,6 @@ import (
 
 	"github.com/xraph/nexus/auth"
 	"github.com/xraph/nexus/cache"
-	"github.com/xraph/nexus/fallback"
 	"github.com/xraph/nexus/guard"
 	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/model"
@@ -56,9 +55,8 @@ type Gateway struct {
 	guard     guard.Service
 	tenant    tenant.Service
 	key       key.Service
-	usage     usage.Service
-	fallback  fallback.Service
-	model     model.Service
+	usage usage.Service
+	model model.Service
 
 	// Model alias registry
 	aliasRegistry model.AliasRegistry

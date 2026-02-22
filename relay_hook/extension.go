@@ -233,7 +233,7 @@ func (s *webhookSender) Send(ctx context.Context, event *Event) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return nil
 }
 

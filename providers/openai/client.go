@@ -89,7 +89,7 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("openai: request failed: %w", err)
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 	elapsed := time.Since(start)
 
 	if httpResp.StatusCode != http.StatusOK {
@@ -126,7 +126,7 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 	}
 
 	if httpResp.StatusCode != http.StatusOK {
-		defer httpResp.Body.Close()
+		defer func() { _ = httpResp.Body.Close() }()
 		respBody, _ := io.ReadAll(httpResp.Body)
 		return nil, fmt.Errorf("openai: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
@@ -155,7 +155,7 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 	if err != nil {
 		return nil, fmt.Errorf("openai: request failed: %w", err)
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 
 	if httpResp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(httpResp.Body)
@@ -202,7 +202,7 @@ func (c *client) ping(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 	_, _ = io.ReadAll(httpResp.Body)
 
 	if httpResp.StatusCode != http.StatusOK {

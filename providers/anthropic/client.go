@@ -102,7 +102,7 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: request failed: %w", err)
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 	elapsed := time.Since(start)
 
 	if httpResp.StatusCode != http.StatusOK {
@@ -139,7 +139,7 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 	}
 
 	if httpResp.StatusCode != http.StatusOK {
-		defer httpResp.Body.Close()
+		defer func() { _ = httpResp.Body.Close() }()
 		respBody, _ := io.ReadAll(httpResp.Body)
 		return nil, fmt.Errorf("anthropic: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
@@ -160,7 +160,7 @@ func (c *client) ping(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 	_, _ = io.ReadAll(httpResp.Body)
 
 	// 405 Method Not Allowed is fine — endpoint exists

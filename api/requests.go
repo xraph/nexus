@@ -25,18 +25,18 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func mapStatusToErrorType(status int) string {
-	switch {
-	case status == http.StatusBadRequest:
+	switch status {
+	case http.StatusBadRequest:
 		return "invalid_request_error"
-	case status == http.StatusUnauthorized:
+	case http.StatusUnauthorized:
 		return "authentication_error"
-	case status == http.StatusForbidden:
+	case http.StatusForbidden:
 		return "permission_error"
-	case status == http.StatusNotFound:
+	case http.StatusNotFound:
 		return "not_found_error"
-	case status == http.StatusTooManyRequests:
+	case http.StatusTooManyRequests:
 		return "rate_limit_error"
-	case status == http.StatusNotImplemented:
+	case http.StatusNotImplemented:
 		return "not_implemented"
 	default:
 		return "internal_error"

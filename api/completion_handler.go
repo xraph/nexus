@@ -16,7 +16,7 @@ func (a *API) handleCreateCompletion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	var req provider.CompletionRequest
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -52,7 +52,7 @@ func (a *API) handleStreamCompletion(w http.ResponseWriter, ctx context.Context,
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -76,10 +76,10 @@ func (a *API) handleStreamCompletion(w http.ResponseWriter, ctx context.Context,
 		}
 
 		data, _ := json.Marshal(chunk)
-		fmt.Fprintf(w, "data: %s\n\n", data)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
 
-	fmt.Fprintf(w, "data: [DONE]\n\n")
+	_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
 }

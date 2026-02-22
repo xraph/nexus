@@ -74,7 +74,7 @@ func (s *defaultService) ResolveAlias(ctx context.Context, alias string, tenantI
 		return "", "", err
 	}
 
-	if targets == nil || len(targets) == 0 {
+	if len(targets) == 0 {
 		// Not an alias — return as concrete model
 		return alias, "", nil
 	}

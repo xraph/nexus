@@ -14,7 +14,7 @@ func (a *API) handleCreateEmbedding(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	// Parse request — accept string or array for "input"
 	var raw map[string]json.RawMessage

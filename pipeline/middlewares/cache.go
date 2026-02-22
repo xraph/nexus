@@ -38,7 +38,6 @@ func (m *CacheMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	cached, err := m.cache.Get(ctx, key)
 	if err == nil && cached != nil {
 		cached.Cached = true
-		ctx = pipeline.WithCacheHit(ctx, true)
 		return &pipeline.Response{Completion: cached}, nil
 	}
 

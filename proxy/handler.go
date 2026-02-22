@@ -17,7 +17,7 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "failed to read request body")
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	var req provider.CompletionRequest
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -63,7 +63,7 @@ func (p *Proxy) handleStreamingCompletion(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	streamSSE(w, ctx, stream, req.Model)
 }
@@ -75,7 +75,7 @@ func (p *Proxy) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "failed to read request body")
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	// Parse request — accept string or array of strings for "input"
 	var raw map[string]json.RawMessage

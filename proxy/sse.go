@@ -42,7 +42,7 @@ func streamSSE(w http.ResponseWriter, ctx context.Context, stream provider.Strea
 					"type":    "stream_error",
 				},
 			})
-			fmt.Fprintf(w, "data: %s\n\n", errData)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", errData)
 			flusher.Flush()
 			break
 		}
@@ -69,12 +69,12 @@ func streamSSE(w http.ResponseWriter, ctx context.Context, stream provider.Strea
 			continue
 		}
 
-		fmt.Fprintf(w, "data: %s\n\n", data)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
 
 	// Send [DONE] sentinel
-	fmt.Fprintf(w, "data: [DONE]\n\n")
+	_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
 }
 

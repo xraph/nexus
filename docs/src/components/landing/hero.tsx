@@ -86,7 +86,12 @@ function MiniGatewayPipeline() {
               className="flex items-center gap-0"
             >
               <FlowLine length={28} color="green" delay={3} />
-              <FlowNode label="provider.routed" color="gray" size="sm" delay={1.1} />
+              <FlowNode
+                label="provider.routed"
+                color="gray"
+                size="sm"
+                delay={1.1}
+              />
               <FlowLine length={24} color="green" delay={4} />
               <StatusBadge status="delivered" label="routed" />
             </motion.div>
@@ -99,7 +104,12 @@ function MiniGatewayPipeline() {
               className="flex items-center gap-0"
             >
               <FlowLine length={28} color="violet" delay={5} />
-              <FlowNode label="guard.passed" color="gray" size="sm" delay={1.3} />
+              <FlowNode
+                label="guard.passed"
+                color="gray"
+                size="sm"
+                delay={1.3}
+              />
               <FlowLine length={24} color="violet" delay={6} />
               <StatusBadge status="retry" label="checked" />
             </motion.div>
@@ -173,9 +183,9 @@ export function Hero() {
               className="mt-6 text-lg text-fd-muted-foreground leading-relaxed max-w-lg"
             >
               Route requests across multiple AI providers, cache responses,
-              enforce guardrails, stream completions, and manage model
-              aliases &mdash; composable, plugin-extensible, and built
-              for production Go services.
+              enforce guardrails, stream completions, and manage model aliases
+              &mdash; composable, plugin-extensible, and built for production Go
+              services.
             </motion.p>
 
             {/* Install command */}

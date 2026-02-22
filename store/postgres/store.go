@@ -35,7 +35,7 @@ func Open(dsn string) (*Store, error) {
 		return nil, fmt.Errorf("nexus/postgres: failed to open database: %w", err)
 	}
 	if err := db.Ping(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("nexus/postgres: failed to connect: %w", err)
 	}
 	return New(db), nil
@@ -182,7 +182,6 @@ func (s *tenantStore) List(ctx context.Context, opts *tenant.ListOptions) ([]*te
 		if opts.Offset > 0 {
 			query += fmt.Sprintf(` OFFSET $%d`, argIdx)
 			args = append(args, opts.Offset)
-			argIdx++
 		}
 	}
 
@@ -190,7 +189,7 @@ func (s *tenantStore) List(ctx context.Context, opts *tenant.ListOptions) ([]*te
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tenants []*tenant.Tenant
 	for rows.Next() {
@@ -313,7 +312,7 @@ func (s *keyStore) ListByTenant(ctx context.Context, tenantID string) ([]*key.AP
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var keys []*key.APIKey
 	for rows.Next() {
@@ -443,7 +442,7 @@ func (s *usageStore) Summary(ctx context.Context, tenantID string, period string
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var prov, mdl string
@@ -519,7 +518,6 @@ func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) ([]*us
 		if opts.Offset > 0 {
 			query += fmt.Sprintf(` OFFSET $%d`, argIdx)
 			args = append(args, opts.Offset)
-			argIdx++
 		}
 	}
 
@@ -527,7 +525,7 @@ func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) ([]*us
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var records []*usage.Record
 	for rows.Next() {

@@ -15,14 +15,14 @@ func CacheKey(req *provider.CompletionRequest) string {
 	h := sha256.New()
 
 	// Model
-	fmt.Fprintf(h, "model:%s\n", req.Model)
+	_, _ = fmt.Fprintf(h, "model:%s\n", req.Model)
 
 	// Messages (deterministic serialization)
 	for _, msg := range req.Messages {
-		fmt.Fprintf(h, "msg:%s:", msg.Role)
+		_, _ = fmt.Fprintf(h, "msg:%s:", msg.Role)
 		switch c := msg.Content.(type) {
 		case string:
-			fmt.Fprintf(h, "%s", c)
+			_, _ = fmt.Fprintf(h, "%s", c)
 		default:
 			data, _ := json.Marshal(c)
 			h.Write(data)
@@ -32,17 +32,17 @@ func CacheKey(req *provider.CompletionRequest) string {
 
 	// Temperature
 	if req.Temperature != nil {
-		fmt.Fprintf(h, "temp:%f\n", *req.Temperature)
+		_, _ = fmt.Fprintf(h, "temp:%f\n", *req.Temperature)
 	}
 
 	// MaxTokens
 	if req.MaxTokens > 0 {
-		fmt.Fprintf(h, "max_tokens:%d\n", req.MaxTokens)
+		_, _ = fmt.Fprintf(h, "max_tokens:%d\n", req.MaxTokens)
 	}
 
 	// TopP
 	if req.TopP != nil {
-		fmt.Fprintf(h, "top_p:%f\n", *req.TopP)
+		_, _ = fmt.Fprintf(h, "top_p:%f\n", *req.TopP)
 	}
 
 	// Stop sequences
@@ -51,14 +51,14 @@ func CacheKey(req *provider.CompletionRequest) string {
 		copy(sorted, req.Stop)
 		sort.Strings(sorted)
 		for _, s := range sorted {
-			fmt.Fprintf(h, "stop:%s\n", s)
+			_, _ = fmt.Fprintf(h, "stop:%s\n", s)
 		}
 	}
 
 	// Tools (if present, changes the response)
 	if len(req.Tools) > 0 {
 		data, _ := json.Marshal(req.Tools)
-		fmt.Fprintf(h, "tools:%s\n", data)
+		_, _ = fmt.Fprintf(h, "tools:%s\n", data)
 	}
 
 	return fmt.Sprintf("%x", h.Sum(nil))

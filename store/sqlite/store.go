@@ -36,7 +36,7 @@ func Open(path string) (*Store, error) {
 	}
 	// Enable WAL mode for better concurrent read performance.
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("nexus/sqlite: failed to set WAL mode: %w", err)
 	}
 	return New(db), nil
@@ -187,7 +187,7 @@ func (s *tenantStore) List(ctx context.Context, opts *tenant.ListOptions) ([]*te
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tenants []*tenant.Tenant
 	for rows.Next() {
@@ -310,7 +310,7 @@ func (s *keyStore) ListByTenant(ctx context.Context, tenantID string) ([]*key.AP
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var keys []*key.APIKey
 	for rows.Next() {
@@ -447,7 +447,7 @@ func (s *usageStore) Summary(ctx context.Context, tenantID string, period string
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var prov, mdl string
@@ -521,7 +521,7 @@ func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) ([]*us
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var records []*usage.Record
 	for rows.Next() {

@@ -19,7 +19,7 @@ func (a *API) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	var input key.CreateInput
 	if err := json.Unmarshal(body, &input); err != nil {
