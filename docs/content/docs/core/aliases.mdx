@@ -1,0 +1,52 @@
+---
+title: Model Aliases
+description: Map virtual model names to provider targets with per-tenant overrides and weighted routing.
+---
+
+Model aliases let clients use logical names like `"fast"` or `"smart"` instead of provider-specific model identifiers. This decouples your API surface from provider details.
+
+## Creating Aliases
+
+```go
+import "github.com/xraph/nexus/model"
+
+gw := nexus.New(
+    nexus.WithAlias("fast", model.AliasTarget{
+        Provider: "anthropic",
+        Model:    "claude-3.5-haiku",
+    }),
+    nexus.WithAlias("smart", model.AliasTarget{
+        Provider: "openai",
+        Model:    "gpt-4o",
+    }),
+)
+```
+
+Clients request `model: "fast"` and Nexus resolves it to `anthropic/claude-3.5-haiku`.
+
+## Weighted Routing
+
+Distribute traffic across multiple targets:
+
+```go
+nexus.WithAlias("balanced",
+    model.AliasTarget{Provider: "openai", Model: "gpt-4o-mini", Weight: 0.7},
+    model.AliasTarget{Provider: "anthropic", Model: "claude-3.5-haiku", Weight: 0.3},
+)
+```
+
+## Per-Tenant Overrides
+
+Different tenants can resolve the same alias to different models:
+
+```go
+nexus.WithTenantAlias("premium-tenant", "fast",
+    model.AliasTarget{Provider: "openai", Model: "gpt-4o"},
+)
+```
+
+When `premium-tenant` requests `model: "fast"`, they get `gpt-4o` instead of the default `claude-3.5-haiku`.
+
+## Alias Resolution
+
+Alias resolution happens in the pipeline middleware chain (priority 250). The original model name is replaced with the resolved provider and model before routing.

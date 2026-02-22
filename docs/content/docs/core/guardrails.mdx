@@ -1,0 +1,81 @@
+---
+title: Guardrails
+description: Enforce content safety with PII detection, prompt injection blocking, and content filtering.
+---
+
+Guardrails inspect and optionally modify requests before they reach a provider, and responses before they reach the client.
+
+## Guard Interface
+
+```go
+type Guard interface {
+    Name() string
+    Phase() Phase   // Pre, Post, or Both
+    Check(ctx context.Context, content string) (*Result, error)
+}
+```
+
+## Built-in Guards
+
+### PII Detection
+
+Detect and redact personally identifiable information:
+
+```go
+import "github.com/xraph/nexus/guard/guards"
+
+nexus.WithGuard(guards.NewPII(guards.ActionRedact))
+```
+
+### Prompt Injection
+
+Block prompt injection attempts:
+
+```go
+nexus.WithGuard(guards.NewInjection())
+```
+
+### Content Filter
+
+Block harmful or inappropriate content:
+
+```go
+nexus.WithGuard(guards.NewContentFilter())
+```
+
+### Regex Rules
+
+Custom pattern-based rules:
+
+```go
+nexus.WithGuard(guards.NewRegex(
+    guards.RegexRule{
+        Pattern: `(?i)api[_-]?key`,
+        Action:  guards.ActionBlock,
+        Message: "API keys not allowed in prompts",
+    },
+))
+```
+
+## Actions
+
+Each guard can take one of four actions:
+
+| Action | Behavior |
+|--------|----------|
+| `Allow` | Request passes through unchanged |
+| `Block` | Request is rejected with an error |
+| `Redact` | Matched content is replaced with `[REDACTED]` |
+| `Warn` | Request passes through, warning is logged |
+
+## Streaming Guardrails
+
+For streaming responses, Nexus supports three strategies:
+
+- **Buffer** — Collect the full response, then check
+- **Passthrough** — Check chunks as they arrive
+- **Chunkwise** — Buffer a window of chunks, then check
+
+```go
+guard.NewGuardedStream(stream, guards, guard.StrategyPassthrough)
+```

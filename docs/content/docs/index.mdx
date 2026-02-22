@@ -1,0 +1,65 @@
+---
+title: Introduction
+description: Composable AI gateway library for Go.
+---
+
+Nexus is a Go library for building AI gateways. Route requests across multiple LLM providers, enforce content guardrails, cache responses, and manage multi-tenant access — all from a single composable API.
+
+Nexus is a **library** — not a service. You bring your own providers, database, and HTTP server. Nexus provides the gateway orchestration plumbing.
+
+## What it does
+
+- **Multi-provider routing** — Route to OpenAI, Anthropic, or any OpenAI-compatible API with priority, cost-optimized, or round-robin strategies.
+- **Content guardrails** — PII detection, prompt injection blocking, content filtering with block/redact/warn actions.
+- **Response caching** — Deterministic cache keys with optional semantic matching. Memory and Redis backends.
+- **Multi-tenant isolation** — Tenant-scoped requests, API keys, rate limits, usage tracking, and model aliases.
+- **Model aliases** — Map virtual model names to provider targets with per-tenant overrides and weighted routing.
+- **Input/output transforms** — System prompt injection, RAG context, data anonymization, output normalization.
+- **Plugin system** — 15 lifecycle hooks for metrics, audit trails, and custom processing.
+- **Three storage backends** — PostgreSQL, SQLite, and in-memory.
+- **Forge integration** — Drop-in `forge.Extension` with auto-discovery and DI-registered Gateway.
+- **OpenAI-compatible proxy** — Drop-in replacement for the OpenAI API. Point any SDK at your gateway.
+
+## Design philosophy
+
+**Library, not service.** Nexus is a set of Go packages you import. You control `main`, the database connection, and the process lifecycle.
+
+**Interfaces over implementations.** Every subsystem defines a Go interface. Swap any provider, store, or cache with a single type change.
+
+**Tenant-scoped by design.** `nexus.WithTenant` injects context enforced at every layer — routing, caching, usage, and guardrails.
+
+**Pipeline-driven.** Every request flows through a priority-sorted middleware chain. Add, remove, or reorder middleware without touching engine code.
+
+## Quick look
+
+```go
+package main
+
+import (
+    "context"
+    "os"
+
+    "github.com/xraph/nexus"
+    "github.com/xraph/nexus/providers/openai"
+    "github.com/xraph/nexus/store/memory"
+)
+
+func main() {
+    gw := nexus.New(
+        nexus.WithDatabase(memory.New()),
+        nexus.WithProvider(openai.New(os.Getenv("OPENAI_KEY"))),
+    )
+    if err := gw.Initialize(context.Background()); err != nil {
+        panic(err)
+    }
+}
+```
+
+## Where to go next
+
+<Cards>
+  <Card title="Getting started" href="/docs/getting-started" description="Install Nexus and run your first request in minutes." />
+  <Card title="Architecture" href="/docs/architecture" description="Understand how the packages fit together." />
+  <Card title="Providers" href="/docs/core/providers" description="Register OpenAI, Anthropic, or custom LLM providers." />
+  <Card title="HTTP API reference" href="/docs/api-reference/http-api" description="OpenAI-compatible endpoints and admin API." />
+</Cards>

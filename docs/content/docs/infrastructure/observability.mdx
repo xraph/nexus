@@ -1,0 +1,47 @@
+---
+title: Observability
+description: Metrics, tracing, and monitoring for your AI gateway.
+---
+
+## Metrics Extension
+
+The built-in metrics extension tracks operational counters:
+
+```go
+import "github.com/xraph/nexus/observability"
+
+metrics := observability.NewMetricsExtension()
+gw := nexus.New(
+    nexus.WithExtension(metrics),
+)
+
+// Read counters
+metrics.RequestsCompleted.Value() // int64
+metrics.ProviderFailures.Value()
+metrics.GuardrailBlocks.Value()
+```
+
+## Tracing
+
+Add OpenTelemetry spans to every request:
+
+```go
+nexus.WithTracer(otelTracer)
+```
+
+The tracing middleware (priority 10) creates spans with:
+- Request model and provider
+- Tenant ID
+- Token counts
+- Cache hit/miss status
+
+## Response Headers
+
+Every response includes diagnostic headers:
+
+| Header | Value |
+|--------|-------|
+| `X-Nexus-Request-ID` | Unique request identifier |
+| `X-Nexus-Provider` | Provider that served the request |
+| `X-Nexus-Cache` | `HIT` or `MISS` |
+| `X-Nexus-Latency` | Processing time in milliseconds |

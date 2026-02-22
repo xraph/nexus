@@ -1,0 +1,67 @@
+---
+title: Audit
+description: Record lifecycle events for compliance and debugging with the audit_hook extension.
+---
+
+## Setup
+
+```go
+import "github.com/xraph/nexus/audit_hook"
+
+recorder := audit_hook.RecorderFunc(func(ctx context.Context, event audit_hook.AuditEvent) error {
+    log.Printf("audit: %s %s %s", event.Action, event.Resource, event.ResourceID)
+    return nil
+})
+
+gw := nexus.New(
+    nexus.WithExtension(audit_hook.New(recorder)),
+)
+```
+
+## Audit Events
+
+Each event contains:
+
+```go
+type AuditEvent struct {
+    Timestamp  time.Time
+    Action     Action
+    Resource   Resource
+    Category   Category
+    ActorID    string
+    ResourceID string
+    Details    map[string]any
+}
+```
+
+## Actions
+
+14 audit actions across 5 categories:
+
+- **Request**: received, completed, failed, cached
+- **Provider**: failed, circuit opened, fallback triggered
+- **Security**: guardrail blocked, guardrail redacted
+- **Tenant**: created, disabled, key created, key revoked
+- **Budget**: warning, exceeded
+
+## Filtering
+
+Record only specific actions:
+
+```go
+audit_hook.New(recorder,
+    audit_hook.WithActions(
+        audit_hook.ActionGuardrailBlocked,
+        audit_hook.ActionBudgetExceeded,
+    ),
+)
+```
+
+## Chronicle Integration
+
+In a Forge application, wire audit events to Chronicle automatically:
+
+```go
+// The forge extension auto-discovers Chronicle
+// and wires audit_hook.New(chronicle.RecorderFunc(...))
+```

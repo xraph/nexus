@@ -1,0 +1,57 @@
+---
+title: Configuration
+description: Configure Nexus with functional options, structs, or YAML files.
+---
+
+## Functional Options
+
+The primary way to configure Nexus is via functional options:
+
+```go
+gw := nexus.New(
+    nexus.WithBasePath("/ai"),
+    nexus.WithRateLimit(1000),
+    nexus.WithTimeout(30 * time.Second),
+    nexus.WithMaxRetries(3),
+)
+```
+
+## Config Struct
+
+The `Config` struct holds all gateway settings:
+
+```go
+type Config struct {
+    BasePath          string
+    GlobalRateLimit   int
+    DefaultTimeout    time.Duration
+    DefaultMaxRetries int
+    EnableCache       bool
+    LogLevel          string
+}
+```
+
+`DefaultConfig()` returns sensible defaults.
+
+## Available Options
+
+| Option | Description |
+|--------|-------------|
+| `WithConfig(cfg)` | Set the full config struct |
+| `WithDatabase(store)` | Set the persistence store |
+| `WithAuth(provider)` | Set the auth provider |
+| `WithProvider(p)` | Register an LLM provider |
+| `WithRouter(strategy)` | Set the routing strategy |
+| `WithCache(cache)` | Enable response caching |
+| `WithGuard(guard)` | Add a guardrail |
+| `WithMiddleware(m)` | Add custom pipeline middleware |
+| `WithExtension(ext)` | Register a lifecycle plugin |
+| `WithAlias(name, targets...)` | Register a model alias |
+| `WithLogger(logger)` | Set a custom logger |
+| `WithBasePath(path)` | Set the HTTP base path |
+| `WithRateLimit(rpm)` | Set global rate limit |
+| `WithTracer(tracer)` | Set the request tracer |
+| `WithTransforms(registry)` | Set input/output transforms |
+| `WithTimeout(duration)` | Set default request timeout |
+| `WithMaxRetries(n)` | Set default max retries |
+| `WithTenantAlias(tid, name, targets...)` | Per-tenant alias override |

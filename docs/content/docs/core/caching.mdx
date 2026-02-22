@@ -1,0 +1,51 @@
+---
+title: Caching
+description: Cache LLM responses with deterministic keys and optional semantic matching.
+---
+
+Caching avoids redundant provider calls for identical or similar requests. Nexus generates deterministic cache keys from the request content and supports semantic matching for near-duplicate detection.
+
+## Cache Interface
+
+```go
+type Cache interface {
+    Get(ctx context.Context, key string) (*provider.CompletionResponse, error)
+    Set(ctx context.Context, key string, resp *provider.CompletionResponse, ttl time.Duration) error
+    Delete(ctx context.Context, key string) error
+    Clear(ctx context.Context) error
+}
+```
+
+## Enabling Caching
+
+```go
+import "github.com/xraph/nexus/cache/stores"
+
+gw := nexus.New(
+    nexus.WithCache(stores.NewMemory(1000)), // LRU, 1000 entries
+)
+```
+
+### Redis Cache
+
+```go
+gw := nexus.New(
+    nexus.WithCache(stores.NewRedis(redisClient)),
+)
+```
+
+## Cache Keys
+
+Keys are generated from a SHA-256 hash of the request model, messages, temperature, and other parameters. This ensures identical requests always hit the same cache entry.
+
+## Semantic Matching
+
+For near-duplicate detection, provide a `SemanticMatcher`:
+
+```go
+type SemanticMatcher interface {
+    Match(ctx context.Context, key string, threshold float64) (string, bool, error)
+}
+```
+
+When enabled, cache lookups first try an exact key match, then fall back to semantic similarity.

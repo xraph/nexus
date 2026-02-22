@@ -1,0 +1,99 @@
+---
+title: Full Example
+description: A complete multi-tenant AI gateway with all features enabled.
+---
+
+```go
+package main
+
+import (
+    "context"
+    "log/slog"
+    "net/http"
+    "os"
+    "time"
+
+    "github.com/xraph/nexus"
+    "github.com/xraph/nexus/audit_hook"
+    "github.com/xraph/nexus/cache/stores"
+    "github.com/xraph/nexus/guard/guards"
+    "github.com/xraph/nexus/model"
+    "github.com/xraph/nexus/observability"
+    "github.com/xraph/nexus/providers/anthropic"
+    "github.com/xraph/nexus/providers/openai"
+    "github.com/xraph/nexus/proxy"
+    "github.com/xraph/nexus/router/strategies"
+    "github.com/xraph/nexus/store/memory"
+)
+
+func main() {
+    ctx := context.Background()
+
+    // Audit recorder
+    recorder := audit_hook.RecorderFunc(func(ctx context.Context, event audit_hook.AuditEvent) error {
+        slog.Info("audit", "action", event.Action, "resource", event.ResourceID)
+        return nil
+    })
+
+    // Build the gateway
+    gw := nexus.New(
+        // Storage
+        nexus.WithDatabase(memory.New()),
+
+        // Providers
+        nexus.WithProvider(openai.New(os.Getenv("OPENAI_KEY"))),
+        nexus.WithProvider(anthropic.New(os.Getenv("ANTHROPIC_KEY"))),
+
+        // Routing
+        nexus.WithRouter(strategies.NewCostOptimized()),
+
+        // Caching
+        nexus.WithCache(stores.NewMemory(5000)),
+
+        // Guardrails
+        nexus.WithGuard(guards.NewPII(guards.ActionRedact)),
+        nexus.WithGuard(guards.NewInjection()),
+
+        // Model aliases
+        nexus.WithAlias("fast", model.AliasTarget{
+            Provider: "anthropic",
+            Model:    "claude-3.5-haiku",
+        }),
+        nexus.WithAlias("smart", model.AliasTarget{
+            Provider: "openai",
+            Model:    "gpt-4o",
+        }),
+
+        // Plugins
+        nexus.WithExtension(audit_hook.New(recorder)),
+        nexus.WithExtension(observability.NewMetricsExtension()),
+
+        // Resilience
+        nexus.WithTimeout(30 * time.Second),
+        nexus.WithMaxRetries(3),
+
+        // Logging
+        nexus.WithLogger(nexus.NewDefaultLogger("info")),
+    )
+
+    // Initialize
+    if err := gw.Initialize(ctx); err != nil {
+        panic(err)
+    }
+    defer gw.Shutdown(ctx)
+
+    // Run as OpenAI-compatible proxy
+    p := proxy.New(gw)
+    slog.Info("nexus gateway listening", "addr", ":8080")
+    http.ListenAndServe(":8080", p)
+}
+```
+
+This gateway:
+- Routes to OpenAI and Anthropic with cost-optimized strategy
+- Caches responses in memory (5000 entries)
+- Redacts PII and blocks prompt injection
+- Maps `"fast"` to Claude Haiku, `"smart"` to GPT-4o
+- Records audit events and tracks metrics
+- Retries failed requests up to 3 times
+- Serves as an OpenAI-compatible proxy on port 8080

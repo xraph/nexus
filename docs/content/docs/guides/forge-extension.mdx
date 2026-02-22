@@ -1,0 +1,51 @@
+---
+title: Forge Extension
+description: Run Nexus as a forge.Extension with auto-discovery and DI.
+---
+
+## Setup
+
+```go
+import (
+    "github.com/xraph/forge"
+    nexusext "github.com/xraph/nexus/extension"
+)
+
+app := forge.New(
+    forge.WithExtension(nexusext.New(
+        nexusext.WithProvider(openai.New(key)),
+    )),
+)
+app.Start(ctx)
+```
+
+## Auto-Discovery
+
+When running in a Forge application, the Nexus extension automatically discovers other Forge extensions via vessel DI:
+
+- **Chronicle** — Wires `audit_hook` with Chronicle recorder
+- **Shield** — Wires Shield as a guardrail adapter
+- **Relay** — Wires `relay_hook` with Relay sender
+- **Authsome** — Wires Authsome as auth provider
+- **Metrics** — Wires observability with `gu.MetricFactory`
+
+## Options
+
+```go
+nexusext.New(
+    nexusext.WithProvider(openai.New(key)),
+    nexusext.WithDatabase(pgStore),
+    nexusext.WithBasePath("/ai"),
+    nexusext.WithLogger(logger),
+    nexusext.WithGatewayOption(nexus.WithRateLimit(1000)),
+)
+```
+
+## DI Registration
+
+The extension registers the Gateway in the vessel container:
+
+```go
+// Other extensions can resolve it
+gw, err := vessel.Resolve[*nexus.Gateway](container)
+```

@@ -1,0 +1,65 @@
+---
+title: Entities
+description: Core entity types — Tenants, API Keys, Usage Records, and TypeID identifiers.
+---
+
+## TypeID Identifiers
+
+All Nexus entities use type-prefixed, K-sortable, UUIDv7-based identifiers via the `typeid` library:
+
+```go
+import "github.com/xraph/nexus/id"
+
+type TenantID  = typeid.TypeID[TenantPrefix]   // tnt_...
+type KeyID     = typeid.TypeID[KeyPrefix]       // key_...
+type RequestID = typeid.TypeID[RequestPrefix]   // req_...
+type UsageID   = typeid.TypeID[UsagePrefix]     // usg_...
+```
+
+## Tenant
+
+Represents an isolated customer or workspace:
+
+```go
+type Tenant struct {
+    ID        id.TenantID
+    Name      string
+    Enabled   bool
+    Config    TenantConfig
+    CreatedAt time.Time
+    UpdatedAt time.Time
+}
+```
+
+## API Key
+
+Authentication credentials scoped to a tenant:
+
+```go
+type Key struct {
+    ID        id.KeyID
+    TenantID  id.TenantID
+    Name      string
+    Hash      string    // bcrypt hash of the key
+    Enabled   bool
+    ExpiresAt *time.Time
+}
+```
+
+## Usage Record
+
+Tracks token consumption per request:
+
+```go
+type Record struct {
+    ID           id.UsageID
+    TenantID     id.TenantID
+    RequestID    id.RequestID
+    Model        string
+    Provider     string
+    InputTokens  int
+    OutputTokens int
+    Cost         float64
+    CreatedAt    time.Time
+}
+```

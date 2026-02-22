@@ -1,0 +1,56 @@
+---
+title: Multi-Tenancy
+description: Tenant-scoped requests, per-tenant configuration, quotas, and usage isolation.
+---
+
+Every request in Nexus is scoped to a tenant via context. This provides complete isolation for API keys, rate limits, usage tracking, and model aliases.
+
+## Setting Tenant Context
+
+```go
+ctx = nexus.WithTenant(ctx, "tenant-1")
+```
+
+All downstream operations (routing, caching, usage, guardrails) automatically respect the tenant scope.
+
+## Tenant Configuration
+
+Each tenant can have custom settings:
+
+```go
+type TenantConfig struct {
+    RateLimit     int
+    BudgetLimit   float64
+    AllowedModels []string
+    Metadata      map[string]any
+}
+```
+
+## Per-Tenant Aliases
+
+Override model aliases per tenant:
+
+```go
+nexus.WithTenantAlias("premium", "fast",
+    model.AliasTarget{Provider: "openai", Model: "gpt-4o"},
+)
+```
+
+## Usage Isolation
+
+Usage records are always scoped to a tenant. Query per-tenant usage:
+
+```go
+summary, _ := usageService.Summary(ctx, tenantID, timeRange)
+// summary.TotalTokens, summary.TotalCost
+```
+
+## Budget Enforcement
+
+Set budget limits per tenant. Nexus fires lifecycle events at 80% (warning) and 100% (exceeded):
+
+```go
+// Plugin hooks
+OnBudgetWarning(ctx, tenantID, usedPct)
+OnBudgetExceeded(ctx, tenantID)
+```

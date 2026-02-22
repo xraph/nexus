@@ -1,0 +1,59 @@
+---
+title: Custom Plugin
+description: Build a custom lifecycle plugin for Nexus.
+---
+
+## Implement the Interface
+
+A plugin must implement `plugin.Extension` (the `Name()` method) plus any lifecycle hooks it wants to handle:
+
+```go
+package myplugin
+
+import (
+    "context"
+    "log"
+    "time"
+
+    "github.com/xraph/nexus/id"
+    "github.com/xraph/nexus/plugin"
+)
+
+type LogPlugin struct{}
+
+func (p *LogPlugin) Name() string { return "log_plugin" }
+
+func (p *LogPlugin) OnRequestReceived(ctx context.Context, requestID id.RequestID, model string, tenantID string) error {
+    log.Printf("request %s: model=%s tenant=%s", requestID, model, tenantID)
+    return nil
+}
+
+func (p *LogPlugin) OnRequestCompleted(ctx context.Context, requestID id.RequestID, model string, providerName string, elapsed time.Duration, inputTokens int, outputTokens int) error {
+    log.Printf("completed %s: provider=%s tokens=%d+%d elapsed=%s",
+        requestID, providerName, inputTokens, outputTokens, elapsed)
+    return nil
+}
+
+// Compile-time checks
+var (
+    _ plugin.Extension        = (*LogPlugin)(nil)
+    _ plugin.RequestReceived  = (*LogPlugin)(nil)
+    _ plugin.RequestCompleted = (*LogPlugin)(nil)
+)
+```
+
+## Register
+
+```go
+gw := nexus.New(
+    nexus.WithExtension(&myplugin.LogPlugin{}),
+)
+```
+
+## Error Handling
+
+Hook errors are logged but never propagate. Plugins must not block the request pipeline. Return `nil` even if the hook encounters a non-fatal error.
+
+## Available Hooks
+
+You can implement any combination of 15 lifecycle interfaces: `RequestReceived`, `RequestCompleted`, `RequestFailed`, `RequestCached`, `ProviderFailed`, `CircuitOpened`, `FallbackTriggered`, `GuardrailBlocked`, `GuardrailRedacted`, `TenantCreated`, `TenantDisabled`, `KeyCreated`, `KeyRevoked`, `BudgetWarning`, `BudgetExceeded`.

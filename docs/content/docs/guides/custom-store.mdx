@@ -1,0 +1,53 @@
+---
+title: Custom Store
+description: Implement the store.Store interface for custom persistence backends.
+---
+
+## Store Interface
+
+```go
+type Store interface {
+    Tenants() TenantStore
+    Keys() KeyStore
+    Usage() UsageStore
+    Migrate(ctx context.Context) error
+    Close() error
+}
+```
+
+## Implementing
+
+Each sub-store defines CRUD operations:
+
+```go
+type TenantStore interface {
+    Create(ctx context.Context, tenant *tenant.Tenant) error
+    Get(ctx context.Context, id id.TenantID) (*tenant.Tenant, error)
+    List(ctx context.Context) ([]tenant.Tenant, error)
+    Update(ctx context.Context, tenant *tenant.Tenant) error
+    Delete(ctx context.Context, id id.TenantID) error
+}
+```
+
+## Example: DynamoDB Store
+
+```go
+type DynamoStore struct {
+    client *dynamodb.Client
+    table  string
+}
+
+func (s *DynamoStore) Tenants() store.TenantStore { return &dynamoTenantStore{s} }
+func (s *DynamoStore) Keys() store.KeyStore       { return &dynamoKeyStore{s} }
+func (s *DynamoStore) Usage() store.UsageStore     { return &dynamoUsageStore{s} }
+func (s *DynamoStore) Migrate(ctx context.Context) error { return s.createTables(ctx) }
+func (s *DynamoStore) Close() error                { return nil }
+```
+
+## Built-in Stores
+
+| Store | Package | Use Case |
+|-------|---------|----------|
+| Memory | `store/memory` | Development, testing |
+| SQLite | `store/sqlite` | Single-node production |
+| PostgreSQL | `store/postgres` | Distributed production |

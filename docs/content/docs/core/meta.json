@@ -1,0 +1,11 @@
+{
+  "title": "Core Features",
+  "pages": [
+    "providers",
+    "routing",
+    "guardrails",
+    "caching",
+    "transforms",
+    "aliases"
+  ]
+}

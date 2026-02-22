@@ -1,0 +1,125 @@
+---
+title: Quick Start
+description: Install Nexus and route your first LLM request in minutes.
+---
+
+## Installation
+
+```bash
+go get github.com/xraph/nexus
+```
+
+## Create a Gateway
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+
+    "github.com/xraph/nexus"
+    "github.com/xraph/nexus/provider"
+    "github.com/xraph/nexus/providers/openai"
+    "github.com/xraph/nexus/store/memory"
+)
+
+func main() {
+    ctx := context.Background()
+
+    // Create the gateway with an in-memory store and OpenAI provider
+    gw := nexus.New(
+        nexus.WithDatabase(memory.New()),
+        nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
+    )
+
+    // Initialize sets up defaults and builds the pipeline
+    if err := gw.Initialize(ctx); err != nil {
+        panic(err)
+    }
+
+    // Get the engine for programmatic usage
+    engine := gw.Engine()
+
+    // Make a completion request
+    resp, err := engine.Complete(ctx, &provider.CompletionRequest{
+        Model: "gpt-4o-mini",
+        Messages: []provider.Message{
+            {Role: "user", Content: "Hello, what is Go?"},
+        },
+    })
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Println(resp.Choices[0].Message.Content)
+}
+```
+
+## Add Multiple Providers
+
+```go
+import (
+    "github.com/xraph/nexus/providers/openai"
+    "github.com/xraph/nexus/providers/anthropic"
+)
+
+gw := nexus.New(
+    nexus.WithDatabase(memory.New()),
+    nexus.WithProvider(openai.New(os.Getenv("OPENAI_KEY"))),
+    nexus.WithProvider(anthropic.New(os.Getenv("ANTHROPIC_KEY"))),
+)
+```
+
+## Run as OpenAI-Compatible Proxy
+
+```go
+import "github.com/xraph/nexus/proxy"
+
+p := proxy.New(gw)
+http.ListenAndServe(":8080", p)
+```
+
+Any OpenAI SDK can now connect to `http://localhost:8080`:
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="any")
+response = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+```
+
+## Add Guardrails
+
+```go
+import "github.com/xraph/nexus/guard/guards"
+
+gw := nexus.New(
+    nexus.WithProvider(openai.New(key)),
+    nexus.WithGuard(guards.NewPII(guards.ActionRedact)),
+    nexus.WithGuard(guards.NewInjection()),
+)
+```
+
+## Enable Caching
+
+```go
+import "github.com/xraph/nexus/cache/stores"
+
+gw := nexus.New(
+    nexus.WithProvider(openai.New(key)),
+    nexus.WithCache(stores.NewMemory(1000)),
+)
+```
+
+## Next Steps
+
+<Cards>
+  <Card title="Architecture" href="/docs/architecture" description="Understand the gateway pipeline and extension system." />
+  <Card title="Providers" href="/docs/core/providers" description="Configure OpenAI, Anthropic, and custom providers." />
+  <Card title="Guardrails" href="/docs/core/guardrails" description="Add PII detection, prompt injection blocking, and more." />
+  <Card title="Full Example" href="/docs/guides/full-example" description="See a complete multi-tenant gateway with all features." />
+</Cards>

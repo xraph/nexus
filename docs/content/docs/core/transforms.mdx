@@ -1,0 +1,68 @@
+---
+title: Transforms
+description: Modify requests and responses with system prompts, RAG injection, anonymization, and normalization.
+---
+
+Transforms modify requests before they reach the provider (input transforms) or responses before they reach the client (output transforms).
+
+## Transform Interface
+
+```go
+type Transform interface {
+    Name() string
+    Phase() Phase   // Input or Output
+    Apply(ctx context.Context, data *TransformData) error
+}
+```
+
+## Built-in Transforms
+
+### System Prompt Injection
+
+Prepend a system prompt to every request:
+
+```go
+import "github.com/xraph/nexus/transform"
+
+registry := transform.NewRegistry()
+registry.Register(transform.NewSystemPrompt(
+    "You are a helpful assistant for Acme Corp.",
+))
+
+nexus.WithTransforms(registry)
+```
+
+### RAG Context Injection
+
+Inject retrieval-augmented generation context:
+
+```go
+registry.Register(transform.NewRAG(ragRetriever))
+```
+
+### Data Anonymization
+
+Strip sensitive data before sending to the provider:
+
+```go
+registry.Register(transform.NewAnonymizer())
+```
+
+### Output Normalization
+
+Normalize response format across providers:
+
+```go
+registry.Register(transform.NewNormalizer())
+```
+
+## Per-Tenant Transforms
+
+Combine transforms with tenant context for per-customer system prompts:
+
+```go
+registry.Register(transform.NewSystemPrompt(
+    "You are a support agent for {{tenant}}.",
+    transform.WithTenantAware(true),
+))
+```

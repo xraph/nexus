@@ -1,0 +1,55 @@
+---
+title: Identity & Auth
+description: Authentication providers, API key validation, and the Authsome adapter.
+---
+
+## Auth Interface
+
+```go
+type Provider interface {
+    Authenticate(ctx context.Context) (Claims, error)
+    AuthenticateAPIKey(ctx context.Context, apiKey string) (Claims, error)
+}
+```
+
+## Claims
+
+```go
+type Claims struct {
+    TenantID string
+    Subject  string
+    Scopes   []string
+}
+```
+
+## Default (Noop)
+
+By default, Nexus uses a noop auth provider that allows all requests:
+
+```go
+gw := nexus.New() // auth.NewNoop() is set automatically
+```
+
+## API Key Auth
+
+Use the built-in key service for API key authentication:
+
+```go
+keyService := key.NewService(store)
+gw := nexus.New(
+    nexus.WithAuth(keyService),
+)
+```
+
+## Authsome Adapter
+
+If you use Authsome in a Forge application, Nexus provides an adapter:
+
+```go
+import "github.com/xraph/nexus/auth/authsome"
+
+adapter := authsome.NewAdapter(authsomeInstance)
+gw := nexus.New(
+    nexus.WithAuth(adapter),
+)
+```

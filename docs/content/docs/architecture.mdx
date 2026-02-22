@@ -1,0 +1,99 @@
+---
+title: Architecture
+description: How Nexus packages fit together — Gateway, Engine, Pipeline, Providers, and Plugins.
+---
+
+## Overview
+
+Nexus is organized as a set of composable Go packages. The `Gateway` is the root struct that wires everything together.
+
+```
+┌─────────────────────────────────────────────────┐
+│                    Gateway                       │
+│                                                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────┐  │
+│  │ Providers │  │  Router  │  │   Pipeline   │  │
+│  │ Registry  │  │ Strategy │  │  Middleware   │  │
+│  └──────────┘  └──────────┘  └──────────────┘  │
+│                                                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────┐  │
+│  │  Cache   │  │  Guards  │  │  Transforms  │  │
+│  │ Service  │  │ Service  │  │   Registry   │  │
+│  └──────────┘  └──────────┘  └──────────────┘  │
+│                                                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────┐  │
+│  │  Store   │  │  Plugin  │  │    Model     │  │
+│  │  Layer   │  │ Registry │  │   Aliases    │  │
+│  └──────────┘  └──────────┘  └──────────────┘  │
+└─────────────────────────────────────────────────┘
+```
+
+## Request Flow
+
+Every request flows through the pipeline middleware chain, sorted by priority:
+
+1. **Tracing** (10) — OpenTelemetry span creation
+2. **Timeout** (20) — Request deadline enforcement
+3. **Guardrails** (150) — Input content validation
+4. **Transforms** (200) — Input modifications (system prompt, RAG)
+5. **Alias Resolution** (250) — Virtual model → concrete provider/model
+6. **Cache** (280) — Check for cached response
+7. **Retry** (340) — Retry logic with backoff
+8. **Provider Call** (350) — Route and call the selected provider
+9. **Headers** (500) — Add response headers (X-Nexus-*)
+10. **Usage** (550) — Track token usage and cost
+
+## Key Packages
+
+| Package | Purpose |
+|---------|---------|
+| `nexus` | Root Gateway, Engine, Config, Options |
+| `provider` | Provider interface, Request/Response types |
+| `providers/*` | OpenAI, Anthropic, OpenAI-compatible implementations |
+| `router` | Routing service and strategy interface |
+| `pipeline` | Middleware chain builder and executor |
+| `guard` | Guardrail interface and service |
+| `cache` | Cache interface, key generation, semantic matching |
+| `transform` | Input/output transform interface and registry |
+| `model` | Alias registry, token counting, cost estimation |
+| `plugin` | Extension system — 15 lifecycle hooks |
+| `store` | Persistence interface (memory, SQLite, Postgres) |
+| `tenant` | Tenant entity and service |
+| `key` | API key entity, generation, and hashing |
+| `usage` | Usage tracking and cost calculation |
+| `audit_hook` | Audit event recording extension |
+| `observability` | Metrics counters extension |
+| `relay_hook` | Webhook relay extension |
+| `proxy` | OpenAI-compatible HTTP proxy |
+| `api` | Forge-compatible HTTP handlers |
+
+## Pipeline Middleware
+
+All middleware implements:
+
+```go
+type Middleware interface {
+    Name() string
+    Priority() int
+    Process(ctx context.Context, req *Request, next NextFunc) (*provider.CompletionResponse, error)
+}
+```
+
+Lower priority numbers execute first. Custom middleware can be inserted at any priority level.
+
+## Plugin System
+
+Plugins implement lifecycle hooks as separate interfaces. The registry type-caches hooks at registration time for zero-overhead dispatch:
+
+```go
+type Extension interface {
+    Name() string
+}
+
+// Opt in to specific events
+type RequestReceived interface {
+    OnRequestReceived(ctx context.Context, ...) error
+}
+```
+
+15 hooks cover: request lifecycle, provider events, guardrail events, tenant/key management, and budget alerts.

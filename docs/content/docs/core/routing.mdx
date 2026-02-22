@@ -1,0 +1,71 @@
+---
+title: Routing
+description: Route requests across providers using priority, cost-optimized, or round-robin strategies.
+---
+
+The router selects which provider handles each request. Nexus includes three built-in strategies and supports custom routing logic.
+
+## Strategies
+
+### Priority (Default)
+
+Routes to the first registered provider that supports the requested model. If it fails, falls through to the next:
+
+```go
+import "github.com/xraph/nexus/router/strategies"
+
+nexus.WithRouter(strategies.NewPriority())
+```
+
+### Cost-Optimized
+
+Routes to the cheapest provider that supports the requested model:
+
+```go
+nexus.WithRouter(strategies.NewCostOptimized())
+```
+
+### Round-Robin
+
+Distributes requests evenly across providers:
+
+```go
+nexus.WithRouter(strategies.NewRoundRobin())
+```
+
+## Custom Strategy
+
+Implement the `router.Strategy` interface:
+
+```go
+type Strategy interface {
+    Route(ctx context.Context, req *provider.CompletionRequest, providers []provider.Provider) (provider.Provider, error)
+}
+```
+
+Example — route based on model prefix:
+
+```go
+type prefixRouter struct{}
+
+func (r *prefixRouter) Route(ctx context.Context, req *provider.CompletionRequest, providers []provider.Provider) (provider.Provider, error) {
+    for _, p := range providers {
+        if strings.HasPrefix(req.Model, p.Name()) {
+            return p, nil
+        }
+    }
+    return nil, nexus.ErrProviderNotFound
+}
+```
+
+## Fallback & Circuit Breaking
+
+When a provider fails, Nexus automatically retries with fallback providers. Circuit breakers prevent cascading failures:
+
+```go
+gw := nexus.New(
+    nexus.WithMaxRetries(3),
+    nexus.WithProvider(openai.New(key)),     // primary
+    nexus.WithProvider(anthropic.New(key)),   // fallback
+)
+```

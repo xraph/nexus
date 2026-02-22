@@ -1,0 +1,72 @@
+---
+title: Plugins
+description: Extend Nexus with 15 lifecycle hooks for audit, metrics, webhooks, and custom processing.
+---
+
+The plugin system lets you react to lifecycle events without modifying engine code. Each hook is a separate Go interface — implement only the events you care about.
+
+## Base Interface
+
+```go
+type Extension interface {
+    Name() string
+}
+```
+
+## Lifecycle Hooks
+
+### Request Events
+
+| Hook | When |
+|------|------|
+| `OnRequestReceived` | Request enters the pipeline |
+| `OnRequestCompleted` | Provider returns a response |
+| `OnRequestFailed` | Request fails |
+| `OnRequestCached` | Response served from cache |
+
+### Provider Events
+
+| Hook | When |
+|------|------|
+| `OnProviderFailed` | Provider call fails |
+| `OnCircuitOpened` | Circuit breaker opens |
+| `OnFallbackTriggered` | Fallback provider used |
+
+### Guardrail Events
+
+| Hook | When |
+|------|------|
+| `OnGuardrailBlocked` | Request blocked by guardrail |
+| `OnGuardrailRedacted` | Content redacted by guardrail |
+
+### Tenant & Key Events
+
+| Hook | When |
+|------|------|
+| `OnTenantCreated` | New tenant created |
+| `OnTenantDisabled` | Tenant disabled |
+| `OnKeyCreated` | API key created |
+| `OnKeyRevoked` | API key revoked |
+
+### Budget Events
+
+| Hook | When |
+|------|------|
+| `OnBudgetWarning` | 80% budget threshold |
+| `OnBudgetExceeded` | Budget exceeded |
+
+## Registering Plugins
+
+```go
+gw := nexus.New(
+    nexus.WithExtension(audithook.New(recorder)),
+    nexus.WithExtension(observability.NewMetricsExtension()),
+    nexus.WithExtension(relayhook.NewWebhook("https://hooks.example.com/nexus")),
+)
+```
+
+## Built-in Plugins
+
+- **audit_hook** — Records lifecycle events for audit trails (Chronicle integration)
+- **observability** — Increments atomic counters for operational metrics
+- **relay_hook** — Forwards events as webhooks to external systems

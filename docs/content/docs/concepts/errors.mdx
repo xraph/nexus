@@ -1,0 +1,42 @@
+---
+title: Errors
+description: Error values and HTTP status code mapping.
+---
+
+Nexus defines sentinel errors in the root package. These are used throughout the codebase and mapped to HTTP status codes in the API layer.
+
+## Error Values
+
+```go
+var (
+    ErrProviderNotFound    = errors.New("nexus: provider not found")
+    ErrModelNotFound       = errors.New("nexus: model not found")
+    ErrNoProviderAvailable = errors.New("nexus: no provider available")
+    ErrAuthRequired        = errors.New("nexus: authentication required")
+    ErrForbidden           = errors.New("nexus: forbidden")
+    ErrTenantRequired      = errors.New("nexus: tenant context required")
+    ErrTenantNotFound      = errors.New("nexus: tenant not found")
+    ErrTenantDisabled      = errors.New("nexus: tenant disabled")
+    ErrGuardrailBlocked    = errors.New("nexus: blocked by guardrail")
+    ErrCacheMiss           = errors.New("nexus: cache miss")
+    ErrRateLimited         = errors.New("nexus: rate limit exceeded")
+    ErrBudgetExceeded      = errors.New("nexus: budget exceeded")
+    ErrTokenOverflow       = errors.New("nexus: token limit exceeded")
+    ErrAliasNotFound       = errors.New("nexus: alias not found")
+)
+```
+
+## HTTP Mapping
+
+The API layer maps these errors to standard HTTP responses:
+
+| Error | HTTP Status |
+|-------|-------------|
+| `ErrAuthRequired` | 401 Unauthorized |
+| `ErrForbidden` | 403 Forbidden |
+| `ErrProviderNotFound` | 404 Not Found |
+| `ErrTenantNotFound` | 404 Not Found |
+| `ErrGuardrailBlocked` | 400 Bad Request |
+| `ErrRateLimited` | 429 Too Many Requests |
+| `ErrBudgetExceeded` | 402 Payment Required |
+| `ErrTokenOverflow` | 413 Payload Too Large |

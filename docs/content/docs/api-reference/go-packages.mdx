@@ -1,0 +1,73 @@
+---
+title: Go Packages
+description: Package reference for all Nexus Go packages.
+---
+
+## Core
+
+| Package | Import | Description |
+|---------|--------|-------------|
+| nexus | `github.com/xraph/nexus` | Gateway, Engine, Config, Options |
+| id | `github.com/xraph/nexus/id` | TypeID prefixes and constructors |
+| plugin | `github.com/xraph/nexus/plugin` | Extension interfaces and Registry |
+
+## Providers
+
+| Package | Import | Description |
+|---------|--------|-------------|
+| provider | `github.com/xraph/nexus/provider` | Provider interface, Request/Response |
+| openai | `github.com/xraph/nexus/providers/openai` | OpenAI provider |
+| anthropic | `github.com/xraph/nexus/providers/anthropic` | Anthropic provider |
+| opencompat | `github.com/xraph/nexus/providers/opencompat` | OpenAI-compatible provider |
+
+## Pipeline
+
+| Package | Import | Description |
+|---------|--------|-------------|
+| pipeline | `github.com/xraph/nexus/pipeline` | Middleware chain builder |
+| middlewares | `github.com/xraph/nexus/pipeline/middlewares` | Built-in middleware |
+| router | `github.com/xraph/nexus/router` | Routing service |
+| strategies | `github.com/xraph/nexus/router/strategies` | Routing strategies |
+
+## Features
+
+| Package | Import | Description |
+|---------|--------|-------------|
+| guard | `github.com/xraph/nexus/guard` | Guardrail interface and service |
+| guards | `github.com/xraph/nexus/guard/guards` | Built-in guards |
+| cache | `github.com/xraph/nexus/cache` | Cache interface and service |
+| stores | `github.com/xraph/nexus/cache/stores` | Cache backends |
+| transform | `github.com/xraph/nexus/transform` | Input/output transforms |
+| model | `github.com/xraph/nexus/model` | Alias registry and token counting |
+
+## Infrastructure
+
+| Package | Import | Description |
+|---------|--------|-------------|
+| store | `github.com/xraph/nexus/store` | Persistence interface |
+| memory | `github.com/xraph/nexus/store/memory` | In-memory store |
+| sqlite | `github.com/xraph/nexus/store/sqlite` | SQLite store |
+| postgres | `github.com/xraph/nexus/store/postgres` | PostgreSQL store |
+| tenant | `github.com/xraph/nexus/tenant` | Tenant entity and service |
+| key | `github.com/xraph/nexus/key` | API key management |
+| usage | `github.com/xraph/nexus/usage` | Usage tracking |
+| auth | `github.com/xraph/nexus/auth` | Auth provider interface |
+
+## Extensions
+
+| Package | Import | Description |
+|---------|--------|-------------|
+| audit_hook | `github.com/xraph/nexus/audit_hook` | Audit event recording |
+| observability | `github.com/xraph/nexus/observability` | Metrics and tracing |
+| relay_hook | `github.com/xraph/nexus/relay_hook` | Webhook relay |
+| extension | `github.com/xraph/nexus/extension` | Forge extension adapter |
+
+## Utilities
+
+| Package | Import | Description |
+|---------|--------|-------------|
+| proxy | `github.com/xraph/nexus/proxy` | OpenAI-compatible HTTP proxy |
+| api | `github.com/xraph/nexus/api` | Forge HTTP handlers |
+| fallback | `github.com/xraph/nexus/fallback` | Circuit breaking and retry |
+| batch | `github.com/xraph/nexus/batch` | Batch processing |
+| mcp | `github.com/xraph/nexus/mcp` | Model Context Protocol |

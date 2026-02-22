@@ -1,0 +1,48 @@
+---
+title: PostgreSQL
+description: Configure PostgreSQL as the persistence backend for tenants, API keys, and usage data.
+---
+
+## Setup
+
+```go
+import "github.com/xraph/nexus/store/postgres"
+
+store, err := postgres.New(pool) // *pgxpool.Pool
+if err != nil {
+    panic(err)
+}
+
+gw := nexus.New(
+    nexus.WithDatabase(store),
+)
+```
+
+## Migrations
+
+The Postgres store includes automatic schema migrations:
+
+```go
+if err := store.Migrate(ctx); err != nil {
+    panic(err)
+}
+```
+
+Tables created: `tenants`, `api_keys`, `usage_records`.
+
+## Schema
+
+All tables include tenant scoping columns and JSONB fields for flexible metadata:
+
+- `tenants` — id, name, enabled, config (JSONB), created_at, updated_at
+- `api_keys` — id, tenant_id, name, hash, enabled, expires_at, created_at
+- `usage_records` — id, tenant_id, request_id, model, provider, input_tokens, output_tokens, cost, created_at
+
+## Connection Pooling
+
+Pass a pre-configured `*pgxpool.Pool` for connection pooling:
+
+```go
+pool, _ := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+store, _ := postgres.New(pool)
+```

@@ -1,0 +1,75 @@
+---
+title: HTTP API
+description: OpenAI-compatible endpoints and admin API reference.
+---
+
+## OpenAI-Compatible Endpoints
+
+### Chat Completions
+
+```
+POST /v1/chat/completions
+```
+
+Request and response format follows the OpenAI API specification. Supports streaming via `stream: true`.
+
+### Embeddings
+
+```
+POST /v1/embeddings
+```
+
+### Models
+
+```
+GET /v1/models
+```
+
+Returns all models from all registered providers, plus model aliases.
+
+## Admin Endpoints
+
+### Tenants
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/admin/tenants` | List all tenants |
+| `POST` | `/admin/tenants` | Create a tenant |
+| `GET` | `/admin/tenants/:id` | Get a tenant |
+| `PUT` | `/admin/tenants/:id` | Update a tenant |
+| `DELETE` | `/admin/tenants/:id` | Delete a tenant |
+
+### API Keys
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/admin/keys` | List keys for a tenant |
+| `POST` | `/admin/keys` | Create an API key |
+| `DELETE` | `/admin/keys/:id` | Revoke an API key |
+
+### Usage
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/admin/usage` | Query usage records |
+| `GET` | `/admin/usage/summary` | Aggregated usage summary |
+
+### Providers
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/admin/providers` | List registered providers |
+
+### Health
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Gateway health check |
+
+## Response Headers
+
+All responses include:
+
+- `X-Nexus-Request-ID` — Unique request identifier
+- `X-Nexus-Provider` — Provider that served the request
+- `X-Nexus-Cache` — `HIT` or `MISS`
