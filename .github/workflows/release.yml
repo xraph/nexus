@@ -42,7 +42,10 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-          # Extract module path from tag (e.g., providers/openai/v1.0.0 -> providers/openai)
+          # Extract module path and version from tag
+          # providers/openai/v1.0.0 -> module_path=providers/openai, version=v1.0.0
+          # config/v1.0.0 -> module_path=config, version=v1.0.0
+          # v1.0.0 -> module_path=., version=v1.0.0
           if [[ "$TAG" == providers/* ]] || [[ "$TAG" == config/* ]]; then
             MODULE_PATH=$(echo "$TAG" | sed 's|/v[0-9].*||')
             VERSION=$(echo "$TAG" | grep -oP 'v[0-9].*')
@@ -53,6 +56,15 @@ jobs:
           echo "module_path=$MODULE_PATH" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+          # Build the go get install command
+          if [ "$MODULE_PATH" = "." ]; then
+            echo "install_cmd=go get github.com/xraph/nexus@${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "module_name=github.com/xraph/nexus" >> "$GITHUB_OUTPUT"
+          else
+            echo "install_cmd=go get github.com/xraph/nexus/${MODULE_PATH}@${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "module_name=github.com/xraph/nexus/${MODULE_PATH}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
@@ -62,11 +74,13 @@ jobs:
 
       - name: Verify build (all modules)
         run: |
-          go work sync
           for mod in $(find . -name 'go.mod' -exec dirname {} \; | sort); do
             echo "Building $mod..."
             (cd "$mod" && go build ./...)
           done
+
+      - name: Verify tests (all modules)
+        run: |
           for mod in $(find . -name 'go.mod' -exec dirname {} \; | sort); do
             echo "Testing $mod..."
             (cd "$mod" && go test -race -count=1 ./...)
@@ -75,12 +89,30 @@ jobs:
       - name: Generate release notes
         id: notes
         run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          MODULE_PATH="${{ steps.set-tag.outputs.module_path }}"
+
+          # Find previous tag for this module
+          if [ "$MODULE_PATH" = "." ]; then
+            PREV_TAG=$(git tag -l 'v*' --sort=-v:refname | grep -v '/' | sed -n '2p' || echo "")
+          else
+            PREV_TAG=$(git tag -l "${MODULE_PATH}/v*" --sort=-v:refname | sed -n '2p' || echo "")
+          fi
+
           if [ -z "$PREV_TAG" ]; then
             NOTES=$(git log --pretty=format:"- %s (%h)" HEAD)
           else
-            NOTES=$(git log --pretty=format:"- %s (%h)" ${PREV_TAG}..HEAD)
+            if [ "$MODULE_PATH" = "." ]; then
+              NOTES=$(git log --pretty=format:"- %s (%h)" ${PREV_TAG}..HEAD)
+            else
+              NOTES=$(git log --pretty=format:"- %s (%h)" ${PREV_TAG}..HEAD -- "$MODULE_PATH")
+            fi
           fi
+
+          # Fallback if no module-specific changes
+          if [ -z "$NOTES" ]; then
+            NOTES="- Release ${{ steps.set-tag.outputs.version }}"
+          fi
+
           {
             echo "notes<<EOF"
             echo "$NOTES"
@@ -91,8 +123,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.set-tag.outputs.tag }}
+          name: "${{ steps.set-tag.outputs.module_name }} ${{ steps.set-tag.outputs.version }}"
           body: |
-            ## Changes
+            ## ${{ steps.set-tag.outputs.module_name }} ${{ steps.set-tag.outputs.version }}
+
+            ### Changes
 
             ${{ steps.notes.outputs.notes }}
 
@@ -101,6 +136,6 @@ jobs:
             ### Installation
 
             ```bash
-            go get github.com/xraph/nexus@${{ steps.set-tag.outputs.tag }}
+            ${{ steps.set-tag.outputs.install_cmd }}
             ```
-          generate_release_notes: true
+          generate_release_notes: false

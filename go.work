@@ -1,0 +1,36 @@
+go 1.25
+
+use (
+	.
+	./config
+	./providers/ai21
+	./providers/anthropic
+	./providers/anyscale
+	./providers/azureopenai
+	./providers/bedrock
+	./providers/cerebras
+	./providers/cohere
+	./providers/deepinfra
+	./providers/deepseek
+	./providers/fireworks
+	./providers/gemini
+	./providers/groq
+	./providers/hyperbolic
+	./providers/jinaai
+	./providers/lepton
+	./providers/lmstudio
+	./providers/mistral
+	./providers/nebius
+	./providers/novita
+	./providers/nvidia
+	./providers/ollama
+	./providers/openai
+	./providers/opencompat
+	./providers/openrouter
+	./providers/perplexity
+	./providers/sambanova
+	./providers/together
+	./providers/vertex
+	./providers/voyageai
+	./providers/xai
+)

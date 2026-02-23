@@ -34,10 +34,7 @@ jobs:
           cache: true
           cache-dependency-path: "**/go.sum"
 
-      - name: Sync workspace
-        run: go work sync
-
-      - name: Verify module tidy
+      - name: Verify modules are tidy
         run: |
           for mod in $(find . -name 'go.mod' -exec dirname {} \; | sort); do
             echo "Tidying $mod..."
