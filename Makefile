@@ -1,4 +1,4 @@
-.PHONY: help build run test clean fmt lint lint-fix vet tidy deps install dev hot check coverage b r t c f l lf v check-deps
+.PHONY: help build build-bin run test clean fmt lint lint-fix vet tidy deps install dev hot check coverage b r t c f l lf v check-deps
 
 # Default target
 .DEFAULT_GOAL := help
@@ -10,6 +10,10 @@ BUILD_DIR=./bin
 GO=go
 GOFLAGS=-v
 LDFLAGS=-ldflags "-s -w"
+CURDIR=$(shell pwd)
+
+# Find all Go modules in the workspace
+MODULES := $(shell find . -name 'go.mod' -exec dirname {} \; | sort)
 
 # Colors for output
 RED=\033[0;31m
@@ -23,7 +27,8 @@ help:
 	@echo "$(BLUE)Available targets:$(NC)"
 	@echo ""
 	@echo "$(GREEN)Build & Run:$(NC)"
-	@echo "  make build (b)      - Build the application"
+	@echo "  make build (b)      - Build all modules"
+	@echo "  make build-bin      - Build the nexus binary"
 	@echo "  make run (r)        - Run the application"
 	@echo "  make dev (d)        - Run in development mode with live reload"
 	@echo "  make install (i)    - Install the binary to GOPATH/bin"
@@ -31,13 +36,13 @@ help:
 	@echo ""
 	@echo "$(GREEN)Code Quality:$(NC)"
 	@echo "  make fmt (f)        - Format code with gofmt and goimports"
-	@echo "  make lint (l)       - Run linter (golangci-lint)"
-	@echo "  make lint-fix (lf)  - Run linter with auto-fix"
-	@echo "  make vet (v)        - Run go vet"
+	@echo "  make lint (l)       - Run linter across all modules (golangci-lint)"
+	@echo "  make lint-fix (lf)  - Run linter with auto-fix across all modules"
+	@echo "  make vet (v)        - Run go vet across all modules"
 	@echo "  make check          - Run fmt, vet, and lint"
 	@echo ""
 	@echo "$(GREEN)Testing:$(NC)"
-	@echo "  make test (t)       - Run tests"
+	@echo "  make test (t)       - Run tests across all modules"
 	@echo "  make test-verbose   - Run tests with verbose output"
 	@echo "  make test-race      - Run tests with race detector"
 	@echo "  make coverage       - Generate test coverage report"
@@ -45,7 +50,7 @@ help:
 	@echo ""
 	@echo "$(GREEN)Dependencies:$(NC)"
 	@echo "  make deps           - Install development dependencies"
-	@echo "  make tidy           - Tidy and verify go modules"
+	@echo "  make tidy           - Tidy and sync all go modules"
 	@echo "  make mod-download   - Download go modules"
 	@echo "  make mod-verify     - Verify go modules"
 	@echo ""
@@ -57,8 +62,17 @@ help:
 	@echo "  make all            - Run check, test, and build"
 	@echo "  make help (h)       - Show this help message"
 
-## build (b): Build the application
+## build (b): Build all modules
 build b:
+	@echo "$(BLUE)Building all modules...$(NC)"
+	@for mod in $(MODULES); do \
+		echo "  Building $$mod..."; \
+		(cd $$mod && $(GO) build ./...) || exit 1; \
+	done
+	@echo "$(GREEN)✓ All modules built$(NC)"
+
+## build-bin: Build the nexus binary
+build-bin:
 	@echo "$(BLUE)Building $(BINARY_NAME)...$(NC)"
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
@@ -81,7 +95,7 @@ dev d:
 hot: dev
 
 ## install (i): Install binary to GOPATH/bin
-install i: build
+install i: build-bin
 	@echo "$(BLUE)Installing $(BINARY_NAME)...$(NC)"
 	$(GO) install $(CMD_DIR)
 	@echo "$(GREEN)✓ Installed to $(shell go env GOPATH)/bin/$(BINARY_NAME)$(NC)"
@@ -100,27 +114,36 @@ clean c:
 fmt f:
 	@echo "$(BLUE)Formatting code...$(NC)"
 	@gofmt -s -w .
-	@command -v goimports >/dev/null 2>&1 && goimports -w -local github.com/xraph/ctrlplane . || echo "$(YELLOW)goimports not found, skipping (run: go install golang.org/x/tools/cmd/goimports@latest)$(NC)"
+	@command -v goimports >/dev/null 2>&1 && goimports -w -local github.com/xraph/nexus . || echo "$(YELLOW)goimports not found, skipping (run: go install golang.org/x/tools/cmd/goimports@latest)$(NC)"
 	@echo "$(GREEN)✓ Formatting complete$(NC)"
 
-## lint (l): Run linter
+## lint (l): Run linter across all modules
 lint l:
-	@echo "$(BLUE)Running linter...$(NC)"
+	@echo "$(BLUE)Running linter across all modules...$(NC)"
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "$(RED)golangci-lint not found. Install: https://golangci-lint.run/usage/install/$(NC)"; exit 1; }
-	golangci-lint run ./...
+	@for mod in $(MODULES); do \
+		echo "  Linting $$mod..."; \
+		(cd $$mod && golangci-lint run ./...) || exit 1; \
+	done
 	@echo "$(GREEN)✓ Linting complete$(NC)"
 
-## lint-fix (lf): Run linter with auto-fix
+## lint-fix (lf): Run linter with auto-fix across all modules
 lint-fix lf:
-	@echo "$(BLUE)Running linter with auto-fix...$(NC)"
+	@echo "$(BLUE)Running linter with auto-fix across all modules...$(NC)"
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "$(RED)golangci-lint not found. Install: https://golangci-lint.run/usage/install/$(NC)"; exit 1; }
-	golangci-lint run --fix ./...
+	@for mod in $(MODULES); do \
+		echo "  Linting $$mod..."; \
+		(cd $$mod && golangci-lint run --fix ./...) || exit 1; \
+	done
 	@echo "$(GREEN)✓ Linting with fixes complete$(NC)"
 
-## vet (v): Run go vet
+## vet (v): Run go vet across all modules
 vet v:
-	@echo "$(BLUE)Running go vet...$(NC)"
-	$(GO) vet ./...
+	@echo "$(BLUE)Running go vet across all modules...$(NC)"
+	@for mod in $(MODULES); do \
+		echo "  Vetting $$mod..."; \
+		(cd $$mod && $(GO) vet ./...) || exit 1; \
+	done
 	@echo "$(GREEN)✓ Vet complete$(NC)"
 
 ## check: Run fmt, vet, and lint
@@ -131,24 +154,33 @@ check:
 	@$(MAKE) lint
 	@echo "$(GREEN)✓ All checks passed$(NC)"
 
-## test (t): Run tests
+## test (t): Run tests across all modules
 test t:
-	@echo "$(BLUE)Running tests...$(NC)"
-	$(GO) test -v ./...
+	@echo "$(BLUE)Running tests across all modules...$(NC)"
+	@for mod in $(MODULES); do \
+		echo "  Testing $$mod..."; \
+		(cd $$mod && $(GO) test ./...) || exit 1; \
+	done
 	@echo "$(GREEN)✓ Tests complete$(NC)"
 
-## test-verbose: Run tests with verbose output
+## test-verbose: Run tests with verbose output across all modules
 test-verbose:
-	@echo "$(BLUE)Running tests (verbose)...$(NC)"
-	$(GO) test -v -count=1 ./...
+	@echo "$(BLUE)Running tests (verbose) across all modules...$(NC)"
+	@for mod in $(MODULES); do \
+		echo "  Testing $$mod..."; \
+		(cd $$mod && $(GO) test -v -count=1 ./...) || exit 1; \
+	done
 
-## test-race: Run tests with race detector
+## test-race: Run tests with race detector across all modules
 test-race:
-	@echo "$(BLUE)Running tests with race detector...$(NC)"
-	$(GO) test -race -v ./...
+	@echo "$(BLUE)Running tests with race detector across all modules...$(NC)"
+	@for mod in $(MODULES); do \
+		echo "  Testing $$mod..."; \
+		(cd $$mod && $(GO) test -race -count=1 ./...) || exit 1; \
+	done
 	@echo "$(GREEN)✓ Race tests complete$(NC)"
 
-## coverage: Generate test coverage
+## coverage: Generate test coverage (root module only)
 coverage:
 	@echo "$(BLUE)Generating coverage report...$(NC)"
 	$(GO) test -coverprofile=coverage.out ./...
@@ -162,12 +194,15 @@ coverage-html: coverage
 	@echo "$(GREEN)✓ HTML coverage report: coverage.html$(NC)"
 	@command -v open >/dev/null 2>&1 && open coverage.html || echo "Open coverage.html in your browser"
 
-## tidy: Tidy and verify modules
+## tidy: Tidy and sync all modules
 tidy:
-	@echo "$(BLUE)Tidying modules...$(NC)"
-	$(GO) mod tidy
-	$(GO) mod verify
-	@echo "$(GREEN)✓ Modules tidied$(NC)"
+	@echo "$(BLUE)Tidying all modules...$(NC)"
+	@for mod in $(MODULES); do \
+		echo "  Tidying $$mod..."; \
+		(cd $$mod && $(GO) mod tidy) || exit 1; \
+	done
+	$(GO) work sync
+	@echo "$(GREEN)✓ All modules tidied$(NC)"
 
 ## deps: Install development dependencies
 deps:
@@ -190,13 +225,17 @@ check-deps:
 ## mod-download: Download modules
 mod-download:
 	@echo "$(BLUE)Downloading modules...$(NC)"
-	$(GO) mod download
+	@for mod in $(MODULES); do \
+		(cd $$mod && $(GO) mod download) || exit 1; \
+	done
 	@echo "$(GREEN)✓ Modules downloaded$(NC)"
 
 ## mod-verify: Verify modules
 mod-verify:
 	@echo "$(BLUE)Verifying modules...$(NC)"
-	$(GO) mod verify
+	@for mod in $(MODULES); do \
+		(cd $$mod && $(GO) mod verify) || exit 1; \
+	done
 	@echo "$(GREEN)✓ Modules verified$(NC)"
 
 ## docs: Serve documentation locally
@@ -216,9 +255,7 @@ all: check test build
 
 # Short aliases
 h: help
-b: build
 r: run
-t: test
 c: clean
 f: fmt
 l: lint

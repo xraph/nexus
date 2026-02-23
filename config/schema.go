@@ -38,10 +38,27 @@ type ServerConfig struct {
 // ProviderConfig configures a single provider.
 type ProviderConfig struct {
 	Name    string   `json:"name" yaml:"name"`
-	Type    string   `json:"type" yaml:"type"` // "openai", "anthropic", "opencompat"
+	Type    string   `json:"type" yaml:"type"` // "openai", "anthropic", "opencompat", "groq", "gemini", etc.
 	APIKey  string   `json:"api_key" yaml:"api_key"`
 	BaseURL string   `json:"base_url,omitempty" yaml:"base_url"`
 	Models  []string `json:"models,omitempty" yaml:"models"`
+
+	// Azure OpenAI specific
+	ResourceName string `json:"resource_name,omitempty" yaml:"resource_name"`
+	DeploymentID string `json:"deployment_id,omitempty" yaml:"deployment_id"`
+	APIVersion   string `json:"api_version,omitempty" yaml:"api_version"`
+
+	// AWS Bedrock specific
+	Region         string `json:"region,omitempty" yaml:"region"`
+	AccessKeyID    string `json:"access_key_id,omitempty" yaml:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key,omitempty" yaml:"secret_access_key"`
+	SessionToken   string `json:"session_token,omitempty" yaml:"session_token"`
+
+	// Google Vertex AI specific
+	ProjectID      string `json:"project_id,omitempty" yaml:"project_id"`
+	Location       string `json:"location,omitempty" yaml:"location"`
+	AccessToken    string `json:"access_token,omitempty" yaml:"access_token"`
+	CredentialFile string `json:"credential_file,omitempty" yaml:"credential_file"`
 }
 
 // RoutingConfig configures the routing strategy.

@@ -4,10 +4,12 @@ on:
   push:
     tags:
       - "v*"
+      - "providers/*/v*"
+      - "config/v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g., v1.0.0)'
+        description: 'Release tag (e.g., v1.0.0 or providers/openai/v1.0.0)'
         required: true
         type: string
 
@@ -40,18 +42,35 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+          # Extract module path from tag (e.g., providers/openai/v1.0.0 -> providers/openai)
+          if [[ "$TAG" == providers/* ]] || [[ "$TAG" == config/* ]]; then
+            MODULE_PATH=$(echo "$TAG" | sed 's|/v[0-9].*||')
+            VERSION=$(echo "$TAG" | grep -oP 'v[0-9].*')
+          else
+            MODULE_PATH="."
+            VERSION="$TAG"
+          fi
+          echo "module_path=$MODULE_PATH" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
           go-version: "1.25.7"
           cache: true
-          cache-dependency-path: go.sum
+          cache-dependency-path: "**/go.sum"
 
-      - name: Verify build
+      - name: Verify build (all modules)
         run: |
-          go mod download
-          go build ./...
-          go test -race -count=1 ./...
+          go work sync
+          for mod in $(find . -name 'go.mod' -exec dirname {} \; | sort); do
+            echo "Building $mod..."
+            (cd "$mod" && go build ./...)
+          done
+          for mod in $(find . -name 'go.mod' -exec dirname {} \; | sort); do
+            echo "Testing $mod..."
+            (cd "$mod" && go test -race -count=1 ./...)
+          done
 
       - name: Generate release notes
         id: notes
