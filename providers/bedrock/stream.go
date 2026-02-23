@@ -87,7 +87,6 @@ type metadataEvent struct {
 	Usage *converseUsage `json:"usage,omitempty"`
 }
 
-
 func (s *bedrockStream) Next(ctx context.Context) (*provider.StreamChunk, error) {
 	if s.done {
 		return nil, io.EOF
