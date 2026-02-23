@@ -56,7 +56,7 @@ func TestStream_MessageStart_CapturesID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	chunk, err := stream.Next(ctx)
 	if err != nil {
@@ -143,7 +143,7 @@ func TestStream_ContentBlockDelta_TextDelta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	// Collect all text deltas
 	var collected string
@@ -206,7 +206,7 @@ func TestStream_ContentBlockDelta_ProviderAndModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	chunk, err := stream.Next(ctx)
 	if err != nil {
@@ -288,7 +288,7 @@ func TestStream_MessageDelta_StopReason(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CompleteStream() error: %v", err)
 			}
-			defer stream.Close()
+			defer func() { _ = stream.Close() }()
 
 			var lastChunk *provider.StreamChunk
 			for {
@@ -364,7 +364,7 @@ func TestStream_MessageDelta_Usage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	// Drain the stream
 	for {
@@ -442,7 +442,7 @@ func TestStream_MessageStop_ReturnsEOF(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	// Drain the stream
 	for {
@@ -576,7 +576,7 @@ func TestStream_EmptyContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	// Should immediately get EOF since there are no content_block_delta events
 	_, err = stream.Next(ctx)
@@ -633,7 +633,7 @@ func TestStream_IgnoresSSEComments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	chunk, err := stream.Next(ctx)
 	if err != nil {
@@ -700,7 +700,7 @@ func TestStream_UsageNilBeforeMessageDelta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	// Read one content chunk - usage should still be nil at this point
 	_, err = stream.Next(ctx)

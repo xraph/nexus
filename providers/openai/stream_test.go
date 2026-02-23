@@ -28,7 +28,7 @@ func TestStream_NormalChunks(t *testing.T) {
 	}
 
 	stream := startStream(t, chunks)
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	got := drainContent(t, stream)
 	if got != "Hello there" {
@@ -43,7 +43,7 @@ func TestStream_DoneSignal(t *testing.T) {
 	}
 
 	stream := startStream(t, chunks)
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	_ = drainContent(t, stream)
 
@@ -62,9 +62,9 @@ func TestStream_MalformedJSON(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 		// Write a chunk with malformed JSON.
-		fmt.Fprint(w, "data: {invalid json!}\n\n")
+		_, _ = fmt.Fprint(w, "data: {invalid json!}\n\n")
 		flusher.Flush()
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		flusher.Flush()
 	})
 
@@ -81,7 +81,7 @@ func TestStream_MalformedJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	_, err = stream.Next(ctx)
 	if err == nil {
@@ -97,7 +97,7 @@ func TestStream_UsageInFinalChunk(t *testing.T) {
 	}
 
 	stream := startStream(t, chunks)
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	// Drain the stream.
 	_ = drainContent(t, stream)
@@ -125,14 +125,14 @@ func TestStream_EmptyLinesAndComments(t *testing.T) {
 		flusher := w.(http.Flusher)
 
 		// Empty lines and SSE comments before/between data lines.
-		fmt.Fprint(w, "\n")
-		fmt.Fprint(w, ": this is an SSE comment\n")
-		fmt.Fprint(w, "\n")
-		fmt.Fprintf(w, "data: %s\n\n", testutil.OpenAIChunkJSON("id-1", "gpt-4o", "ok", ""))
-		fmt.Fprint(w, "\n")
-		fmt.Fprint(w, ": another comment\n")
-		fmt.Fprintf(w, "data: %s\n\n", testutil.OpenAIChunkJSON("id-1", "gpt-4o", "", "stop"))
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		_, _ = fmt.Fprint(w, "\n")
+		_, _ = fmt.Fprint(w, ": this is an SSE comment\n")
+		_, _ = fmt.Fprint(w, "\n")
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", testutil.OpenAIChunkJSON("id-1", "gpt-4o", "ok", ""))
+		_, _ = fmt.Fprint(w, "\n")
+		_, _ = fmt.Fprint(w, ": another comment\n")
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", testutil.OpenAIChunkJSON("id-1", "gpt-4o", "", "stop"))
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		flusher.Flush()
 	})
 
@@ -149,7 +149,7 @@ func TestStream_EmptyLinesAndComments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	got := drainContent(t, stream)
 	if got != "ok" {
@@ -187,7 +187,7 @@ func TestStream_ToolCalls(t *testing.T) {
 
 	chunks := []string{string(chunkJSON)}
 	stream := startStream(t, chunks)
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	ctx := context.Background()
 	chunk, err := stream.Next(ctx)
@@ -231,7 +231,7 @@ func TestStream_RoleInFirstChunk(t *testing.T) {
 	}
 
 	stream := startStream(t, chunks)
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	ctx := context.Background()
 	first, err := stream.Next(ctx)
@@ -250,7 +250,7 @@ func TestStream_NoUsageWithoutUsageChunk(t *testing.T) {
 	}
 
 	stream := startStream(t, chunks)
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	_ = drainContent(t, stream)
 
@@ -270,9 +270,9 @@ func TestStream_CloseStopsIteration(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 		for _, c := range chunks {
-			fmt.Fprintf(w, "data: %s\n\n", c)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", c)
 		}
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		flusher.Flush()
 	})
 
@@ -324,7 +324,7 @@ func TestStream_EmptyChoicesChunkSkipped(t *testing.T) {
 	}
 
 	stream := startStream(t, chunks)
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	ctx := context.Background()
 	chunk, err := stream.Next(ctx)
@@ -344,11 +344,11 @@ func TestStream_NonDataLinesIgnored(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 
-		fmt.Fprint(w, "event: ping\n")
-		fmt.Fprint(w, "id: 42\n")
-		fmt.Fprint(w, "retry: 5000\n")
-		fmt.Fprintf(w, "data: %s\n\n", testutil.OpenAIChunkJSON("id-1", "gpt-4o", "ok", "stop"))
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		_, _ = fmt.Fprint(w, "event: ping\n")
+		_, _ = fmt.Fprint(w, "id: 42\n")
+		_, _ = fmt.Fprint(w, "retry: 5000\n")
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", testutil.OpenAIChunkJSON("id-1", "gpt-4o", "ok", "stop"))
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		flusher.Flush()
 	})
 
@@ -365,7 +365,7 @@ func TestStream_NonDataLinesIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	got := drainContent(t, stream)
 	if got != "ok" {

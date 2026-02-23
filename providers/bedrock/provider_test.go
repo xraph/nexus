@@ -24,15 +24,15 @@ func bedrockMockServer(t *testing.T) *httptest.Server {
 			if r.URL.Path[len(r.URL.Path)-len("converse-with-response-stream"):] == "converse-with-response-stream" {
 				w.Header().Set("Content-Type", "text/event-stream")
 				flusher, _ := w.(http.Flusher)
-				fmt.Fprintf(w, "data: %s\n\n", `{"messageStart":{"role":"assistant"}}`)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", `{"messageStart":{"role":"assistant"}}`)
 				flusher.Flush()
-				fmt.Fprintf(w, "data: %s\n\n", `{"contentBlockDelta":{"delta":{"text":"Hello"},"contentBlockIndex":0}}`)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", `{"contentBlockDelta":{"delta":{"text":"Hello"},"contentBlockIndex":0}}`)
 				flusher.Flush()
-				fmt.Fprintf(w, "data: %s\n\n", `{"contentBlockDelta":{"delta":{"text":" world"},"contentBlockIndex":0}}`)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", `{"contentBlockDelta":{"delta":{"text":" world"},"contentBlockIndex":0}}`)
 				flusher.Flush()
-				fmt.Fprintf(w, "data: %s\n\n", `{"messageStop":{"stopReason":"end_turn"}}`)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", `{"messageStop":{"stopReason":"end_turn"}}`)
 				flusher.Flush()
-				fmt.Fprintf(w, "data: %s\n\n", `{"metadata":{"usage":{"inputTokens":5,"outputTokens":3,"totalTokens":8}}}`)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", `{"metadata":{"usage":{"inputTokens":5,"outputTokens":3,"totalTokens":8}}}`)
 				flusher.Flush()
 				return
 			}
@@ -149,7 +149,7 @@ func TestCompleteStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	var content string
 	var lastFinish string

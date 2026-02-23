@@ -245,7 +245,7 @@ func TestCompleteStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	var contents []string
 	var lastFinish string

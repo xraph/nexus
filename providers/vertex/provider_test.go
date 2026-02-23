@@ -37,9 +37,9 @@ func vertexMockServer(t *testing.T) *httptest.Server {
 			}
 			b1, _ := json.Marshal(chunk1)
 			b2, _ := json.Marshal(chunk2)
-			fmt.Fprintf(w, "data: %s\n\n", b1)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", b1)
 			flusher.Flush()
-			fmt.Fprintf(w, "data: %s\n\n", b2)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", b2)
 			flusher.Flush()
 			return
 		}
@@ -177,7 +177,7 @@ func TestCompleteStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	var content string
 	var lastFinish string

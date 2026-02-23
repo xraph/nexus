@@ -5,7 +5,6 @@ package openrouter
 
 import (
 	"context"
-	"net/http"
 
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/providers/openai"
@@ -38,23 +37,6 @@ func New(apiKey string, opts ...Option) *Provider {
 	p.inner = openai.New(apiKey, openaiOpts...)
 	p.models = openRouterModels()
 	return p
-}
-
-// headerTransport adds OpenRouter-specific headers to every request.
-type headerTransport struct {
-	base     http.RoundTripper
-	siteURL  string
-	siteName string
-}
-
-func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t.siteURL != "" {
-		req.Header.Set("HTTP-Referer", t.siteURL)
-	}
-	if t.siteName != "" {
-		req.Header.Set("X-Title", t.siteName)
-	}
-	return t.base.RoundTrip(req)
 }
 
 // Name returns the provider identifier.

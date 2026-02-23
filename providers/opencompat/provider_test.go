@@ -463,7 +463,7 @@ func TestCompleteStream_DelegatesToInnerProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream() returned error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	// Read at least one chunk to verify streaming works
 	chunk, err := stream.Next(ctx)

@@ -87,12 +87,6 @@ type metadataEvent struct {
 	Usage *converseUsage `json:"usage,omitempty"`
 }
 
-// Active tool call state for accumulating partial tool use input.
-type activeToolCall struct {
-	id    string
-	name  string
-	input strings.Builder
-}
 
 func (s *bedrockStream) Next(ctx context.Context) (*provider.StreamChunk, error) {
 	if s.done {
