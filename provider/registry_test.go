@@ -15,7 +15,7 @@ type mockProvider struct {
 	models  []provider.Model
 }
 
-func (m *mockProvider) Name() string                     { return m.name }
+func (m *mockProvider) Name() string                        { return m.name }
 func (m *mockProvider) Capabilities() provider.Capabilities { return m.caps }
 func (m *mockProvider) Models(_ context.Context) ([]provider.Model, error) {
 	return m.models, nil

@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/xraph/nexus/testutil"
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/providers/opencompat"
+	"github.com/xraph/nexus/testutil"
 )
 
 func TestNew(t *testing.T) {

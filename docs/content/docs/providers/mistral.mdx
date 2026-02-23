@@ -1,0 +1,49 @@
+---
+title: Mistral
+description: Use Mistral models with Nexus — embeddings, vision, and code generation.
+---
+
+Mistral offers high-performance models with embeddings, vision, and code generation support. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/mistral"
+```
+
+## Quick Start
+
+```go
+provider := mistral.New(os.Getenv("MISTRAL_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `mistral.WithBaseURL(url)` | Override the API base URL (default: `https://api.mistral.ai/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | Yes |
+| Vision | Yes |
+| Tools | Yes |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `mistral-large-latest` | 128K | 8,192 | $2.00/M | $6.00/M |
+| `mistral-small-latest` | 32K | 8,192 | $0.10/M | $0.30/M |
+| `codestral-latest` | 32K | 8,192 | $0.30/M | $0.90/M |
+| `pixtral-large-latest` | 128K | 8,192 | $2.00/M | $6.00/M |
+| `mistral-embed` | 8,192 | — | $0.10/M | — |

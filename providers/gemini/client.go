@@ -58,11 +58,11 @@ type geminiFuncResult struct {
 }
 
 type generationConfig struct {
-	MaxOutputTokens int      `json:"maxOutputTokens,omitempty"`
-	Temperature     *float64 `json:"temperature,omitempty"`
-	TopP            *float64 `json:"topP,omitempty"`
-	StopSequences   []string `json:"stopSequences,omitempty"`
-	ResponseMimeType string  `json:"responseMimeType,omitempty"`
+	MaxOutputTokens  int      `json:"maxOutputTokens,omitempty"`
+	Temperature      *float64 `json:"temperature,omitempty"`
+	TopP             *float64 `json:"topP,omitempty"`
+	StopSequences    []string `json:"stopSequences,omitempty"`
+	ResponseMimeType string   `json:"responseMimeType,omitempty"`
 }
 
 type geminiToolConfig struct {

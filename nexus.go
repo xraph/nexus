@@ -55,8 +55,8 @@ type Gateway struct {
 	guard     guard.Service
 	tenant    tenant.Service
 	key       key.Service
-	usage usage.Service
-	model model.Service
+	usage     usage.Service
+	model     model.Service
 
 	// Model alias registry
 	aliasRegistry model.AliasRegistry

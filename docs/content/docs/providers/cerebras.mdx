@@ -1,0 +1,46 @@
+---
+title: Cerebras
+description: Use Cerebras Wafer Scale Engine for ultra-fast Llama inference with Nexus.
+---
+
+Cerebras provides ultra-fast inference on their Wafer Scale Engine hardware. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/cerebras"
+```
+
+## Quick Start
+
+```go
+provider := cerebras.New(os.Getenv("CEREBRAS_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `cerebras.WithBaseURL(url)` | Override the API base URL (default: `https://api.cerebras.ai/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | No |
+| Vision | No |
+| Tools | No |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `llama3.1-8b` | 8,192 | 4,096 | $0.10/M | $0.10/M |
+| `llama3.1-70b` | 8,192 | 4,096 | $0.60/M | $0.60/M |

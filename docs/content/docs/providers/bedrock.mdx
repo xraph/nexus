@@ -1,0 +1,66 @@
+---
+title: Amazon Bedrock
+description: Use Amazon Bedrock models with Nexus — AWS SigV4 auth and Converse API.
+---
+
+The Amazon Bedrock provider connects to the AWS Bedrock Converse API. It uses AWS SigV4 request signing instead of API keys, and the Converse API format instead of OpenAI's.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/bedrock"
+```
+
+## Quick Start
+
+```go
+provider := bedrock.New(
+    os.Getenv("AWS_ACCESS_KEY_ID"),
+    os.Getenv("AWS_SECRET_ACCESS_KEY"),
+    "us-east-1",
+)
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `bedrock.WithBaseURL(url)` | Override the API base URL (default: constructed from region) |
+| `bedrock.WithSessionToken(token)` | AWS session token for temporary credentials |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | No |
+| Vision | No |
+| Tools | Yes |
+| Thinking | No |
+
+## Authentication
+
+Bedrock uses AWS credentials instead of API keys:
+
+```go
+// Standard credentials
+provider := bedrock.New(accessKeyID, secretAccessKey, region)
+
+// With temporary session token (STS)
+provider := bedrock.New(accessKeyID, secretAccessKey, region,
+    bedrock.WithSessionToken(sessionToken),
+)
+```
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `anthropic.claude-3-5-sonnet-20241022-v2:0` | 200K | 8,192 | $3.00/M | $15.00/M |
+| `meta.llama3-1-70b-instruct-v1:0` | 131K | 4,096 | $2.65/M | $3.50/M |
+| `amazon.titan-text-express-v1` | 8,192 | 4,096 | $0.20/M | $0.60/M |

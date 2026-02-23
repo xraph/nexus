@@ -1,0 +1,46 @@
+---
+title: Hyperbolic
+description: Use Hyperbolic for open-source model inference with Nexus.
+---
+
+Hyperbolic provides inference for open-source models. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/hyperbolic"
+```
+
+## Quick Start
+
+```go
+provider := hyperbolic.New(os.Getenv("HYPERBOLIC_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `hyperbolic.WithBaseURL(url)` | Override the API base URL (default: `https://api.hyperbolic.xyz/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | No |
+| Vision | No |
+| Tools | No |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `meta-llama/Llama-3.1-8B-Instruct` | 131K | 4,096 | $0.06/M | $0.06/M |
+| `meta-llama/Llama-3.1-405B-Instruct` | 131K | 4,096 | $4.00/M | $4.00/M |

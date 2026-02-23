@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/xraph/nexus/providertest"
 	"github.com/xraph/nexus/provider"
+	"github.com/xraph/nexus/providertest"
 )
 
 func voyageMockServer(t *testing.T) *httptest.Server {

@@ -1,0 +1,52 @@
+---
+title: OpenAI
+description: Use OpenAI models (GPT-4o, o1, embeddings) with Nexus.
+---
+
+The OpenAI provider connects to the OpenAI API for chat completions, streaming, embeddings, vision, and tool calling.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/openai"
+```
+
+## Quick Start
+
+```go
+provider := openai.New(os.Getenv("OPENAI_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `openai.WithBaseURL(url)` | Override the API base URL (default: `https://api.openai.com/v1`) |
+| `openai.WithOrgID(id)` | Set the `OpenAI-Organization` header |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | Yes |
+| Vision | Yes |
+| Tools | Yes |
+| Thinking | Yes (o-series models) |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `gpt-4o` | 128K | 16,384 | $2.50/M | $10.00/M |
+| `gpt-4o-mini` | 128K | 16,384 | $0.15/M | $0.60/M |
+| `gpt-4-turbo` | 128K | 4,096 | $10.00/M | $30.00/M |
+| `o1` | 200K | 100K | $15.00/M | $60.00/M |
+| `o1-mini` | 128K | 65,536 | $3.00/M | $12.00/M |
+| `text-embedding-3-small` | 8,191 | — | $0.02/M | — |
+| `text-embedding-3-large` | 8,191 | — | $0.13/M | — |

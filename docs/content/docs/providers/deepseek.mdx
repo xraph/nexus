@@ -1,0 +1,46 @@
+---
+title: DeepSeek
+description: Use DeepSeek reasoning models (R1) and chat models with Nexus.
+---
+
+DeepSeek offers reasoning-capable models including DeepSeek-R1 with extended thinking support. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/deepseek"
+```
+
+## Quick Start
+
+```go
+provider := deepseek.New(os.Getenv("DEEPSEEK_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `deepseek.WithBaseURL(url)` | Override the API base URL (default: `https://api.deepseek.com`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | No |
+| Vision | No |
+| Tools | Yes |
+| Thinking | Yes (R1 model) |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `deepseek-chat` | 65,536 | 8,192 | $0.27/M | $1.10/M |
+| `deepseek-reasoner` | 65,536 | 8,192 | $0.55/M | $2.19/M |

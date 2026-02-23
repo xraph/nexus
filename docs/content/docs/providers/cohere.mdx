@@ -1,0 +1,49 @@
+---
+title: Cohere
+description: Use Cohere Command and Embed models with Nexus — native embeddings with input types.
+---
+
+The Cohere provider connects to the Cohere v2 Chat API. It has a custom API format with native embedding support including `input_type` fields.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/cohere"
+```
+
+## Quick Start
+
+```go
+provider := cohere.New(os.Getenv("COHERE_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `cohere.WithBaseURL(url)` | Override the API base URL (default: `https://api.cohere.com`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | Yes |
+| Vision | No |
+| Tools | Yes |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `command-r-plus` | 128K | 4,096 | $2.50/M | $10.00/M |
+| `command-r` | 128K | 4,096 | $0.15/M | $0.60/M |
+| `command-light` | 4,096 | 4,096 | $0.30/M | $0.60/M |
+| `embed-v4.0` | 512 | — | $0.10/M | — |
+| `embed-multilingual-v3.0` | 512 | — | $0.10/M | — |

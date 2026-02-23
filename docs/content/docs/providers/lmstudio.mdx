@@ -1,0 +1,49 @@
+---
+title: LM Studio
+description: Run models locally with LM Studio and connect to Nexus — no API key required.
+---
+
+LM Studio runs models locally and exposes an OpenAI-compatible API. No API key is required.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/lmstudio"
+```
+
+## Quick Start
+
+```go
+provider := lmstudio.New()
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+No API key is needed. LM Studio connects to `http://localhost:1234/v1` by default.
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `lmstudio.WithBaseURL(url)` | Override the API base URL (default: `http://localhost:1234/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | Yes |
+| Vision | Yes |
+| Tools | Yes |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Price |
+|-------|---------|-----------|-------|
+| `lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF` | 131K | 4,096 | Free (local) |
+| `lmstudio-community/Mistral-7B-Instruct-v0.3-GGUF` | 32,768 | 4,096 | Free (local) |
+| `nomic-ai/nomic-embed-text-v1.5-GGUF` | 8,192 | — | Free (local) |

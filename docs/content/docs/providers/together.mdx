@@ -1,0 +1,48 @@
+---
+title: Together AI
+description: Use Together AI for fast open-source model inference and embeddings with Nexus.
+---
+
+Together AI hosts popular open-source models with fast inference and embedding support. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/together"
+```
+
+## Quick Start
+
+```go
+provider := together.New(os.Getenv("TOGETHER_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `together.WithBaseURL(url)` | Override the API base URL (default: `https://api.together.xyz/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | Yes |
+| Vision | No |
+| Tools | Yes |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `meta-llama/Llama-3.3-70B-Instruct-Turbo` | 131K | 4,096 | $0.88/M | $0.88/M |
+| `meta-llama/Llama-3.1-405B-Instruct-Turbo` | 131K | 4,096 | $3.50/M | $3.50/M |
+| `meta-llama/Llama-3.1-8B-Instruct-Turbo` | 131K | 4,096 | $0.18/M | $0.18/M |
+| `togethercomputer/m2-bert-80M-8k-retrieval` | 8,192 | — | $0.008/M | — |

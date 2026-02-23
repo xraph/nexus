@@ -30,15 +30,15 @@ func newClient(apiKey, baseURL string) *client {
 
 // Cohere v2 chat request format.
 type cohereRequest struct {
-	Model       string           `json:"model"`
-	Messages    []cohereMessage  `json:"messages"`
-	MaxTokens   int              `json:"max_tokens,omitempty"`
-	Temperature *float64         `json:"temperature,omitempty"`
-	TopP        *float64         `json:"p,omitempty"`
-	Stop        []string         `json:"stop_sequences,omitempty"`
-	Stream      bool             `json:"stream,omitempty"`
-	Tools       []cohereTool     `json:"tools,omitempty"`
-	ResponseFormat *cohereRespFmt `json:"response_format,omitempty"`
+	Model          string          `json:"model"`
+	Messages       []cohereMessage `json:"messages"`
+	MaxTokens      int             `json:"max_tokens,omitempty"`
+	Temperature    *float64        `json:"temperature,omitempty"`
+	TopP           *float64        `json:"p,omitempty"`
+	Stop           []string        `json:"stop_sequences,omitempty"`
+	Stream         bool            `json:"stream,omitempty"`
+	Tools          []cohereTool    `json:"tools,omitempty"`
+	ResponseFormat *cohereRespFmt  `json:"response_format,omitempty"`
 }
 
 type cohereMessage struct {
@@ -64,10 +64,10 @@ type cohereRespFmt struct {
 
 // Cohere v2 chat response format.
 type cohereResponse struct {
-	ID           string              `json:"id"`
-	Message      cohereRespMessage   `json:"message"`
-	FinishReason string              `json:"finish_reason"`
-	Usage        cohereUsage         `json:"usage"`
+	ID           string            `json:"id"`
+	Message      cohereRespMessage `json:"message"`
+	FinishReason string            `json:"finish_reason"`
+	Usage        cohereUsage       `json:"usage"`
 }
 
 type cohereRespMessage struct {

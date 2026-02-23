@@ -1,0 +1,46 @@
+---
+title: Novita AI
+description: Use Novita AI for serverless open-source model inference with Nexus.
+---
+
+Novita AI provides serverless inference for open-source models. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/novita"
+```
+
+## Quick Start
+
+```go
+provider := novita.New(os.Getenv("NOVITA_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `novita.WithBaseURL(url)` | Override the API base URL (default: `https://api.novita.ai/v3/openai`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | No |
+| Vision | No |
+| Tools | No |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `meta-llama/llama-3.1-8b-instruct` | 131K | 4,096 | $0.08/M | $0.08/M |
+| `meta-llama/llama-3.1-70b-instruct` | 131K | 4,096 | $0.59/M | $0.79/M |

@@ -1,9 +1,9 @@
 ---
 title: Providers
-description: Register and manage LLM providers — OpenAI, Anthropic, or any OpenAI-compatible API.
+description: Register and manage LLM providers — 30 built-in providers covering all major LLM APIs.
 ---
 
-Nexus supports multiple LLM providers simultaneously. Each provider implements a unified interface for chat completions, streaming, embeddings, and model listing.
+Nexus supports 30+ LLM providers simultaneously. Each provider implements a unified interface for chat completions, streaming, embeddings, and model listing.
 
 ## Provider Interface
 
@@ -22,52 +22,81 @@ type Provider interface {
 
 ## Built-in Providers
 
-### OpenAI
+Nexus includes 30 provider implementations out of the box. Each is an independent Go module that can be imported separately.
+
+### Major Providers
+
+| Provider | Package | Chat | Embed | Vision | Tools | Thinking |
+|----------|---------|------|-------|--------|-------|----------|
+| [OpenAI](/docs/providers/openai) | `providers/openai` | Yes | Yes | Yes | Yes | Yes |
+| [Anthropic](/docs/providers/anthropic) | `providers/anthropic` | Yes | — | Yes | Yes | Yes |
+| [Google Gemini](/docs/providers/gemini) | `providers/gemini` | Yes | Yes | Yes | Yes | — |
+| [Cohere](/docs/providers/cohere) | `providers/cohere` | Yes | Yes | — | Yes | — |
+| [DeepSeek](/docs/providers/deepseek) | `providers/deepseek` | Yes | — | — | Yes | Yes |
+
+### Cloud Providers
+
+| Provider | Package | Auth | Chat | Embed | Vision | Tools |
+|----------|---------|------|------|-------|--------|-------|
+| [Azure OpenAI](/docs/providers/azureopenai) | `providers/azureopenai` | API Key | Yes | Yes | Yes | Yes |
+| [Amazon Bedrock](/docs/providers/bedrock) | `providers/bedrock` | AWS SigV4 | Yes | — | — | Yes |
+| [Google Vertex AI](/docs/providers/vertex) | `providers/vertex` | GCP OAuth2 | Yes | Yes | Yes | Yes |
+
+### Inference Providers
+
+| Provider | Package | Chat | Embed | Vision | Tools |
+|----------|---------|------|-------|--------|-------|
+| [Groq](/docs/providers/groq) | `providers/groq` | Yes | — | Yes | Yes |
+| [Together AI](/docs/providers/together) | `providers/together` | Yes | Yes | — | Yes |
+| [Mistral](/docs/providers/mistral) | `providers/mistral` | Yes | Yes | Yes | Yes |
+| [Fireworks AI](/docs/providers/fireworks) | `providers/fireworks` | Yes | Yes | — | Yes |
+| [Perplexity](/docs/providers/perplexity) | `providers/perplexity` | Yes | — | — | — |
+| [xAI (Grok)](/docs/providers/xai) | `providers/xai` | Yes | — | Yes | Yes |
+| [OpenRouter](/docs/providers/openrouter) | `providers/openrouter` | Yes | Yes | Yes | Yes |
+| [Cerebras](/docs/providers/cerebras) | `providers/cerebras` | Yes | — | — | — |
+| [SambaNova](/docs/providers/sambanova) | `providers/sambanova` | Yes | — | — | — |
+| [Deepinfra](/docs/providers/deepinfra) | `providers/deepinfra` | Yes | Yes | — | Yes |
+| [NVIDIA NIM](/docs/providers/nvidia) | `providers/nvidia` | Yes | Yes | — | Yes |
+| [Lepton AI](/docs/providers/lepton) | `providers/lepton` | Yes | — | — | — |
+| [Novita AI](/docs/providers/novita) | `providers/novita` | Yes | — | — | — |
+| [Anyscale](/docs/providers/anyscale) | `providers/anyscale` | Yes | — | — | — |
+| [Hyperbolic](/docs/providers/hyperbolic) | `providers/hyperbolic` | Yes | — | — | — |
+| [Nebius](/docs/providers/nebius) | `providers/nebius` | Yes | Yes | — | Yes |
+| [AI21](/docs/providers/ai21) | `providers/ai21` | Yes | — | — | Yes |
+
+### Local Providers
+
+| Provider | Package | API Key | Chat | Embed | Vision | Tools |
+|----------|---------|---------|------|-------|--------|-------|
+| [Ollama](/docs/providers/ollama) | `providers/ollama` | Not required | Yes | Yes | Yes | Yes |
+| [LM Studio](/docs/providers/lmstudio) | `providers/lmstudio` | Not required | Yes | Yes | Yes | Yes |
+
+### Embeddings-Only Providers
+
+| Provider | Package | Embed |
+|----------|---------|-------|
+| [Voyage AI](/docs/providers/voyageai) | `providers/voyageai` | Yes |
+| [Jina AI](/docs/providers/jinaai) | `providers/jinaai` | Yes |
+
+### Generic
+
+| Provider | Package | Description |
+|----------|---------|-------------|
+| [OpenAI-Compatible](/docs/providers/opencompat) | `providers/opencompat` | Connect any OpenAI-compatible API |
+
+## Quick Example
 
 ```go
-import "github.com/xraph/nexus/providers/openai"
+import (
+    "github.com/xraph/nexus/providers/openai"
+    "github.com/xraph/nexus/providers/anthropic"
+    "github.com/xraph/nexus/providers/groq"
+)
 
 gw := nexus.New(
     nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
-)
-```
-
-### Anthropic
-
-```go
-import "github.com/xraph/nexus/providers/anthropic"
-
-gw := nexus.New(
     nexus.WithProvider(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"))),
-)
-```
-
-### OpenAI-Compatible
-
-For any API that follows the OpenAI specification (Ollama, Together AI, Groq, etc.):
-
-```go
-import "github.com/xraph/nexus/providers/opencompat"
-
-gw := nexus.New(
-    nexus.WithProvider(opencompat.New("groq",
-        opencompat.WithBaseURL("https://api.groq.com/openai/v1"),
-        opencompat.WithAPIKey(os.Getenv("GROQ_API_KEY")),
-    )),
-)
-```
-
-## Multiple Providers
-
-Register as many providers as you need. The router decides which one handles each request:
-
-```go
-gw := nexus.New(
-    nexus.WithProvider(openai.New(openaiKey)),
-    nexus.WithProvider(anthropic.New(anthropicKey)),
-    nexus.WithProvider(opencompat.New("ollama",
-        opencompat.WithBaseURL("http://localhost:11434/v1"),
-    )),
+    nexus.WithProvider(groq.New(os.Getenv("GROQ_API_KEY"))),
 )
 ```
 
@@ -82,7 +111,7 @@ caps.Stream     // streaming responses
 caps.Embed      // embeddings
 caps.Vision     // image inputs
 caps.Tools      // tool/function calling
-caps.Thinking   // extended thinking (Anthropic)
+caps.Thinking   // extended thinking (Anthropic, DeepSeek R1)
 ```
 
 ## Provider Health

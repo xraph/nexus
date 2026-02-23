@@ -1,0 +1,47 @@
+---
+title: Nebius
+description: Use Nebius for EU-region AI inference and embeddings with Nexus.
+---
+
+Nebius provides EU-region AI inference services with embedding support. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/nebius"
+```
+
+## Quick Start
+
+```go
+provider := nebius.New(os.Getenv("NEBIUS_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `nebius.WithBaseURL(url)` | Override the API base URL (default: `https://api.studio.nebius.ai/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | Yes |
+| Vision | No |
+| Tools | Yes |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `meta-llama/Meta-Llama-3.1-8B-Instruct` | 131K | 4,096 | $0.08/M | $0.08/M |
+| `meta-llama/Meta-Llama-3.1-70B-Instruct` | 131K | 4,096 | $0.50/M | $0.50/M |
+| `BAAI/bge-m3` | 8,192 | — | $0.005/M | — |

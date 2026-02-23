@@ -49,8 +49,8 @@ type contentBlockDeltaEvent struct {
 }
 
 type blockDelta struct {
-	Text      string       `json:"text,omitempty"`
-	ToolUse   *toolUseDelta `json:"toolUse,omitempty"`
+	Text    string        `json:"text,omitempty"`
+	ToolUse *toolUseDelta `json:"toolUse,omitempty"`
 }
 
 type toolUseDelta struct {
@@ -59,7 +59,7 @@ type toolUseDelta struct {
 
 type contentBlockStartEvent struct {
 	Start             contentBlockStartBody `json:"start"`
-	ContentBlockIndex int                    `json:"contentBlockIndex"`
+	ContentBlockIndex int                   `json:"contentBlockIndex"`
 }
 
 type contentBlockStartBody struct {

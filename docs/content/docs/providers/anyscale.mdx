@@ -1,0 +1,46 @@
+---
+title: Anyscale
+description: Use Anyscale's Ray-based distributed inference with Nexus.
+---
+
+Anyscale provides Ray-based distributed inference for open-source models. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/anyscale"
+```
+
+## Quick Start
+
+```go
+provider := anyscale.New(os.Getenv("ANYSCALE_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `anyscale.WithBaseURL(url)` | Override the API base URL (default: `https://api.endpoints.anyscale.com/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | No |
+| Vision | No |
+| Tools | No |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `meta-llama/Llama-3-8b-chat-hf` | 8,192 | 4,096 | $0.15/M | $0.15/M |
+| `meta-llama/Llama-3-70b-chat-hf` | 8,192 | 4,096 | $1.00/M | $1.00/M |

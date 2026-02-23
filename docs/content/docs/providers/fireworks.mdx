@@ -1,0 +1,47 @@
+---
+title: Fireworks AI
+description: Use Fireworks AI for fast open-source model inference with Nexus.
+---
+
+Fireworks AI provides fast inference for open-source models with embedding support. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/fireworks"
+```
+
+## Quick Start
+
+```go
+provider := fireworks.New(os.Getenv("FIREWORKS_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `fireworks.WithBaseURL(url)` | Override the API base URL (default: `https://api.fireworks.ai/inference/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | Yes |
+| Vision | No |
+| Tools | Yes |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `accounts/fireworks/models/llama-v3p1-405b-instruct` | 131K | 4,096 | $3.00/M | $3.00/M |
+| `accounts/fireworks/models/llama-v3p1-8b-instruct` | 131K | 4,096 | $0.20/M | $0.20/M |
+| `accounts/fireworks/models/mixtral-8x22b-instruct` | 65,536 | 4,096 | $0.90/M | $0.90/M |

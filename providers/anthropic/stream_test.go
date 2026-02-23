@@ -5,9 +5,9 @@ import (
 	"io"
 	"testing"
 
-	"github.com/xraph/nexus/testutil"
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/providers/anthropic"
+	"github.com/xraph/nexus/testutil"
 )
 
 // --------------------------------------------------------------------

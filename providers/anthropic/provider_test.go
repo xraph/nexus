@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/xraph/nexus/providertest"
-	"github.com/xraph/nexus/testutil"
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/providers/anthropic"
+	"github.com/xraph/nexus/providertest"
+	"github.com/xraph/nexus/testutil"
 )
 
 // --------------------------------------------------------------------
@@ -83,9 +83,9 @@ func newMockProvider(t *testing.T) (*anthropic.Provider, *testutil.MockServer) {
 
 func anthropicCompletionResp() map[string]any {
 	return map[string]any{
-		"id":   "msg_test123",
-		"type": "message",
-		"role": "assistant",
+		"id":    "msg_test123",
+		"type":  "message",
+		"role":  "assistant",
 		"model": "claude-sonnet-4-5-20250514",
 		"content": []map[string]any{
 			{"type": "text", "text": "Hello! How can I help you?"},

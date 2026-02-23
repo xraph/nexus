@@ -49,10 +49,10 @@ type ProviderConfig struct {
 	APIVersion   string `json:"api_version,omitempty" yaml:"api_version"`
 
 	// AWS Bedrock specific
-	Region         string `json:"region,omitempty" yaml:"region"`
-	AccessKeyID    string `json:"access_key_id,omitempty" yaml:"access_key_id"`
+	Region          string `json:"region,omitempty" yaml:"region"`
+	AccessKeyID     string `json:"access_key_id,omitempty" yaml:"access_key_id"`
 	SecretAccessKey string `json:"secret_access_key,omitempty" yaml:"secret_access_key"`
-	SessionToken   string `json:"session_token,omitempty" yaml:"session_token"`
+	SessionToken    string `json:"session_token,omitempty" yaml:"session_token"`
 
 	// Google Vertex AI specific
 	ProjectID      string `json:"project_id,omitempty" yaml:"project_id"`

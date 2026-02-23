@@ -1,0 +1,47 @@
+---
+title: Deepinfra
+description: Use Deepinfra for serverless open-source model inference with Nexus.
+---
+
+Deepinfra provides serverless inference for open-source models with embedding support. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/deepinfra"
+```
+
+## Quick Start
+
+```go
+provider := deepinfra.New(os.Getenv("DEEPINFRA_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `deepinfra.WithBaseURL(url)` | Override the API base URL (default: `https://api.deepinfra.com/v1/openai`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | Yes |
+| Vision | No |
+| Tools | Yes |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `meta-llama/Meta-Llama-3.1-405B-Instruct` | 131K | 4,096 | $1.79/M | $1.79/M |
+| `meta-llama/Meta-Llama-3.1-8B-Instruct` | 131K | 4,096 | $0.06/M | $0.06/M |
+| `BAAI/bge-large-en-v1.5` | 512 | — | $0.01/M | — |

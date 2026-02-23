@@ -132,10 +132,10 @@ func TestModels_KnownModels(t *testing.T) {
 	}
 
 	known := map[string]bool{
-		"claude-sonnet-4-5-20250514":  false,
-		"claude-opus-4-5-20250630":    false,
-		"claude-3-5-haiku-20241022":   false,
-		"claude-3-5-sonnet-20241022":  false,
+		"claude-sonnet-4-5-20250514": false,
+		"claude-opus-4-5-20250630":   false,
+		"claude-3-5-haiku-20241022":  false,
+		"claude-3-5-sonnet-20241022": false,
 	}
 
 	for _, m := range models {

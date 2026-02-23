@@ -1,0 +1,63 @@
+---
+title: OpenAI-Compatible (Generic)
+description: Connect any OpenAI-compatible API to Nexus with the generic opencompat provider.
+---
+
+The `opencompat` provider is a generic wrapper for any API that follows the OpenAI specification. Use this when a dedicated provider package is not available, or when connecting to custom/self-hosted endpoints like vLLM, text-generation-inference, or LocalAI.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/opencompat"
+```
+
+## Quick Start
+
+```go
+provider := opencompat.New("my-provider",
+    "https://my-api.example.com/v1",
+    os.Getenv("MY_API_KEY"),
+)
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `opencompat.WithCapabilities(caps)` | Override the default capabilities |
+| `opencompat.WithModels(models)` | Provide a list of available models |
+
+## Capabilities
+
+Default capabilities are Chat and Streaming. Override with `WithCapabilities`:
+
+```go
+provider := opencompat.New("my-provider", baseURL, apiKey,
+    opencompat.WithCapabilities(provider.Capabilities{
+        Chat:       true,
+        Streaming:  true,
+        Embeddings: true,
+    }),
+)
+```
+
+## Custom Models
+
+Since `opencompat` has no built-in model catalog, provide models explicitly:
+
+```go
+provider := opencompat.New("vllm", baseURL, apiKey,
+    opencompat.WithModels([]provider.Model{
+        {
+            ID:            "meta-llama/Llama-3.1-8B-Instruct",
+            Name:          "Llama 3.1 8B",
+            Provider:      "vllm",
+            ContextWindow: 131072,
+        },
+    }),
+)
+```

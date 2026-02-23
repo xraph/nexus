@@ -47,13 +47,13 @@ type converseRequest struct {
 }
 
 type converseMessage struct {
-	Role    string           `json:"role"`
-	Content []contentBlock   `json:"content"`
+	Role    string         `json:"role"`
+	Content []contentBlock `json:"content"`
 }
 
 type contentBlock struct {
-	Text    string   `json:"text,omitempty"`
-	ToolUse *toolUse `json:"toolUse,omitempty"`
+	Text       string      `json:"text,omitempty"`
+	ToolUse    *toolUse    `json:"toolUse,omitempty"`
 	ToolResult *toolResult `json:"toolResult,omitempty"`
 }
 
@@ -64,8 +64,8 @@ type toolUse struct {
 }
 
 type toolResult struct {
-	ToolUseID string          `json:"toolUseId"`
-	Content   []contentBlock  `json:"content"`
+	ToolUseID string         `json:"toolUseId"`
+	Content   []contentBlock `json:"content"`
 }
 
 type systemContent struct {

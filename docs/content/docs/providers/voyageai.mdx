@@ -1,0 +1,48 @@
+---
+title: Voyage AI
+description: Use Voyage AI's high-quality text embeddings with Nexus — embeddings only.
+---
+
+Voyage AI specializes in high-quality text embeddings. This is an embeddings-only provider — chat completions and streaming are not supported.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/voyageai"
+```
+
+## Quick Start
+
+```go
+provider := voyageai.New(os.Getenv("VOYAGE_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `voyageai.WithBaseURL(url)` | Override the API base URL (default: `https://api.voyageai.com`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | No |
+| Streaming | No |
+| Embeddings | Yes |
+| Vision | No |
+| Tools | No |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Embed Price |
+|-------|---------|-------------|
+| `voyage-3` | 32,000 | $0.06/M |
+| `voyage-3-lite` | 32,000 | $0.02/M |
+| `voyage-code-3` | 32,000 | $0.06/M |
+| `voyage-finance-2` | 32,000 | $0.06/M |

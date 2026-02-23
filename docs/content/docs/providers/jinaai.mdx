@@ -1,0 +1,46 @@
+---
+title: Jina AI
+description: Use Jina AI embeddings with Nexus — embeddings only via OpenAI-compatible API.
+---
+
+Jina AI provides high-quality embeddings via an OpenAI-compatible API. This is an embeddings-only provider — chat completions and streaming are not supported.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/jinaai"
+```
+
+## Quick Start
+
+```go
+provider := jinaai.New(os.Getenv("JINA_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `jinaai.WithBaseURL(url)` | Override the API base URL (default: `https://api.jina.ai/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | No |
+| Streaming | No |
+| Embeddings | Yes |
+| Vision | No |
+| Tools | No |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Embed Price |
+|-------|---------|-------------|
+| `jina-embeddings-v3` | 8,192 | $0.02/M |
+| `jina-clip-v2` | 8,192 | $0.02/M |

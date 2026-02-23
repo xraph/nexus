@@ -1,0 +1,76 @@
+---
+title: Google Vertex AI
+description: Use Vertex AI-hosted Gemini models with Nexus — GCP OAuth2 auth with project/location routing.
+---
+
+The Vertex AI provider connects to Google Cloud's Vertex AI platform. It uses the same Gemini API format but with OAuth2 Bearer token authentication and project/location-based URL routing.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/vertex"
+```
+
+## Quick Start
+
+```go
+// With service account credentials (recommended)
+creds, _ := os.ReadFile("service-account.json")
+provider := vertex.New(
+    vertex.WithProjectID("my-project"),
+    vertex.WithLocation("us-central1"),
+    vertex.WithCredentialsJSON(creds),
+)
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `vertex.WithProjectID(id)` | Google Cloud project ID |
+| `vertex.WithLocation(loc)` | GCP region (default: `us-central1`) |
+| `vertex.WithAccessToken(token)` | Static OAuth2 access token |
+| `vertex.WithCredentialsJSON(json)` | Service account JSON for automatic token management |
+| `vertex.WithBaseURL(url)` | Override the full base URL directly |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | Yes |
+| Vision | Yes |
+| Tools | Yes |
+| Thinking | No |
+
+## Authentication
+
+Vertex AI uses Google Cloud OAuth2 instead of API keys:
+
+```go
+// Option 1: Service account JSON (auto-refreshing tokens)
+creds, _ := os.ReadFile("service-account.json")
+provider := vertex.New(
+    vertex.WithProjectID("my-project"),
+    vertex.WithCredentialsJSON(creds),
+)
+
+// Option 2: Static access token (e.g., from gcloud auth)
+provider := vertex.New(
+    vertex.WithProjectID("my-project"),
+    vertex.WithAccessToken(os.Getenv("GCLOUD_ACCESS_TOKEN")),
+)
+```
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `gemini-2.0-flash` | 1M | 8,192 | $0.10/M | $0.40/M |
+| `gemini-1.5-pro` | 2M | 8,192 | $1.25/M | $5.00/M |
+| `text-embedding-004` | 2,048 | — | $0.025/M | — |

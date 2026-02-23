@@ -1,0 +1,50 @@
+---
+title: OpenRouter
+description: Access hundreds of models through OpenRouter's unified API with Nexus.
+---
+
+OpenRouter is a meta-router that gives access to many models from different providers via a single API. Supports extra headers for site attribution.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/openrouter"
+```
+
+## Quick Start
+
+```go
+provider := openrouter.New(os.Getenv("OPENROUTER_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `openrouter.WithBaseURL(url)` | Override the API base URL (default: `https://openrouter.ai/api/v1`) |
+| `openrouter.WithSiteURL(url)` | Set the `HTTP-Referer` header for rankings |
+| `openrouter.WithSiteName(name)` | Set the `X-Title` header for rankings |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | Yes |
+| Vision | Yes |
+| Tools | Yes |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `openai/gpt-4o` | 128K | 16,384 | $2.50/M | $10.00/M |
+| `anthropic/claude-3.5-sonnet` | 200K | 8,192 | $3.00/M | $15.00/M |
+| `meta-llama/llama-3.1-405b-instruct` | 131K | 4,096 | $2.70/M | $2.70/M |
+| `google/gemini-2.0-flash-001` | 1M | 8,192 | $0.10/M | $0.40/M |

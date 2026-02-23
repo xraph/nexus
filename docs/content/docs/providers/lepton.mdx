@@ -1,0 +1,46 @@
+---
+title: Lepton AI
+description: Use Lepton AI's serverless GPU inference with Nexus.
+---
+
+Lepton AI provides serverless GPU inference for open-source models. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/lepton"
+```
+
+## Quick Start
+
+```go
+provider := lepton.New(os.Getenv("LEPTON_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `lepton.WithBaseURL(url)` | Override the API base URL (default: `https://api.lepton.ai/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | No |
+| Vision | No |
+| Tools | No |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `llama3.1-8b` | 131K | 4,096 | $0.07/M | $0.07/M |
+| `llama3.1-70b` | 131K | 4,096 | $0.80/M | $0.80/M |

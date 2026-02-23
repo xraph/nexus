@@ -1,0 +1,46 @@
+---
+title: SambaNova
+description: Use SambaNova's custom RDU silicon for AI inference with Nexus.
+---
+
+SambaNova provides AI inference on custom RDU (Reconfigurable Dataflow Unit) silicon. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/sambanova"
+```
+
+## Quick Start
+
+```go
+provider := sambanova.New(os.Getenv("SAMBANOVA_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `sambanova.WithBaseURL(url)` | Override the API base URL (default: `https://api.sambanova.ai/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | No |
+| Vision | No |
+| Tools | No |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `Meta-Llama-3.1-8B-Instruct` | 4,096 | 4,096 | $0.10/M | $0.10/M |
+| `Meta-Llama-3.1-405B-Instruct` | 4,096 | 4,096 | $5.00/M | $10.00/M |

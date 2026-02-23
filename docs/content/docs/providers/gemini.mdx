@@ -1,0 +1,49 @@
+---
+title: Google Gemini
+description: Use Google Gemini models with Nexus — vision, embeddings, and tool calling.
+---
+
+The Gemini provider connects to the Google Generative Language API. It uses a custom API format (`contents[]`, `generateContent` endpoint) with API key authentication.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/gemini"
+```
+
+## Quick Start
+
+```go
+provider := gemini.New(os.Getenv("GEMINI_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `gemini.WithBaseURL(url)` | Override the API base URL (default: `https://generativelanguage.googleapis.com`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | Yes |
+| Vision | Yes |
+| Tools | Yes |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `gemini-2.0-flash` | 1M | 8,192 | $0.10/M | $0.40/M |
+| `gemini-2.0-flash-lite` | 1M | 8,192 | $0.075/M | $0.30/M |
+| `gemini-1.5-pro` | 2M | 8,192 | $1.25/M | $5.00/M |
+| `gemini-1.5-flash` | 1M | 8,192 | $0.075/M | $0.30/M |
+| `text-embedding-004` | 2,048 | — | $0.025/M | — |

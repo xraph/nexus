@@ -1,0 +1,48 @@
+---
+title: Groq
+description: Use Groq's ultra-fast LPU inference with Nexus.
+---
+
+Groq provides ultra-fast inference via their custom LPU (Language Processing Unit) hardware. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/groq"
+```
+
+## Quick Start
+
+```go
+provider := groq.New(os.Getenv("GROQ_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `groq.WithBaseURL(url)` | Override the API base URL (default: `https://api.groq.com/openai/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | No |
+| Vision | Yes |
+| Tools | Yes |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `llama-3.3-70b-versatile` | 128K | 32,768 | $0.59/M | $0.79/M |
+| `llama-3.1-8b-instant` | 131K | 8,192 | $0.05/M | $0.08/M |
+| `mixtral-8x7b-32768` | 32,768 | 32,768 | $0.24/M | $0.24/M |
+| `gemma2-9b-it` | 8,192 | 8,192 | $0.20/M | $0.20/M |

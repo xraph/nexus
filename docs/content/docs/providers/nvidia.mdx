@@ -1,0 +1,47 @@
+---
+title: NVIDIA NIM
+description: Use NVIDIA NIM for GPU-optimized inference and embeddings with Nexus.
+---
+
+NVIDIA NIM provides GPU-optimized inference with embedding support. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/nvidia"
+```
+
+## Quick Start
+
+```go
+provider := nvidia.New(os.Getenv("NVIDIA_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `nvidia.WithBaseURL(url)` | Override the API base URL (default: `https://integrate.api.nvidia.com/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | Yes |
+| Vision | No |
+| Tools | Yes |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `meta/llama-3.1-405b-instruct` | 131K | 4,096 | $5.00/M | $16.00/M |
+| `meta/llama-3.1-8b-instruct` | 131K | 4,096 | $0.30/M | $0.50/M |
+| `nvidia/nv-embedqa-e5-v5` | 512 | — | $0.02/M | — |

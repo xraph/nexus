@@ -9,8 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/xraph/nexus/providertest"
 	"github.com/xraph/nexus/provider"
+	"github.com/xraph/nexus/providertest"
 )
 
 func vertexMockServer(t *testing.T) *httptest.Server {

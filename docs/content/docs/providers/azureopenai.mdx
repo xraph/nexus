@@ -1,0 +1,54 @@
+---
+title: Azure OpenAI
+description: Use Azure-hosted OpenAI models with Nexus — deployment-based URL and api-key auth.
+---
+
+The Azure OpenAI provider connects to Azure-hosted OpenAI deployments. It uses the same request/response format as OpenAI but with a different URL structure (`/openai/deployments/{id}/...`) and `api-key` header authentication.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/azureopenai"
+```
+
+## Quick Start
+
+```go
+provider := azureopenai.New(
+    os.Getenv("AZURE_OPENAI_API_KEY"),
+    azureopenai.WithResourceName("my-resource"),
+    azureopenai.WithDeploymentID("gpt-4o"),
+)
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `azureopenai.WithResourceName(name)` | Azure resource name (used to construct the base URL) |
+| `azureopenai.WithDeploymentID(id)` | Deployment ID for the model |
+| `azureopenai.WithAPIVersion(version)` | API version (default: `2024-08-01-preview`) |
+| `azureopenai.WithBaseURL(url)` | Override the full base URL directly |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | Yes |
+| Vision | Yes |
+| Tools | Yes |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `gpt-4o` | 128K | 16,384 | $2.50/M | $10.00/M |
+| `gpt-4o-mini` | 128K | 16,384 | $0.15/M | $0.60/M |
+| `text-embedding-3-small` | 8,191 | — | $0.02/M | — |

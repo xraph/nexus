@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/providertest"
 	"github.com/xraph/nexus/testutil"
-	"github.com/xraph/nexus/provider"
 )
 
 func TestName(t *testing.T) {

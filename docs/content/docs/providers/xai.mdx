@@ -1,0 +1,46 @@
+---
+title: xAI (Grok)
+description: Use xAI Grok models with Nexus — vision and tool calling support.
+---
+
+xAI offers the Grok family of models with vision and tool-calling support. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/xai"
+```
+
+## Quick Start
+
+```go
+provider := xai.New(os.Getenv("XAI_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `xai.WithBaseURL(url)` | Override the API base URL (default: `https://api.x.ai/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | No |
+| Vision | Yes |
+| Tools | Yes |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `grok-2` | 131K | 8,192 | $2.00/M | $10.00/M |
+| `grok-2-mini` | 131K | 8,192 | $0.30/M | $0.50/M |

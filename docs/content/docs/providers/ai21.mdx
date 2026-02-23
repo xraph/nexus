@@ -1,0 +1,46 @@
+---
+title: AI21
+description: Use AI21's Jamba models with Nexus — OpenAI-compatible API.
+---
+
+AI21's Jamba models use an OpenAI-compatible chat completions endpoint. Uses an OpenAI-compatible API.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/ai21"
+```
+
+## Quick Start
+
+```go
+provider := ai21.New(os.Getenv("AI21_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `ai21.WithBaseURL(url)` | Override the API base URL (default: `https://api.ai21.com/studio/v1`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | No |
+| Vision | No |
+| Tools | Yes |
+| Thinking | No |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `jamba-1.5-large` | 256K | 4,096 | $2.00/M | $8.00/M |
+| `jamba-1.5-mini` | 256K | 4,096 | $0.20/M | $0.40/M |

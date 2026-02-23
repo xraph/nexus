@@ -1,0 +1,48 @@
+---
+title: Anthropic
+description: Use Anthropic Claude models with Nexus — vision, tools, and extended thinking.
+---
+
+The Anthropic provider connects to the Anthropic Messages API for chat completions, streaming, vision, tool calling, and extended thinking.
+
+## Installation
+
+```go
+import "github.com/xraph/nexus/providers/anthropic"
+```
+
+## Quick Start
+
+```go
+provider := anthropic.New(os.Getenv("ANTHROPIC_API_KEY"))
+
+gw := nexus.New(
+    nexus.WithProvider(provider),
+)
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `anthropic.WithBaseURL(url)` | Override the API base URL (default: `https://api.anthropic.com`) |
+
+## Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Chat | Yes |
+| Streaming | Yes |
+| Embeddings | No |
+| Vision | Yes |
+| Tools | Yes |
+| Thinking | Yes |
+
+## Models
+
+| Model | Context | Max Output | Input Price | Output Price |
+|-------|---------|-----------|-------------|-------------|
+| `claude-sonnet-4-5-20250514` | 200K | 8,192 | $3.00/M | $15.00/M |
+| `claude-opus-4-5-20250630` | 200K | 8,192 | $15.00/M | $75.00/M |
+| `claude-3-5-haiku-20241022` | 200K | 8,192 | $0.80/M | $4.00/M |
+| `claude-3-5-sonnet-20241022` | 200K | 8,192 | $3.00/M | $15.00/M |
