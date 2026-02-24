@@ -81,9 +81,12 @@ func (e *pgMigrateExecutor) AcquireLock(ctx context.Context, lockedBy string) er
 func (e *pgMigrateExecutor) ReleaseLock(ctx context.Context) error {
 	query := fmt.Sprintf(`UPDATE %s SET locked_at = NULL, locked_by = NULL WHERE id = 1`,
 		lockTableName)
-	_, _ = e.pgdb.Exec(ctx, query)
+	_, err := e.pgdb.Exec(ctx, query)
+	if err != nil {
+		return err
+	}
 
-	_, err := e.pgdb.Exec(ctx, "SELECT pg_advisory_unlock(1)")
+	_, err = e.pgdb.Exec(ctx, "SELECT pg_advisory_unlock(1)")
 	return err
 }
 

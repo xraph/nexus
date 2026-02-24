@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/xraph/grove"
@@ -56,9 +57,16 @@ func tenantFromModel(m *tenantModel) (*tenant.Tenant, error) {
 		CreatedAt: m.CreatedAt,
 		UpdatedAt: m.UpdatedAt,
 	}
-	_ = json.Unmarshal([]byte(m.Quota), &t.Quota)
-	_ = json.Unmarshal([]byte(m.Config), &t.Config)
-	_ = json.Unmarshal([]byte(m.Metadata), &t.Metadata)
+
+	if err = json.Unmarshal([]byte(m.Quota), &t.Quota); err != nil {
+		return nil, fmt.Errorf("nexus: unmarshal quota: %w", err)
+	}
+	if err = json.Unmarshal([]byte(m.Config), &t.Config); err != nil {
+		return nil, fmt.Errorf("nexus: unmarshal config: %w", err)
+	}
+	if err = json.Unmarshal([]byte(m.Metadata), &t.Metadata); err != nil {
+		return nil, fmt.Errorf("nexus: unmarshal metadata: %w", err)
+	}
 	return t, nil
 }
 
@@ -117,8 +125,12 @@ func apiKeyFromModel(m *apiKeyModel) (*key.APIKey, error) {
 		LastUsedAt: m.LastUsedAt,
 		CreatedAt:  m.CreatedAt,
 	}
-	_ = json.Unmarshal([]byte(m.Scopes), &k.Scopes)
-	_ = json.Unmarshal([]byte(m.Metadata), &k.Metadata)
+	if err = json.Unmarshal([]byte(m.Scopes), &k.Scopes); err != nil {
+		return nil, fmt.Errorf("nexus: unmarshal scopes: %w", err)
+	}
+	if err = json.Unmarshal([]byte(m.Metadata), &k.Metadata); err != nil {
+		return nil, fmt.Errorf("nexus: unmarshal metadata: %w", err)
+	}
 	return k, nil
 }
 
