@@ -1,0 +1,4 @@
+github.com/xraph/grove v0.0.5 h1:nnOOcyDWAcoQeiq6wqmn9Rp2MFNUgI/WD9sXfEBehFQ=
+github.com/xraph/grove v0.0.5/go.mod h1:qJZlWlB7tvgSGlQ/xGKz4Z966QKe42++a0K78rAsQZU=
+github.com/xraph/grove/drivers/pgdriver v0.0.5 h1:r7be8v7n4W5lUfim+WvLJmAQVnQU0jXQ1q4bfowuQ8w=
+github.com/xraph/grove/drivers/pgdriver v0.0.5/go.mod h1:gEo3jIMTnrcM2YiD32J+Dl/PuaM7kikYovp3qPws3S4=
