@@ -15,8 +15,8 @@ type Capabilities struct {
 }
 
 // Supports checks if a capability is available by name.
-func (c Capabilities) Supports(cap string) bool {
-	switch cap {
+func (c Capabilities) Supports(capability string) bool {
+	switch capability {
 	case "chat":
 		return c.Chat
 	case "streaming":

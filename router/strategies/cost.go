@@ -18,7 +18,7 @@ func NewCostOptimized() *CostOptimizedStrategy {
 
 func (s *CostOptimizedStrategy) Name() string { return "cost_optimized" }
 
-func (s *CostOptimizedStrategy) Select(ctx context.Context, req *provider.CompletionRequest, candidates []router.Candidate) (*router.Candidate, error) {
+func (s *CostOptimizedStrategy) Select(_ context.Context, _ *provider.CompletionRequest, candidates []router.Candidate) (*router.Candidate, error) {
 	var best *router.Candidate
 	for i := range candidates {
 		c := &candidates[i]

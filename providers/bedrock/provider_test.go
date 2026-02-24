@@ -23,7 +23,10 @@ func bedrockMockServer(t *testing.T) *httptest.Server {
 		if r.URL.Path != "" && len(r.URL.Path) > 20 {
 			if r.URL.Path[len(r.URL.Path)-len("converse-with-response-stream"):] == "converse-with-response-stream" {
 				w.Header().Set("Content-Type", "text/event-stream")
-				flusher, _ := w.(http.Flusher)
+				flusher, ok := w.(http.Flusher)
+				if !ok {
+					return
+				}
 				_, _ = fmt.Fprintf(w, "data: %s\n\n", `{"messageStart":{"role":"assistant"}}`)
 				flusher.Flush()
 				_, _ = fmt.Fprintf(w, "data: %s\n\n", `{"contentBlockDelta":{"delta":{"text":"Hello"},"contentBlockIndex":0}}`)

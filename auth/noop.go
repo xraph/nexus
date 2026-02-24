@@ -16,7 +16,7 @@ func NewNoop(defaultTenant ...string) *NoopProvider {
 	return &NoopProvider{defaultTenant: t}
 }
 
-func (n *NoopProvider) Authenticate(ctx context.Context) (*Claims, error) {
+func (n *NoopProvider) Authenticate(_ context.Context) (*Claims, error) {
 	return &Claims{
 		Subject:  "anonymous",
 		TenantID: n.defaultTenant,
@@ -24,6 +24,6 @@ func (n *NoopProvider) Authenticate(ctx context.Context) (*Claims, error) {
 	}, nil
 }
 
-func (n *NoopProvider) AuthenticateAPIKey(ctx context.Context, key string) (*Claims, error) {
+func (n *NoopProvider) AuthenticateAPIKey(ctx context.Context, _ string) (*Claims, error) {
 	return n.Authenticate(ctx)
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,8 +20,8 @@ func (a *API) handleCreateCompletion(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
 
 	var req provider.CompletionRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+	if unmarshalErr := json.Unmarshal(body, &req); unmarshalErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+unmarshalErr.Error())
 		return
 	}
 
@@ -33,7 +34,7 @@ func (a *API) handleCreateCompletion(w http.ResponseWriter, r *http.Request) {
 
 	// Streaming
 	if req.Stream {
-		a.handleStreamCompletion(w, ctx, &req)
+		a.handleStreamCompletion(ctx, w, &req)
 		return
 	}
 
@@ -46,7 +47,7 @@ func (a *API) handleCreateCompletion(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (a *API) handleStreamCompletion(w http.ResponseWriter, ctx context.Context, req *provider.CompletionRequest) {
+func (a *API) handleStreamCompletion(ctx context.Context, w http.ResponseWriter, req *provider.CompletionRequest) {
 	stream, err := a.gw.Engine().CompleteStream(ctx, req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -67,16 +68,19 @@ func (a *API) handleStreamCompletion(w http.ResponseWriter, ctx context.Context,
 	flusher.Flush()
 
 	for {
-		chunk, err := stream.Next(ctx)
-		if err == io.EOF {
+		chunk, streamErr := stream.Next(ctx)
+		if errors.Is(streamErr, io.EOF) {
 			break
 		}
-		if err != nil {
+		if streamErr != nil {
 			break
 		}
 
-		data, _ := json.Marshal(chunk)
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+		data, marshalErr := json.Marshal(chunk)
+		if marshalErr != nil {
+			break
+		}
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", data) //nolint:gosec // G705 -- SSE stream, not HTML
 		flusher.Flush()
 	}
 

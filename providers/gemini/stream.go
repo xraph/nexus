@@ -28,7 +28,7 @@ func newGeminiStream(body io.ReadCloser, model string) *geminiStream {
 	}
 }
 
-func (s *geminiStream) Next(ctx context.Context) (*provider.StreamChunk, error) {
+func (s *geminiStream) Next(_ context.Context) (*provider.StreamChunk, error) {
 	if s.done {
 		return nil, io.EOF
 	}
@@ -75,7 +75,7 @@ func (s *geminiStream) Next(ctx context.Context) (*provider.StreamChunk, error) 
 				content += part.Text
 			}
 			if part.FunctionCall != nil {
-				argsJSON, _ := json.Marshal(part.FunctionCall.Args)
+				argsJSON, _ := json.Marshal(part.FunctionCall.Args) //nolint:errcheck // known-good struct
 				toolCalls = append(toolCalls, provider.ToolCall{
 					ID:   fmt.Sprintf("call_%d", len(toolCalls)),
 					Type: "function",

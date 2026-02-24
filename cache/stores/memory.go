@@ -61,7 +61,10 @@ func (c *MemoryCache) Get(_ context.Context, key string) (*provider.CompletionRe
 		return nil, nil
 	}
 
-	entry := elem.Value.(*memoryCacheEntry)
+	entry, ok := elem.Value.(*memoryCacheEntry)
+	if !ok {
+		return nil, nil
+	}
 
 	// Check TTL
 	if time.Now().After(entry.expiresAt) {
@@ -86,7 +89,10 @@ func (c *MemoryCache) Set(_ context.Context, key string, resp *provider.Completi
 	// If key exists, update it
 	if elem, ok := c.items[key]; ok {
 		c.eviction.MoveToFront(elem)
-		entry := elem.Value.(*memoryCacheEntry)
+		entry, ok := elem.Value.(*memoryCacheEntry)
+		if !ok {
+			return nil
+		}
 		entry.value = resp
 		entry.expiresAt = time.Now().Add(c.ttl)
 		return nil
@@ -136,6 +142,9 @@ func (c *MemoryCache) evictOldest() {
 
 func (c *MemoryCache) removeElement(elem *list.Element) {
 	c.eviction.Remove(elem)
-	entry := elem.Value.(*memoryCacheEntry)
+	entry, ok := elem.Value.(*memoryCacheEntry)
+	if !ok {
+		return
+	}
 	delete(c.items, entry.key)
 }

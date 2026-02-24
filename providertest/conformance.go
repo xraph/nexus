@@ -3,6 +3,7 @@ package providertest
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/xraph/nexus/provider"
@@ -119,7 +120,7 @@ func TestProviderEmbedNotSupported(t *testing.T, p provider.Provider) {
 		Model: "any-model",
 		Input: []string{"Hello"},
 	})
-	if err != provider.ErrNotSupported {
+	if !errors.Is(err, provider.ErrNotSupported) {
 		t.Fatalf("Embed() should return ErrNotSupported, got: %v", err)
 	}
 }

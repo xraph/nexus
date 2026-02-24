@@ -63,7 +63,7 @@ func (s *cacheService) Clear(ctx context.Context) error {
 	return s.cache.Clear(ctx)
 }
 
-func (s *cacheService) Stats(ctx context.Context) (*Stats, error) {
+func (s *cacheService) Stats(_ context.Context) (*Stats, error) {
 	total := s.hits + s.misses
 	var hitRate float64
 	if total > 0 {

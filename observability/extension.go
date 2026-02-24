@@ -57,12 +57,12 @@ func (e *MetricsExtension) Name() string { return "observability" }
 
 // Request lifecycle hooks
 
-func (e *MetricsExtension) OnRequestReceived(_ context.Context, _ id.RequestID, _ string, _ string) error {
+func (e *MetricsExtension) OnRequestReceived(_ context.Context, _ id.RequestID, _, _ string) error {
 	e.RequestsReceived.Inc()
 	return nil
 }
 
-func (e *MetricsExtension) OnRequestCompleted(_ context.Context, _ id.RequestID, _ string, _ string, _ time.Duration, _ int, _ int) error {
+func (e *MetricsExtension) OnRequestCompleted(_ context.Context, _ id.RequestID, _, _ string, _ time.Duration, _, _ int) error {
 	e.RequestsCompleted.Inc()
 	return nil
 }
@@ -79,7 +79,7 @@ func (e *MetricsExtension) OnRequestCached(_ context.Context, _ id.RequestID, _ 
 
 // Provider lifecycle hooks
 
-func (e *MetricsExtension) OnProviderFailed(_ context.Context, _ string, _ string, _ error) error {
+func (e *MetricsExtension) OnProviderFailed(_ context.Context, _, _ string, _ error) error {
 	e.ProviderFailures.Inc()
 	return nil
 }
@@ -89,7 +89,7 @@ func (e *MetricsExtension) OnCircuitOpened(_ context.Context, _ string) error {
 	return nil
 }
 
-func (e *MetricsExtension) OnFallbackTriggered(_ context.Context, _ string, _ string) error {
+func (e *MetricsExtension) OnFallbackTriggered(_ context.Context, _, _ string) error {
 	e.Fallbacks.Inc()
 	return nil
 }
@@ -101,7 +101,7 @@ func (e *MetricsExtension) OnGuardrailBlocked(_ context.Context, _ string, _ id.
 	return nil
 }
 
-func (e *MetricsExtension) OnGuardrailRedacted(_ context.Context, _ string, _ string) error {
+func (e *MetricsExtension) OnGuardrailRedacted(_ context.Context, _, _ string) error {
 	e.GuardrailRedacts.Inc()
 	return nil
 }

@@ -31,7 +31,7 @@ func NewNormalizer() *NormalizerTransform {
 func (t *NormalizerTransform) Name() string { return "normalizer" }
 func (t *NormalizerTransform) Phase() Phase { return PhaseOutput }
 
-func (t *NormalizerTransform) TransformOutput(ctx context.Context, req *provider.CompletionRequest, resp *provider.CompletionResponse) error {
+func (t *NormalizerTransform) TransformOutput(_ context.Context, _ *provider.CompletionRequest, resp *provider.CompletionResponse) error {
 	for i := range resp.Choices {
 		c := &resp.Choices[i]
 

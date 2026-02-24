@@ -94,10 +94,10 @@ func (s *service) Validate(ctx context.Context, rawKey string) (*APIKey, error) 
 		return nil, errors.New("nexus: API key expired")
 	}
 
-	// Update last used
+	// Update last used (best-effort: last-used update is non-critical)
 	now := time.Now()
 	k.LastUsedAt = &now
-	_ = s.store.Update(ctx, k)
+	_ = s.store.Update(ctx, k) //nolint:errcheck // best-effort last-used timestamp
 
 	return k, nil
 }
@@ -132,9 +132,9 @@ func (s *service) Rotate(ctx context.Context, oldKeyID string) (*APIKey, string,
 		return nil, "", err
 	}
 
-	// Revoke old key
+	// Revoke old key (best-effort: revocation during rotate is non-critical)
 	old.Status = KeyRevoked
-	_ = s.store.Update(ctx, old)
+	_ = s.store.Update(ctx, old) //nolint:errcheck // best-effort revocation of old key during rotate
 
 	return newKey, rawKey, nil
 }

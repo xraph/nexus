@@ -131,8 +131,8 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
 
-	if err := c.signer.Sign(httpReq, body, time.Now()); err != nil {
-		return nil, fmt.Errorf("bedrock: sign request: %w", err)
+	if signErr := c.signer.Sign(httpReq, body, time.Now()); signErr != nil {
+		return nil, fmt.Errorf("bedrock: sign request: %w", signErr)
 	}
 
 	start := time.Now()
@@ -144,7 +144,7 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 	elapsed := time.Since(start)
 
 	if httpResp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("bedrock: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -172,8 +172,8 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/vnd.amazon.eventstream")
 
-	if err := c.signer.Sign(httpReq, body, time.Now()); err != nil {
-		return nil, fmt.Errorf("bedrock: sign request: %w", err)
+	if signErr := c.signer.Sign(httpReq, body, time.Now()); signErr != nil {
+		return nil, fmt.Errorf("bedrock: sign request: %w", signErr)
 	}
 
 	httpResp, err := c.http.Do(httpReq)
@@ -183,7 +183,7 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 
 	if httpResp.StatusCode != http.StatusOK {
 		defer func() { _ = httpResp.Body.Close() }()
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("bedrock: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -194,14 +194,14 @@ func (c *client) ping(ctx context.Context) error {
 	// Use a lightweight request to check if the Bedrock endpoint is reachable.
 	// A GET to the base URL will return an error response, but connectivity is confirmed
 	// if we get any HTTP response back.
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL, http.NoBody)
 	if err != nil {
 		return err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	if err := c.signer.Sign(httpReq, nil, time.Now()); err != nil {
-		return fmt.Errorf("bedrock: sign ping: %w", err)
+	if signErr := c.signer.Sign(httpReq, nil, time.Now()); signErr != nil {
+		return fmt.Errorf("bedrock: sign ping: %w", signErr)
 	}
 
 	httpResp, err := c.http.Do(httpReq)
@@ -209,7 +209,7 @@ func (c *client) ping(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = httpResp.Body.Close() }()
-	_, _ = io.ReadAll(httpResp.Body)
+	_, _ = io.ReadAll(httpResp.Body) //nolint:errcheck // drain body before close
 
 	// Any response (even 403/404) means the endpoint is reachable.
 	// Only network errors indicate the provider is unhealthy.
@@ -254,7 +254,7 @@ func (c *client) toConverseRequest(req *provider.CompletionRequest) *converseReq
 			// Include tool calls as toolUse content blocks.
 			for _, tc := range m.ToolCalls {
 				var input any
-				_ = json.Unmarshal([]byte(tc.Function.Arguments), &input)
+				_ = json.Unmarshal([]byte(tc.Function.Arguments), &input) //nolint:errcheck // best-effort parse
 				blocks = append(blocks, contentBlock{
 					ToolUse: &toolUse{
 						ToolUseID: tc.ID,
@@ -299,7 +299,7 @@ func (c *client) toConverseRequest(req *provider.CompletionRequest) *converseReq
 
 	// Tool configuration.
 	if len(req.Tools) > 0 {
-		var tools []toolDef
+		tools := make([]toolDef, 0, len(req.Tools))
 		for _, t := range req.Tools {
 			tools = append(tools, toolDef{
 				ToolSpec: &toolSpec{
@@ -351,7 +351,7 @@ func (c *client) fromConverseResponse(resp *converseResponse, model string, elap
 				content += block.Text
 			}
 			if block.ToolUse != nil {
-				inputJSON, _ := json.Marshal(block.ToolUse.Input)
+				inputJSON, _ := json.Marshal(block.ToolUse.Input) //nolint:errcheck // known-good struct
 				toolCalls = append(toolCalls, provider.ToolCall{
 					ID:   block.ToolUse.ToolUseID,
 					Type: "function",

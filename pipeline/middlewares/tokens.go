@@ -48,7 +48,7 @@ func (m *TokenCountingMiddleware) Process(ctx context.Context, req *pipeline.Req
 		case model.OverflowTruncateMiddle:
 			req.Completion.Messages = truncateMiddle(req.Completion.Messages)
 		case model.OverflowError:
-			return nil, contextOverflowError(estimate)
+			return nil, newContextOverflowError(estimate)
 		default:
 			// Default: let it through and let the provider handle it
 		}
@@ -60,7 +60,7 @@ func (m *TokenCountingMiddleware) Process(ctx context.Context, req *pipeline.Req
 func toModelMessages(msgs []provider.Message) []model.Message {
 	result := make([]model.Message, len(msgs))
 	for i, m := range msgs {
-		content, _ := m.Content.(string)
+		content, _ := m.Content.(string) //nolint:errcheck // non-string content defaults to ""
 		result[i] = model.Message{
 			Role:    m.Role,
 			Content: content,
@@ -94,17 +94,17 @@ func truncateMiddle(msgs []provider.Message) []provider.Message {
 	return result
 }
 
-type contextOverflowErr struct {
+type contextOverflowError struct {
 	inputTokens   int
 	contextWindow int
 }
 
-func (e *contextOverflowErr) Error() string {
+func (e *contextOverflowError) Error() string {
 	return "nexus: request exceeds context window"
 }
 
-func contextOverflowError(est *model.TokenEstimate) error {
-	return &contextOverflowErr{
+func newContextOverflowError(est *model.TokenEstimate) error {
+	return &contextOverflowError{
 		inputTokens:   est.InputTokens,
 		contextWindow: est.ContextWindow,
 	}

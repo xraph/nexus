@@ -41,7 +41,7 @@ func (p *Provider) Name() string { return p.name }
 func (p *Provider) Capabilities() provider.Capabilities { return p.caps }
 
 // Models returns the configured model list.
-func (p *Provider) Models(ctx context.Context) ([]provider.Model, error) {
+func (p *Provider) Models(_ context.Context) ([]provider.Model, error) {
 	return p.models, nil
 }
 

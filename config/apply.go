@@ -314,8 +314,8 @@ func buildProvider(pc ProviderConfig) provider.Provider {
 			opts = append(opts, vertex.WithAccessToken(pc.AccessToken))
 		}
 		if pc.CredentialFile != "" {
-			data, _ := os.ReadFile(pc.CredentialFile)
-			if len(data) > 0 {
+			data, err := os.ReadFile(pc.CredentialFile)
+			if err == nil && len(data) > 0 {
 				opts = append(opts, vertex.WithCredentialsJSON(data))
 			}
 		}

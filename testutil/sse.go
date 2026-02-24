@@ -28,30 +28,30 @@ func WriteSSEChunks(w http.ResponseWriter, chunks []string) {
 
 // OpenAIChunkJSON returns a valid OpenAI-format streaming chunk JSON string.
 func OpenAIChunkJSON(id, model, content, finishReason string) string {
+	delta := map[string]any{}
+	if content != "" {
+		delta["content"] = content
+	}
+
+	choice := map[string]any{
+		"index": 0,
+		"delta": delta,
+	}
+	if finishReason != "" {
+		choice["finish_reason"] = finishReason
+	} else {
+		choice["finish_reason"] = nil
+	}
+
 	chunk := map[string]any{
 		"id":      id,
 		"object":  "chat.completion.chunk",
 		"created": 1700000000,
 		"model":   model,
-		"choices": []map[string]any{
-			{
-				"index": 0,
-				"delta": map[string]any{},
-			},
-		},
+		"choices": []map[string]any{choice},
 	}
 
-	delta := chunk["choices"].([]map[string]any)[0]["delta"].(map[string]any)
-	if content != "" {
-		delta["content"] = content
-	}
-	if finishReason != "" {
-		chunk["choices"].([]map[string]any)[0]["finish_reason"] = finishReason
-	} else {
-		chunk["choices"].([]map[string]any)[0]["finish_reason"] = nil
-	}
-
-	b, _ := json.Marshal(chunk)
+	b, _ := json.Marshal(chunk) //nolint:errcheck // test helper; static data cannot fail
 	return string(b)
 }
 
@@ -69,26 +69,26 @@ func OpenAIChunkJSONWithUsage(id, model string, promptTokens, completionTokens, 
 			"total_tokens":      totalTokens,
 		},
 	}
-	b, _ := json.Marshal(chunk)
+	b, _ := json.Marshal(chunk) //nolint:errcheck // test helper; static data cannot fail
 	return string(b)
 }
 
 // AnthropicEventJSON returns a valid Anthropic SSE event pair (event: + data:).
 func AnthropicEventJSON(eventType string, data any) string {
-	b, _ := json.Marshal(data)
+	b, _ := json.Marshal(data) //nolint:errcheck // test helper
 	return fmt.Sprintf("event: %s\ndata: %s", eventType, string(b))
 }
 
 // OpenAIStreamHandler returns an http.HandlerFunc that streams OpenAI-format chunks.
 func OpenAIStreamHandler(chunks []string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, _ *http.Request) {
 		WriteSSEChunks(w, chunks)
 	}
 }
 
 // AnthropicStreamHandler returns an http.HandlerFunc that writes raw Anthropic SSE lines.
 func AnthropicStreamHandler(lines []string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")

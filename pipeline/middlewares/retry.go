@@ -26,7 +26,7 @@ func NewRetry(maxRetries int, delay time.Duration, backoff float64) *RetryMiddle
 func (m *RetryMiddleware) Name() string  { return "retry" }
 func (m *RetryMiddleware) Priority() int { return 340 } // Just before provider_call (350)
 
-func (m *RetryMiddleware) Process(ctx context.Context, req *pipeline.Request, next pipeline.NextFunc) (*pipeline.Response, error) {
+func (m *RetryMiddleware) Process(ctx context.Context, _ *pipeline.Request, next pipeline.NextFunc) (*pipeline.Response, error) {
 	var lastErr error
 	delay := m.delay
 

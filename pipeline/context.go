@@ -18,7 +18,10 @@ const (
 
 // TenantID returns the tenant ID from context.
 func TenantID(ctx context.Context) string {
-	v, _ := ctx.Value(ctxTenantID).(string)
+	v, ok := ctx.Value(ctxTenantID).(string)
+	if !ok {
+		return ""
+	}
 	return v
 }
 
@@ -29,7 +32,10 @@ func WithTenantID(ctx context.Context, id string) context.Context {
 
 // KeyID returns the key ID from context.
 func KeyID(ctx context.Context) string {
-	v, _ := ctx.Value(ctxKeyID).(string)
+	v, ok := ctx.Value(ctxKeyID).(string)
+	if !ok {
+		return ""
+	}
 	return v
 }
 
@@ -40,7 +46,10 @@ func WithKeyID(ctx context.Context, id string) context.Context {
 
 // RequestID returns the request ID from context.
 func RequestID(ctx context.Context) string {
-	v, _ := ctx.Value(ctxRequestID).(string)
+	v, ok := ctx.Value(ctxRequestID).(string)
+	if !ok {
+		return ""
+	}
 	return v
 }
 
@@ -51,7 +60,10 @@ func WithRequestID(ctx context.Context, id string) context.Context {
 
 // ProviderName returns the provider name from context.
 func ProviderName(ctx context.Context) string {
-	v, _ := ctx.Value(ctxProvider).(string)
+	v, ok := ctx.Value(ctxProvider).(string)
+	if !ok {
+		return ""
+	}
 	return v
 }
 
@@ -62,7 +74,10 @@ func WithProviderName(ctx context.Context, name string) context.Context {
 
 // CacheHit returns whether the response was served from cache.
 func CacheHit(ctx context.Context) bool {
-	v, _ := ctx.Value(ctxCacheHit).(bool)
+	v, ok := ctx.Value(ctxCacheHit).(bool)
+	if !ok {
+		return false
+	}
 	return v
 }
 
@@ -73,7 +88,10 @@ func WithCacheHit(ctx context.Context, hit bool) context.Context {
 
 // StartTime returns the request start time from context.
 func StartTime(ctx context.Context) time.Time {
-	v, _ := ctx.Value(ctxStartTime).(time.Time)
+	v, ok := ctx.Value(ctxStartTime).(time.Time)
+	if !ok {
+		return time.Time{}
+	}
 	return v
 }
 

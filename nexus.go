@@ -91,7 +91,7 @@ func New(opts ...Option) *Gateway {
 }
 
 // Initialize sets up all services and validates configuration.
-func (gw *Gateway) Initialize(ctx context.Context) error {
+func (gw *Gateway) Initialize(_ context.Context) error {
 	if gw.initialized {
 		return nil
 	}
@@ -248,7 +248,7 @@ func (gw *Gateway) Pipeline() pipeline.Service { return gw.pipeline }
 func (gw *Gateway) Logger() Logger { return gw.logger }
 
 // Shutdown gracefully stops all services.
-func (gw *Gateway) Shutdown(ctx context.Context) error {
+func (gw *Gateway) Shutdown(_ context.Context) error {
 	gw.logger.Info("nexus gateway shutting down")
 	if gw.store != nil {
 		return gw.store.Close()

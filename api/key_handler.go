@@ -22,8 +22,8 @@ func (a *API) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
 
 	var input key.CreateInput
-	if err := json.Unmarshal(body, &input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+	if unmarshalErr := json.Unmarshal(body, &input); unmarshalErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+unmarshalErr.Error())
 		return
 	}
 

@@ -4,7 +4,7 @@ import (
 	"net/http"
 )
 
-func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (a *API) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":    "ok",
 		"server":    "nexus",

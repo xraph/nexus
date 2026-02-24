@@ -17,5 +17,5 @@ type Service interface {
 
 	// ResolveAlias resolves a model alias to a concrete model target.
 	// Returns the original modelID if no alias exists.
-	ResolveAlias(ctx context.Context, alias string, tenantID string) (string, string, error)
+	ResolveAlias(ctx context.Context, alias, tenantID string) (string, string, error)
 }

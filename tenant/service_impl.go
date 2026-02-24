@@ -51,8 +51,8 @@ func (s *service) Create(ctx context.Context, input *CreateInput) (*Tenant, erro
 	return t, nil
 }
 
-func (s *service) Get(ctx context.Context, id string) (*Tenant, error) {
-	return s.store.FindByID(ctx, id)
+func (s *service) Get(ctx context.Context, tenantID string) (*Tenant, error) {
+	return s.store.FindByID(ctx, tenantID)
 }
 
 func (s *service) GetBySlug(ctx context.Context, slug string) (*Tenant, error) {
@@ -85,8 +85,8 @@ func (s *service) Update(ctx context.Context, tenantID string, input *UpdateInpu
 	return t, nil
 }
 
-func (s *service) Delete(ctx context.Context, id string) error {
-	return s.store.Delete(ctx, id)
+func (s *service) Delete(ctx context.Context, tenantID string) error {
+	return s.store.Delete(ctx, tenantID)
 }
 
 func (s *service) List(ctx context.Context, opts *ListOptions) ([]*Tenant, int, error) {

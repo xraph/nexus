@@ -23,7 +23,10 @@ func vertexMockServer(t *testing.T) *httptest.Server {
 		// Check for stream endpoint.
 		if r.URL.Query().Get("alt") == "sse" {
 			w.Header().Set("Content-Type", "text/event-stream")
-			flusher, _ := w.(http.Flusher)
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				return
+			}
 			chunk1 := map[string]any{
 				"candidates": []map[string]any{
 					{"content": map[string]any{"role": "model", "parts": []map[string]any{{"text": "Hello"}}}},
@@ -275,7 +278,7 @@ func TestDefaultLocation(t *testing.T) {
 	}
 }
 
-func TestFinishReasonMapping(t *testing.T) {
+func TestFinishReasonMapping(_ *testing.T) {
 	// Test through a complete round-trip since vertexMapFinishReason is unexported.
 	// Verified via the TestComplete test (STOP -> stop).
 	// Additional mapping verification via response content.

@@ -1,6 +1,7 @@
 package vertex
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -155,14 +156,20 @@ func (ts *tokenSource) refreshToken() (string, time.Time, error) {
 		"assertion":  {jwt},
 	}
 
-	resp, err := http.Post(ts.saKey.TokenURI, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	tokenReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.saKey.TokenURI, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("vertex: create token request: %w", err)
+	}
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(tokenReq)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("vertex: token exchange request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body) //nolint:errcheck // best-effort read for error message
 		return "", time.Time{}, fmt.Errorf("vertex: token exchange failed (status %d): %s", resp.StatusCode, string(body))
 	}
 

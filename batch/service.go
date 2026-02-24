@@ -49,7 +49,7 @@ func NewService(executor Executor, concurrency int) Service {
 	}
 }
 
-func (s *service) Create(ctx context.Context, input *CreateInput) (*Job, error) {
+func (s *service) Create(_ context.Context, input *CreateInput) (*Job, error) {
 	job := &Job{
 		ID:         generateID(),
 		TenantID:   input.TenantID,
@@ -137,7 +137,7 @@ func (s *service) process(ctx context.Context, job *Job, concurrency int) {
 			if err != nil {
 				job.Results[idx] = Result{
 					CustomID: inp.CustomID,
-					Error:    &BatchError{Code: "execution_error", Message: err.Error()},
+					Error:    &Error{Code: "execution_error", Message: err.Error()},
 				}
 				failed.Add(1)
 			} else {

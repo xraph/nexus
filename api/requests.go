@@ -9,19 +9,23 @@ import (
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		return
+	}
 }
 
 // writeError writes an error response in OpenAI-compatible format.
 func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"error": map[string]string{
 			"message": message,
 			"type":    mapStatusToErrorType(status),
 		},
-	})
+	}); err != nil {
+		return
+	}
 }
 
 func mapStatusToErrorType(status int) string {

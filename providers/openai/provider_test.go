@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
@@ -251,7 +252,7 @@ func TestCompleteStream(t *testing.T) {
 	var lastFinish string
 	for {
 		chunk, err := stream.Next(ctx)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

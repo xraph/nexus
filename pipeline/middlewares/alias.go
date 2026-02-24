@@ -72,7 +72,7 @@ func selectTarget(targets []model.AliasTarget) *model.AliasTarget {
 	}
 
 	// Weighted random selection
-	r := rand.Float64() * totalWeight
+	r := rand.Float64() * totalWeight //nolint:gosec // G404 -- weighted selection, not security-sensitive
 	for i := range targets {
 		w := targets[i].Weight
 		if w <= 0 {

@@ -114,13 +114,13 @@ func (e *Extension) record(ctx context.Context, action Action, resource Resource
 // Request lifecycle hooks
 // ──────────────────────────────────────────────────
 
-func (e *Extension) OnRequestReceived(ctx context.Context, requestID id.RequestID, model string, tenantID string) error {
+func (e *Extension) OnRequestReceived(ctx context.Context, requestID id.RequestID, model, tenantID string) error {
 	e.record(ctx, ActionRequestReceived, ResourceRequest, CategoryRequest, requestID.String(),
 		"model", model, "tenant_id", tenantID)
 	return nil
 }
 
-func (e *Extension) OnRequestCompleted(ctx context.Context, requestID id.RequestID, model string, providerName string, elapsed time.Duration, inputTokens int, outputTokens int) error {
+func (e *Extension) OnRequestCompleted(ctx context.Context, requestID id.RequestID, model, providerName string, elapsed time.Duration, inputTokens, outputTokens int) error {
 	e.record(ctx, ActionRequestCompleted, ResourceRequest, CategoryRequest, requestID.String(),
 		"model", model, "provider", providerName, "elapsed_ms", elapsed.Milliseconds(),
 		"input_tokens", inputTokens, "output_tokens", outputTokens)
@@ -143,7 +143,7 @@ func (e *Extension) OnRequestCached(ctx context.Context, requestID id.RequestID,
 // Provider lifecycle hooks
 // ──────────────────────────────────────────────────
 
-func (e *Extension) OnProviderFailed(ctx context.Context, providerName string, model string, err error) error {
+func (e *Extension) OnProviderFailed(ctx context.Context, providerName, model string, err error) error {
 	e.record(ctx, ActionProviderFailed, ResourceProvider, CategoryProvider, providerName,
 		"model", model, "error", err.Error())
 	return nil
@@ -154,7 +154,7 @@ func (e *Extension) OnCircuitOpened(ctx context.Context, providerName string) er
 	return nil
 }
 
-func (e *Extension) OnFallbackTriggered(ctx context.Context, from string, to string) error {
+func (e *Extension) OnFallbackTriggered(ctx context.Context, from, to string) error {
 	e.record(ctx, ActionFallbackTriggered, ResourceProvider, CategoryProvider, from,
 		"to", to)
 	return nil
@@ -170,7 +170,7 @@ func (e *Extension) OnGuardrailBlocked(ctx context.Context, guardName string, re
 	return nil
 }
 
-func (e *Extension) OnGuardrailRedacted(ctx context.Context, guardName string, field string) error {
+func (e *Extension) OnGuardrailRedacted(ctx context.Context, guardName, field string) error {
 	e.record(ctx, ActionGuardrailRedacted, ResourceGuardrail, CategorySecurity, guardName,
 		"field", field)
 	return nil

@@ -27,7 +27,7 @@ func newOpenAIStream(body io.ReadCloser, model string) *openAIStream {
 	}
 }
 
-func (s *openAIStream) Next(ctx context.Context) (*provider.StreamChunk, error) {
+func (s *openAIStream) Next(_ context.Context) (*provider.StreamChunk, error) {
 	if s.done {
 		return nil, io.EOF
 	}

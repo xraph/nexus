@@ -28,7 +28,7 @@ func newAnthropicStream(body io.ReadCloser, model string) *anthropicStream {
 	}
 }
 
-func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, error) {
+func (s *anthropicStream) Next(_ context.Context) (*provider.StreamChunk, error) {
 	if s.done {
 		return nil, io.EOF
 	}
@@ -60,26 +60,25 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 			continue
 		}
 
-		eventType, _ := raw["type"].(string)
+		eventType, _ := raw["type"].(string) //nolint:errcheck // zero value is fine
 
 		switch eventType {
 		case "message_start":
 			// Extract message ID
 			if msg, ok := raw["message"].(map[string]any); ok {
-				s.msgID, _ = msg["id"].(string)
+				s.msgID, _ = msg["id"].(string) //nolint:errcheck // zero value is fine
 			}
 			continue
 
 		case "content_block_delta":
-			delta, _ := raw["delta"].(map[string]any)
+			delta, _ := raw["delta"].(map[string]any) //nolint:errcheck // zero value is fine
 			if delta == nil {
 				continue
 			}
-			deltaType, _ := delta["type"].(string)
+			deltaType, _ := delta["type"].(string) //nolint:errcheck // zero value is fine
 
-			switch deltaType {
-			case "text_delta":
-				text, _ := delta["text"].(string)
+			if deltaType == "text_delta" {
+				text, _ := delta["text"].(string) //nolint:errcheck // zero value is fine
 				return &provider.StreamChunk{
 					ID:       s.msgID,
 					Provider: "anthropic",
@@ -93,15 +92,16 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 		case "message_delta":
 			// Final delta with stop_reason and usage
 			if u, ok := raw["usage"].(map[string]any); ok {
-				outputTokens := int(u["output_tokens"].(float64))
+				f, _ := u["output_tokens"].(float64) //nolint:errcheck // zero value is fine
+				outputTokens := int(f)
 				s.usage = &provider.Usage{
 					CompletionTokens: outputTokens,
 				}
 			}
-			stopReason, _ := raw["stop_reason"].(string)
+			stopReason, _ := raw["stop_reason"].(string) //nolint:errcheck // zero value is fine
 			if stopReason == "" {
 				if delta, ok := raw["delta"].(map[string]any); ok {
-					stopReason, _ = delta["stop_reason"].(string)
+					stopReason, _ = delta["stop_reason"].(string) //nolint:errcheck // zero value is fine
 				}
 			}
 			return &provider.StreamChunk{

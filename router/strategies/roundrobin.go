@@ -21,7 +21,7 @@ func NewRoundRobin() *RoundRobinStrategy {
 
 func (s *RoundRobinStrategy) Name() string { return "round_robin" }
 
-func (s *RoundRobinStrategy) Select(ctx context.Context, req *provider.CompletionRequest, candidates []router.Candidate) (*router.Candidate, error) {
+func (s *RoundRobinStrategy) Select(_ context.Context, _ *provider.CompletionRequest, candidates []router.Candidate) (*router.Candidate, error) {
 	healthy := make([]*router.Candidate, 0, len(candidates))
 	for i := range candidates {
 		if candidates[i].Healthy {

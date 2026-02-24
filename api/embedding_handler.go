@@ -18,22 +18,22 @@ func (a *API) handleCreateEmbedding(w http.ResponseWriter, r *http.Request) {
 
 	// Parse request — accept string or array for "input"
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if unmarshalErr := json.Unmarshal(body, &raw); unmarshalErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
 	var req provider.EmbeddingRequest
 	if modelRaw, ok := raw["model"]; ok {
-		_ = json.Unmarshal(modelRaw, &req.Model)
+		_ = json.Unmarshal(modelRaw, &req.Model) //nolint:errcheck // best-effort; validated below
 	}
 
 	if inputRaw, ok := raw["input"]; ok {
 		var single string
-		if err := json.Unmarshal(inputRaw, &single); err == nil {
+		if unmarshalErr := json.Unmarshal(inputRaw, &single); unmarshalErr == nil {
 			req.Input = []string{single}
 		} else {
-			_ = json.Unmarshal(inputRaw, &req.Input)
+			_ = json.Unmarshal(inputRaw, &req.Input) //nolint:errcheck // best-effort; validated below
 		}
 	}
 

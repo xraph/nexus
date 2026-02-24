@@ -32,7 +32,7 @@ func (m *CacheMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	}
 
 	// Generate cache key
-	key := cache.CacheKey(req.Completion)
+	key := cache.Key(req.Completion)
 
 	// Check cache
 	cached, err := m.cache.Get(ctx, key)
@@ -49,7 +49,7 @@ func (m *CacheMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 
 	// Store successful response
 	if resp != nil && resp.Completion != nil {
-		_ = m.cache.Set(ctx, key, resp.Completion)
+		_ = m.cache.Set(ctx, key, resp.Completion) //nolint:errcheck // best-effort cache store
 	}
 
 	return resp, nil

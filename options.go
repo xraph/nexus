@@ -111,10 +111,12 @@ func WithAlias(name string, targets ...model.AliasTarget) Option {
 		if gw.aliasRegistry == nil {
 			gw.aliasRegistry = model.NewAliasRegistry()
 		}
-		_ = gw.aliasRegistry.Register(&model.Alias{
+		if err := gw.aliasRegistry.Register(&model.Alias{
 			Name:    name,
 			Targets: targets,
-		})
+		}); err != nil {
+			return
+		}
 	}
 }
 
@@ -144,7 +146,7 @@ func WithMaxRetries(n int) Option {
 }
 
 // WithTenantAlias registers a per-tenant model alias override.
-func WithTenantAlias(tenantID string, name string, targets ...model.AliasTarget) Option {
+func WithTenantAlias(tenantID, name string, targets ...model.AliasTarget) Option {
 	return func(gw *Gateway) {
 		if gw.aliasRegistry == nil {
 			gw.aliasRegistry = model.NewAliasRegistry()
@@ -153,24 +155,29 @@ func WithTenantAlias(tenantID string, name string, targets ...model.AliasTarget)
 		aliases := gw.aliasRegistry.List()
 		var found bool
 		for _, a := range aliases {
-			if a.Name == name {
-				if a.TenantOverrides == nil {
-					a.TenantOverrides = make(map[string][]model.AliasTarget)
-				}
-				a.TenantOverrides[tenantID] = targets
-				_ = gw.aliasRegistry.Register(&a)
-				found = true
-				break
+			if a.Name != name {
+				continue
 			}
+			if a.TenantOverrides == nil {
+				a.TenantOverrides = make(map[string][]model.AliasTarget)
+			}
+			a.TenantOverrides[tenantID] = targets
+			if err := gw.aliasRegistry.Register(&a); err != nil {
+				return
+			}
+			found = true
+			break
 		}
 		if !found {
-			_ = gw.aliasRegistry.Register(&model.Alias{
+			if err := gw.aliasRegistry.Register(&model.Alias{
 				Name:    name,
 				Targets: targets,
 				TenantOverrides: map[string][]model.AliasTarget{
 					tenantID: targets,
 				},
-			})
+			}); err != nil {
+				return
+			}
 		}
 	}
 }

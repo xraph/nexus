@@ -106,7 +106,7 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 	elapsed := time.Since(start)
 
 	if httpResp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("anthropic: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -140,7 +140,7 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 
 	if httpResp.StatusCode != http.StatusOK {
 		defer func() { _ = httpResp.Body.Close() }()
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("anthropic: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -150,7 +150,7 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 func (c *client) ping(ctx context.Context) error {
 	// Anthropic doesn't have a dedicated health endpoint.
 	// We send a minimal request to check connectivity.
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/v1/messages", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/v1/messages", http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func (c *client) ping(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = httpResp.Body.Close() }()
-	_, _ = io.ReadAll(httpResp.Body)
+	_, _ = io.ReadAll(httpResp.Body) //nolint:errcheck // drain body before close
 
 	// 405 Method Not Allowed is fine — endpoint exists
 	if httpResp.StatusCode == http.StatusMethodNotAllowed || httpResp.StatusCode == http.StatusOK {
@@ -249,7 +249,7 @@ func (c *client) fromAnthropicResponse(resp *anthropicResponse, elapsed time.Dur
 		case "thinking":
 			thinkingContent += block.Thinking
 		case "tool_use":
-			inputJSON, _ := json.Marshal(block.Input)
+			inputJSON, _ := json.Marshal(block.Input) //nolint:errcheck // known-good struct
 			toolCalls = append(toolCalls, provider.ToolCall{
 				ID:   block.ID,
 				Type: "function",

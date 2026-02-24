@@ -16,20 +16,20 @@ type APIKey struct {
 	Prefix     string            `json:"prefix"` // "nxs_" + first 8 chars (for display)
 	Hash       string            `json:"-"`      // bcrypt hash (never exposed)
 	Scopes     []string          `json:"scopes"` // ["completions", "embeddings", "models"]
-	Status     KeyStatus         `json:"status"`
+	Status     Status            `json:"status"`
 	ExpiresAt  *time.Time        `json:"expires_at,omitempty"`
 	LastUsedAt *time.Time        `json:"last_used_at,omitempty"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
 	CreatedAt  time.Time         `json:"created_at"`
 }
 
-// KeyStatus represents the key's current state.
-type KeyStatus string
+// Status represents the key's current state.
+type Status string
 
 const (
-	KeyActive  KeyStatus = "active"
-	KeyRevoked KeyStatus = "revoked"
-	KeyExpired KeyStatus = "expired"
+	KeyActive  Status = "active"
+	KeyRevoked Status = "revoked"
+	KeyExpired Status = "expired"
 )
 
 // CreateInput is the input for creating an API key.

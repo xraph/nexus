@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,7 +16,7 @@ import (
 //
 //	data: {"id":"...","object":"chat.completion.chunk","choices":[...]}
 //	data: [DONE]
-func streamSSE(w http.ResponseWriter, ctx context.Context, stream provider.Stream, model string) {
+func streamSSE(ctx context.Context, w http.ResponseWriter, stream provider.Stream, model string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "internal_error", "streaming not supported")
@@ -31,12 +32,12 @@ func streamSSE(w http.ResponseWriter, ctx context.Context, stream provider.Strea
 
 	for {
 		chunk, err := stream.Next(ctx)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
 			// Write error as SSE event
-			errData, _ := json.Marshal(map[string]any{
+			errData, _ := json.Marshal(map[string]any{ //nolint:errcheck // best-effort error SSE event
 				"error": map[string]string{
 					"message": err.Error(),
 					"type":    "stream_error",

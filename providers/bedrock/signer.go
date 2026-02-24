@@ -103,7 +103,7 @@ func buildStringToSign(datetime, scope, canonicalRequest string) string {
 
 // buildCanonicalHeaders returns the canonical headers string and the sorted
 // signed header names. Only headers required for SigV4 are included.
-func buildCanonicalHeaders(req *http.Request) (canonicalHeaders string, signedHeaders string) {
+func buildCanonicalHeaders(req *http.Request) (canonicalHeaders, signedHeaders string) {
 	// Collect header keys in lowercase.
 	type headerEntry struct {
 		key   string
@@ -133,8 +133,8 @@ func buildCanonicalHeaders(req *http.Request) (canonicalHeaders string, signedHe
 		return headers[i].key < headers[j].key
 	})
 
-	var canonicalParts []string
-	var signedParts []string
+	canonicalParts := make([]string, 0, len(headers))
+	signedParts := make([]string, 0, len(headers))
 	for _, h := range headers {
 		canonicalParts = append(canonicalParts, h.key+":"+h.value+"\n")
 		signedParts = append(signedParts, h.key)
@@ -192,7 +192,7 @@ func hmacSHA256(key, data []byte) []byte {
 func hashSHA256(data []byte) string {
 	h := sha256.New()
 	if len(data) > 0 {
-		_, _ = io.Copy(h, strings.NewReader(string(data)))
+		_, _ = io.Copy(h, strings.NewReader(string(data))) //nolint:errcheck // hash write cannot fail
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

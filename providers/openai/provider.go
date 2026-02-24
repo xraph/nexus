@@ -47,7 +47,7 @@ func (p *Provider) Capabilities() provider.Capabilities {
 }
 
 // Models returns the list of available models.
-func (p *Provider) Models(ctx context.Context) ([]provider.Model, error) {
+func (p *Provider) Models(_ context.Context) ([]provider.Model, error) {
 	return openAIModels(), nil
 }
 

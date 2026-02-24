@@ -3,6 +3,7 @@ package voyageai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,7 +14,7 @@ import (
 
 func voyageMockServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resp := map[string]any{
 			"data": []map[string]any{
 				{"embedding": []float64{0.1, 0.2, 0.3, 0.4, 0.5}, "index": 0},
@@ -98,7 +99,7 @@ func TestCompleteNotSupported(t *testing.T) {
 		Model:    "any-model",
 		Messages: []provider.Message{{Role: "user", Content: "Hello"}},
 	})
-	if err != provider.ErrNotSupported {
+	if !errors.Is(err, provider.ErrNotSupported) {
 		t.Fatalf("Complete() should return ErrNotSupported, got: %v", err)
 	}
 }
@@ -109,7 +110,7 @@ func TestCompleteStreamNotSupported(t *testing.T) {
 		Model:    "any-model",
 		Messages: []provider.Message{{Role: "user", Content: "Hello"}},
 	})
-	if err != provider.ErrNotSupported {
+	if !errors.Is(err, provider.ErrNotSupported) {
 		t.Fatalf("CompleteStream() should return ErrNotSupported, got: %v", err)
 	}
 }

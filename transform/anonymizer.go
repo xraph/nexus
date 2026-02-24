@@ -45,7 +45,7 @@ func (a *AnonymizerTransform) AddPattern(name, pattern, replacement string) {
 func (a *AnonymizerTransform) Name() string { return "anonymizer" }
 func (a *AnonymizerTransform) Phase() Phase { return PhaseInput }
 
-func (a *AnonymizerTransform) TransformInput(ctx context.Context, req *provider.CompletionRequest) error {
+func (a *AnonymizerTransform) TransformInput(_ context.Context, req *provider.CompletionRequest) error {
 	for i := range req.Messages {
 		if s, ok := req.Messages[i].Content.(string); ok {
 			req.Messages[i].Content = a.redact(s)
@@ -75,7 +75,7 @@ type OutputAnonymizerTransform struct {
 func (t *OutputAnonymizerTransform) Name() string { return "anonymizer_output" }
 func (t *OutputAnonymizerTransform) Phase() Phase { return PhaseOutput }
 
-func (t *OutputAnonymizerTransform) TransformOutput(ctx context.Context, req *provider.CompletionRequest, resp *provider.CompletionResponse) error {
+func (t *OutputAnonymizerTransform) TransformOutput(_ context.Context, _ *provider.CompletionRequest, resp *provider.CompletionResponse) error {
 	for i := range resp.Choices {
 		if s, ok := resp.Choices[i].Message.Content.(string); ok {
 			resp.Choices[i].Message.Content = t.base.redact(s)

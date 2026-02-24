@@ -20,7 +20,7 @@ func NewTimeout(timeout time.Duration) *TimeoutMiddleware {
 func (m *TimeoutMiddleware) Name() string  { return "timeout" }
 func (m *TimeoutMiddleware) Priority() int { return 20 } // Very early, wraps entire pipeline
 
-func (m *TimeoutMiddleware) Process(ctx context.Context, req *pipeline.Request, next pipeline.NextFunc) (*pipeline.Response, error) {
+func (m *TimeoutMiddleware) Process(ctx context.Context, _ *pipeline.Request, next pipeline.NextFunc) (*pipeline.Response, error) {
 	if m.timeout <= 0 {
 		return next(ctx)
 	}

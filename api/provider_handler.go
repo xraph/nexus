@@ -13,7 +13,7 @@ func (a *API) handleListProviders(w http.ResponseWriter, r *http.Request) {
 		Capabilities any    `json:"capabilities"`
 	}
 
-	var data []providerInfo
+	data := make([]providerInfo, 0, len(providers))
 	for _, p := range providers {
 		data = append(data, providerInfo{
 			Name:         p.Name(),

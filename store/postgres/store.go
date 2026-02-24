@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -34,7 +35,7 @@ func Open(dsn string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("nexus/postgres: failed to open database: %w", err)
 	}
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("nexus/postgres: failed to connect: %w", err)
 	}
@@ -47,7 +48,7 @@ func (s *Store) Usage() usage.Store    { return &usageStore{db: s.db} }
 
 func (s *Store) Migrate() error {
 	for _, stmt := range migrations {
-		if _, err := s.db.Exec(stmt); err != nil {
+		if _, err := s.db.ExecContext(context.Background(), stmt); err != nil {
 			return fmt.Errorf("nexus/postgres: migration failed: %w", err)
 		}
 	}
@@ -117,11 +118,20 @@ type tenantStore struct {
 }
 
 func (s *tenantStore) Insert(ctx context.Context, t *tenant.Tenant) error {
-	quotaJSON, _ := json.Marshal(t.Quota)
-	configJSON, _ := json.Marshal(t.Config)
-	metaJSON, _ := json.Marshal(t.Metadata)
+	quotaJSON, err := json.Marshal(t.Quota)
+	if err != nil {
+		return fmt.Errorf("nexus/postgres: marshal quota: %w", err)
+	}
+	configJSON, err := json.Marshal(t.Config)
+	if err != nil {
+		return fmt.Errorf("nexus/postgres: marshal config: %w", err)
+	}
+	metaJSON, err := json.Marshal(t.Metadata)
+	if err != nil {
+		return fmt.Errorf("nexus/postgres: marshal metadata: %w", err)
+	}
 
-	_, err := s.db.ExecContext(ctx,
+	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO tenants (id, name, slug, status, quota, config, metadata, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		t.ID.String(), t.Name, t.Slug, string(t.Status),
@@ -144,11 +154,20 @@ func (s *tenantStore) FindBySlug(ctx context.Context, slug string) (*tenant.Tena
 }
 
 func (s *tenantStore) Update(ctx context.Context, t *tenant.Tenant) error {
-	quotaJSON, _ := json.Marshal(t.Quota)
-	configJSON, _ := json.Marshal(t.Config)
-	metaJSON, _ := json.Marshal(t.Metadata)
+	quotaJSON, err := json.Marshal(t.Quota)
+	if err != nil {
+		return fmt.Errorf("nexus/postgres: marshal quota: %w", err)
+	}
+	configJSON, err := json.Marshal(t.Config)
+	if err != nil {
+		return fmt.Errorf("nexus/postgres: marshal config: %w", err)
+	}
+	metaJSON, err := json.Marshal(t.Metadata)
+	if err != nil {
+		return fmt.Errorf("nexus/postgres: marshal metadata: %w", err)
+	}
 
-	_, err := s.db.ExecContext(ctx,
+	_, err = s.db.ExecContext(ctx,
 		`UPDATE tenants SET name=$1, slug=$2, status=$3, quota=$4, config=$5, metadata=$6, updated_at=$7
 		 WHERE id=$8`,
 		t.Name, t.Slug, string(t.Status),
@@ -180,6 +199,7 @@ func (s *tenantStore) List(ctx context.Context, opts *tenant.ListOptions) ([]*te
 		args = append(args, opts.Limit)
 		argIdx++
 		if opts.Offset > 0 {
+			//nolint:gosec // G202 -- parameterized placeholder index, not user input
 			query += fmt.Sprintf(` OFFSET $%d`, argIdx)
 			args = append(args, opts.Offset)
 		}
@@ -209,7 +229,7 @@ func (s *tenantStore) scanTenant(row *sql.Row) (*tenant.Tenant, error) {
 
 	err := row.Scan(&idStr, &t.Name, &t.Slug, &status,
 		&quotaJSON, &configJSON, &metaJSON, &t.CreatedAt, &t.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -221,9 +241,15 @@ func (s *tenantStore) scanTenant(row *sql.Row) (*tenant.Tenant, error) {
 		return nil, fmt.Errorf("nexus/postgres: invalid tenant ID: %w", err)
 	}
 	t.Status = tenant.Status(status)
-	_ = json.Unmarshal([]byte(quotaJSON), &t.Quota)
-	_ = json.Unmarshal([]byte(configJSON), &t.Config)
-	_ = json.Unmarshal([]byte(metaJSON), &t.Metadata)
+	if err := json.Unmarshal([]byte(quotaJSON), &t.Quota); err != nil {
+		return nil, fmt.Errorf("nexus/postgres: unmarshal quota: %w", err)
+	}
+	if err := json.Unmarshal([]byte(configJSON), &t.Config); err != nil {
+		return nil, fmt.Errorf("nexus/postgres: unmarshal config: %w", err)
+	}
+	if err := json.Unmarshal([]byte(metaJSON), &t.Metadata); err != nil {
+		return nil, fmt.Errorf("nexus/postgres: unmarshal metadata: %w", err)
+	}
 	return &t, nil
 }
 
@@ -247,9 +273,15 @@ func scanTenantRow(row scannable) (*tenant.Tenant, error) {
 		return nil, fmt.Errorf("nexus/postgres: invalid tenant ID: %w", err)
 	}
 	t.Status = tenant.Status(status)
-	_ = json.Unmarshal([]byte(quotaJSON), &t.Quota)
-	_ = json.Unmarshal([]byte(configJSON), &t.Config)
-	_ = json.Unmarshal([]byte(metaJSON), &t.Metadata)
+	if err := json.Unmarshal([]byte(quotaJSON), &t.Quota); err != nil {
+		return nil, fmt.Errorf("nexus/postgres: unmarshal quota: %w", err)
+	}
+	if err := json.Unmarshal([]byte(configJSON), &t.Config); err != nil {
+		return nil, fmt.Errorf("nexus/postgres: unmarshal config: %w", err)
+	}
+	if err := json.Unmarshal([]byte(metaJSON), &t.Metadata); err != nil {
+		return nil, fmt.Errorf("nexus/postgres: unmarshal metadata: %w", err)
+	}
 	return &t, nil
 }
 
@@ -262,10 +294,16 @@ type keyStore struct {
 }
 
 func (s *keyStore) Insert(ctx context.Context, k *key.APIKey) error {
-	scopesJSON, _ := json.Marshal(k.Scopes)
-	metaJSON, _ := json.Marshal(k.Metadata)
+	scopesJSON, err := json.Marshal(k.Scopes)
+	if err != nil {
+		return fmt.Errorf("nexus/postgres: marshal scopes: %w", err)
+	}
+	metaJSON, err := json.Marshal(k.Metadata)
+	if err != nil {
+		return fmt.Errorf("nexus/postgres: marshal metadata: %w", err)
+	}
 
-	_, err := s.db.ExecContext(ctx,
+	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO api_keys (id, tenant_id, name, prefix, hash, scopes, status, expires_at, last_used_at, metadata, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		k.ID.String(), k.TenantID.String(), k.Name, k.Prefix, k.Hash,
@@ -288,10 +326,16 @@ func (s *keyStore) FindByPrefix(ctx context.Context, prefix string) (*key.APIKey
 }
 
 func (s *keyStore) Update(ctx context.Context, k *key.APIKey) error {
-	scopesJSON, _ := json.Marshal(k.Scopes)
-	metaJSON, _ := json.Marshal(k.Metadata)
+	scopesJSON, err := json.Marshal(k.Scopes)
+	if err != nil {
+		return fmt.Errorf("nexus/postgres: marshal scopes: %w", err)
+	}
+	metaJSON, err := json.Marshal(k.Metadata)
+	if err != nil {
+		return fmt.Errorf("nexus/postgres: marshal metadata: %w", err)
+	}
 
-	_, err := s.db.ExecContext(ctx,
+	_, err = s.db.ExecContext(ctx,
 		`UPDATE api_keys SET name=$1, status=$2, scopes=$3, expires_at=$4, last_used_at=$5, metadata=$6
 		 WHERE id=$7`,
 		k.Name, string(k.Status), string(scopesJSON),
@@ -332,7 +376,7 @@ func (s *keyStore) scanKey(row *sql.Row) (*key.APIKey, error) {
 
 	err := row.Scan(&idStr, &tenantIDStr, &k.Name, &k.Prefix, &k.Hash,
 		&scopesJSON, &status, &k.ExpiresAt, &k.LastUsedAt, &metaJSON, &k.CreatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -347,9 +391,13 @@ func (s *keyStore) scanKey(row *sql.Row) (*key.APIKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("nexus/postgres: invalid tenant ID in key: %w", err)
 	}
-	k.Status = key.KeyStatus(status)
-	_ = json.Unmarshal([]byte(scopesJSON), &k.Scopes)
-	_ = json.Unmarshal([]byte(metaJSON), &k.Metadata)
+	k.Status = key.Status(status)
+	if err := json.Unmarshal([]byte(scopesJSON), &k.Scopes); err != nil {
+		return nil, fmt.Errorf("nexus/postgres: unmarshal scopes: %w", err)
+	}
+	if err := json.Unmarshal([]byte(metaJSON), &k.Metadata); err != nil {
+		return nil, fmt.Errorf("nexus/postgres: unmarshal metadata: %w", err)
+	}
 	return &k, nil
 }
 
@@ -372,9 +420,13 @@ func scanKeyRow(row scannable) (*key.APIKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("nexus/postgres: invalid tenant ID in key: %w", err)
 	}
-	k.Status = key.KeyStatus(status)
-	_ = json.Unmarshal([]byte(scopesJSON), &k.Scopes)
-	_ = json.Unmarshal([]byte(metaJSON), &k.Metadata)
+	k.Status = key.Status(status)
+	if err := json.Unmarshal([]byte(scopesJSON), &k.Scopes); err != nil {
+		return nil, fmt.Errorf("nexus/postgres: unmarshal scopes: %w", err)
+	}
+	if err := json.Unmarshal([]byte(metaJSON), &k.Metadata); err != nil {
+		return nil, fmt.Errorf("nexus/postgres: unmarshal metadata: %w", err)
+	}
 	return &k, nil
 }
 
@@ -417,7 +469,7 @@ func (s *usageStore) DailyRequests(ctx context.Context, tenantID string) (int, e
 	return count, err
 }
 
-func (s *usageStore) Summary(ctx context.Context, tenantID string, period string) (*usage.Summary, error) {
+func (s *usageStore) Summary(ctx context.Context, tenantID, period string) (*usage.Summary, error) {
 	var interval string
 	switch period {
 	case "day":
@@ -516,6 +568,7 @@ func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) ([]*us
 		args = append(args, opts.Limit)
 		argIdx++
 		if opts.Offset > 0 {
+			//nolint:gosec // G202 -- parameterized placeholder index, not user input
 			query += fmt.Sprintf(` OFFSET $%d`, argIdx)
 			args = append(args, opts.Offset)
 		}

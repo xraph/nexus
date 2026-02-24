@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -35,7 +36,7 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("nexus/sqlite: failed to open database: %w", err)
 	}
 	// Enable WAL mode for better concurrent read performance.
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+	if _, err := db.ExecContext(context.Background(), "PRAGMA journal_mode=WAL"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("nexus/sqlite: failed to set WAL mode: %w", err)
 	}
@@ -48,7 +49,7 @@ func (s *Store) Usage() usage.Store    { return &usageStore{db: s.db} }
 
 func (s *Store) Migrate() error {
 	for _, stmt := range migrations {
-		if _, err := s.db.Exec(stmt); err != nil {
+		if _, err := s.db.ExecContext(context.Background(), stmt); err != nil {
 			return fmt.Errorf("nexus/sqlite: migration failed: %w", err)
 		}
 	}
@@ -120,11 +121,20 @@ type tenantStore struct {
 }
 
 func (s *tenantStore) Insert(ctx context.Context, t *tenant.Tenant) error {
-	quotaJSON, _ := json.Marshal(t.Quota)
-	configJSON, _ := json.Marshal(t.Config)
-	metaJSON, _ := json.Marshal(t.Metadata)
+	quotaJSON, err := json.Marshal(t.Quota)
+	if err != nil {
+		return fmt.Errorf("nexus/sqlite: marshal quota: %w", err)
+	}
+	configJSON, err := json.Marshal(t.Config)
+	if err != nil {
+		return fmt.Errorf("nexus/sqlite: marshal config: %w", err)
+	}
+	metaJSON, err := json.Marshal(t.Metadata)
+	if err != nil {
+		return fmt.Errorf("nexus/sqlite: marshal metadata: %w", err)
+	}
 
-	_, err := s.db.ExecContext(ctx,
+	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO tenants (id, name, slug, status, quota_json, config_json, metadata_json, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID.String(), t.Name, t.Slug, string(t.Status),
@@ -147,11 +157,20 @@ func (s *tenantStore) FindBySlug(ctx context.Context, slug string) (*tenant.Tena
 }
 
 func (s *tenantStore) Update(ctx context.Context, t *tenant.Tenant) error {
-	quotaJSON, _ := json.Marshal(t.Quota)
-	configJSON, _ := json.Marshal(t.Config)
-	metaJSON, _ := json.Marshal(t.Metadata)
+	quotaJSON, err := json.Marshal(t.Quota)
+	if err != nil {
+		return fmt.Errorf("nexus/sqlite: marshal quota: %w", err)
+	}
+	configJSON, err := json.Marshal(t.Config)
+	if err != nil {
+		return fmt.Errorf("nexus/sqlite: marshal config: %w", err)
+	}
+	metaJSON, err := json.Marshal(t.Metadata)
+	if err != nil {
+		return fmt.Errorf("nexus/sqlite: marshal metadata: %w", err)
+	}
 
-	_, err := s.db.ExecContext(ctx,
+	_, err = s.db.ExecContext(ctx,
 		`UPDATE tenants SET name=?, slug=?, status=?, quota_json=?, config_json=?, metadata_json=?, updated_at=?
 		 WHERE id=?`,
 		t.Name, t.Slug, string(t.Status),
@@ -179,7 +198,7 @@ func (s *tenantStore) List(ctx context.Context, opts *tenant.ListOptions) ([]*te
 	if opts != nil && opts.Limit > 0 {
 		query += fmt.Sprintf(` LIMIT %d`, opts.Limit)
 		if opts.Offset > 0 {
-			query += fmt.Sprintf(` OFFSET %d`, opts.Offset)
+			query += fmt.Sprintf(` OFFSET %d`, opts.Offset) //nolint:gosec // G202 -- integer literal, not user input
 		}
 	}
 
@@ -207,7 +226,7 @@ func (s *tenantStore) scanTenant(row *sql.Row) (*tenant.Tenant, error) {
 
 	err := row.Scan(&idStr, &t.Name, &t.Slug, &status,
 		&quotaJSON, &configJSON, &metaJSON, &t.CreatedAt, &t.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -219,9 +238,15 @@ func (s *tenantStore) scanTenant(row *sql.Row) (*tenant.Tenant, error) {
 		return nil, fmt.Errorf("nexus/sqlite: invalid tenant ID: %w", err)
 	}
 	t.Status = tenant.Status(status)
-	_ = json.Unmarshal([]byte(quotaJSON), &t.Quota)
-	_ = json.Unmarshal([]byte(configJSON), &t.Config)
-	_ = json.Unmarshal([]byte(metaJSON), &t.Metadata)
+	if err := json.Unmarshal([]byte(quotaJSON), &t.Quota); err != nil {
+		return nil, fmt.Errorf("nexus/sqlite: unmarshal quota: %w", err)
+	}
+	if err := json.Unmarshal([]byte(configJSON), &t.Config); err != nil {
+		return nil, fmt.Errorf("nexus/sqlite: unmarshal config: %w", err)
+	}
+	if err := json.Unmarshal([]byte(metaJSON), &t.Metadata); err != nil {
+		return nil, fmt.Errorf("nexus/sqlite: unmarshal metadata: %w", err)
+	}
 	return &t, nil
 }
 
@@ -245,9 +270,15 @@ func (s *tenantStore) scanTenantRow(row scannable) (*tenant.Tenant, error) {
 		return nil, fmt.Errorf("nexus/sqlite: invalid tenant ID: %w", err)
 	}
 	t.Status = tenant.Status(status)
-	_ = json.Unmarshal([]byte(quotaJSON), &t.Quota)
-	_ = json.Unmarshal([]byte(configJSON), &t.Config)
-	_ = json.Unmarshal([]byte(metaJSON), &t.Metadata)
+	if err := json.Unmarshal([]byte(quotaJSON), &t.Quota); err != nil {
+		return nil, fmt.Errorf("nexus/sqlite: unmarshal quota: %w", err)
+	}
+	if err := json.Unmarshal([]byte(configJSON), &t.Config); err != nil {
+		return nil, fmt.Errorf("nexus/sqlite: unmarshal config: %w", err)
+	}
+	if err := json.Unmarshal([]byte(metaJSON), &t.Metadata); err != nil {
+		return nil, fmt.Errorf("nexus/sqlite: unmarshal metadata: %w", err)
+	}
 	return &t, nil
 }
 
@@ -260,10 +291,16 @@ type keyStore struct {
 }
 
 func (s *keyStore) Insert(ctx context.Context, k *key.APIKey) error {
-	scopesJSON, _ := json.Marshal(k.Scopes)
-	metaJSON, _ := json.Marshal(k.Metadata)
+	scopesJSON, err := json.Marshal(k.Scopes)
+	if err != nil {
+		return fmt.Errorf("nexus/sqlite: marshal scopes: %w", err)
+	}
+	metaJSON, err := json.Marshal(k.Metadata)
+	if err != nil {
+		return fmt.Errorf("nexus/sqlite: marshal metadata: %w", err)
+	}
 
-	_, err := s.db.ExecContext(ctx,
+	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO api_keys (id, tenant_id, name, prefix, hash, scopes_json, status, expires_at, last_used_at, metadata_json, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		k.ID.String(), k.TenantID.String(), k.Name, k.Prefix, k.Hash,
@@ -286,10 +323,16 @@ func (s *keyStore) FindByPrefix(ctx context.Context, prefix string) (*key.APIKey
 }
 
 func (s *keyStore) Update(ctx context.Context, k *key.APIKey) error {
-	scopesJSON, _ := json.Marshal(k.Scopes)
-	metaJSON, _ := json.Marshal(k.Metadata)
+	scopesJSON, err := json.Marshal(k.Scopes)
+	if err != nil {
+		return fmt.Errorf("nexus/sqlite: marshal scopes: %w", err)
+	}
+	metaJSON, err := json.Marshal(k.Metadata)
+	if err != nil {
+		return fmt.Errorf("nexus/sqlite: marshal metadata: %w", err)
+	}
 
-	_, err := s.db.ExecContext(ctx,
+	_, err = s.db.ExecContext(ctx,
 		`UPDATE api_keys SET name=?, status=?, scopes_json=?, expires_at=?, last_used_at=?, metadata_json=?
 		 WHERE id=?`,
 		k.Name, string(k.Status), string(scopesJSON),
@@ -330,7 +373,7 @@ func (s *keyStore) scanKey(row *sql.Row) (*key.APIKey, error) {
 
 	err := row.Scan(&idStr, &tenantIDStr, &k.Name, &k.Prefix, &k.Hash,
 		&scopesJSON, &status, &k.ExpiresAt, &k.LastUsedAt, &metaJSON, &k.CreatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -345,9 +388,13 @@ func (s *keyStore) scanKey(row *sql.Row) (*key.APIKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("nexus/sqlite: invalid tenant ID in key: %w", err)
 	}
-	k.Status = key.KeyStatus(status)
-	_ = json.Unmarshal([]byte(scopesJSON), &k.Scopes)
-	_ = json.Unmarshal([]byte(metaJSON), &k.Metadata)
+	k.Status = key.Status(status)
+	if err := json.Unmarshal([]byte(scopesJSON), &k.Scopes); err != nil {
+		return nil, fmt.Errorf("nexus/sqlite: unmarshal scopes: %w", err)
+	}
+	if err := json.Unmarshal([]byte(metaJSON), &k.Metadata); err != nil {
+		return nil, fmt.Errorf("nexus/sqlite: unmarshal metadata: %w", err)
+	}
 	return &k, nil
 }
 
@@ -370,9 +417,13 @@ func (s *keyStore) scanKeyRow(row scannable) (*key.APIKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("nexus/sqlite: invalid tenant ID in key: %w", err)
 	}
-	k.Status = key.KeyStatus(status)
-	_ = json.Unmarshal([]byte(scopesJSON), &k.Scopes)
-	_ = json.Unmarshal([]byte(metaJSON), &k.Metadata)
+	k.Status = key.Status(status)
+	if err := json.Unmarshal([]byte(scopesJSON), &k.Scopes); err != nil {
+		return nil, fmt.Errorf("nexus/sqlite: unmarshal scopes: %w", err)
+	}
+	if err := json.Unmarshal([]byte(metaJSON), &k.Metadata); err != nil {
+		return nil, fmt.Errorf("nexus/sqlite: unmarshal metadata: %w", err)
+	}
 	return &k, nil
 }
 
@@ -421,7 +472,7 @@ func (s *usageStore) DailyRequests(ctx context.Context, tenantID string) (int, e
 	return count, err
 }
 
-func (s *usageStore) Summary(ctx context.Context, tenantID string, period string) (*usage.Summary, error) {
+func (s *usageStore) Summary(ctx context.Context, tenantID, period string) (*usage.Summary, error) {
 	var startTime time.Time
 	now := time.Now()
 	switch period {
@@ -513,7 +564,7 @@ func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) ([]*us
 	if opts != nil && opts.Limit > 0 {
 		query += fmt.Sprintf(` LIMIT %d`, opts.Limit)
 		if opts.Offset > 0 {
-			query += fmt.Sprintf(` OFFSET %d`, opts.Offset)
+			query += fmt.Sprintf(` OFFSET %d`, opts.Offset) //nolint:gosec // G202 -- integer literal, not user input
 		}
 	}
 

@@ -93,7 +93,7 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 	elapsed := time.Since(start)
 
 	if httpResp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("openai: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -127,7 +127,7 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 
 	if httpResp.StatusCode != http.StatusOK {
 		defer func() { _ = httpResp.Body.Close() }()
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("openai: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -158,7 +158,7 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 	defer func() { _ = httpResp.Body.Close() }()
 
 	if httpResp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("openai: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -192,7 +192,7 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 }
 
 func (c *client) ping(ctx context.Context) error {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/models", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/models", http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -203,7 +203,7 @@ func (c *client) ping(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = httpResp.Body.Close() }()
-	_, _ = io.ReadAll(httpResp.Body)
+	_, _ = io.ReadAll(httpResp.Body) //nolint:errcheck // drain body before close
 
 	if httpResp.StatusCode != http.StatusOK {
 		return fmt.Errorf("openai: health check failed with status %d", httpResp.StatusCode)

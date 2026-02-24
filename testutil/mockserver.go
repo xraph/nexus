@@ -48,7 +48,12 @@ func NewMockServer(t *testing.T) *MockServer {
 		ctrl.LastMethod = r.Method
 		ctrl.LastPath = r.URL.Path
 		ctrl.LastHeader = r.Header.Clone()
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			ctrl.mu.Unlock()
+			http.Error(w, "failed to read body", http.StatusBadRequest)
+			return
+		}
 		ctrl.LastBody = body
 		_ = r.Body.Close()
 
@@ -61,7 +66,9 @@ func NewMockServer(t *testing.T) *MockServer {
 
 		if statusCode != http.StatusOK {
 			w.WriteHeader(statusCode)
-			_, _ = w.Write([]byte(`{"error": {"message": "mock error"}}`))
+			if _, err := w.Write([]byte(`{"error": {"message": "mock error"}}`)); err != nil {
+				return
+			}
 			return
 		}
 
@@ -71,14 +78,20 @@ func NewMockServer(t *testing.T) *MockServer {
 			streamHandler(w, r)
 		case embeddingResp != nil && isEmbeddingPath(r.URL.Path):
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(embeddingResp)
+			if err := json.NewEncoder(w).Encode(embeddingResp); err != nil {
+				return
+			}
 		case completionResp != nil:
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(completionResp)
+			if err := json.NewEncoder(w).Encode(completionResp); err != nil {
+				return
+			}
 		default:
 			// Default: return a standard OpenAI-compatible completion response
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(DefaultCompletionResponse())
+			if _, err := w.Write(DefaultCompletionResponse()); err != nil {
+				return
+			}
 		}
 	})
 
@@ -163,7 +176,7 @@ func DefaultCompletionResponse() []byte {
 			"total_tokens":      18,
 		},
 	}
-	b, _ := json.Marshal(resp)
+	b, _ := json.Marshal(resp) //nolint:errcheck // test helper; static data cannot fail
 	return b
 }
 
@@ -184,7 +197,7 @@ func DefaultEmbeddingResponse() []byte {
 			"total_tokens":  5,
 		},
 	}
-	b, _ := json.Marshal(resp)
+	b, _ := json.Marshal(resp) //nolint:errcheck // test helper; static data cannot fail
 	return b
 }
 

@@ -74,7 +74,10 @@ func (sc *SemanticCache) Set(ctx context.Context, key string, resp *provider.Com
 }
 
 func (sc *SemanticCache) Delete(ctx context.Context, key string) error {
-	_ = sc.matcher.Remove(ctx, key)
+	if err := sc.matcher.Remove(ctx, key); err != nil {
+		// best-effort: semantic index removal is non-fatal
+		_ = err
+	}
 	return sc.cache.Delete(ctx, key)
 }
 

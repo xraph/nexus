@@ -23,7 +23,7 @@ type AliasTarget struct {
 type AliasRegistry interface {
 	// Resolve returns the concrete targets for a model name.
 	// If the name is already concrete, returns it as-is.
-	Resolve(ctx context.Context, name string, tenantID string) ([]AliasTarget, error)
+	Resolve(ctx context.Context, name, tenantID string) ([]AliasTarget, error)
 
 	// Register adds or updates an alias.
 	Register(alias *Alias) error
@@ -45,7 +45,7 @@ func NewAliasRegistry() AliasRegistry {
 	}
 }
 
-func (r *inMemoryAliasRegistry) Resolve(ctx context.Context, name string, tenantID string) ([]AliasTarget, error) {
+func (r *inMemoryAliasRegistry) Resolve(_ context.Context, name, tenantID string) ([]AliasTarget, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

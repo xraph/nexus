@@ -15,7 +15,7 @@ type Tenant struct {
 	Slug      string            `json:"slug"` // URL-safe identifier
 	Status    Status            `json:"status"`
 	Quota     Quota             `json:"quota"`
-	Config    TenantConfig      `json:"config"`
+	Config    Config            `json:"config"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
 	CreatedAt time.Time         `json:"created_at"`
 	UpdatedAt time.Time         `json:"updated_at"`
@@ -39,8 +39,8 @@ type Quota struct {
 	MaxTokensPerReq  int     `json:"max_tokens_per_req"` // max tokens per single request
 }
 
-// TenantConfig holds per-tenant overrides.
-type TenantConfig struct {
+// Config holds per-tenant overrides.
+type Config struct {
 	AllowedModels   []string          `json:"allowed_models,omitempty"`
 	BlockedModels   []string          `json:"blocked_models,omitempty"`
 	DefaultModel    string            `json:"default_model,omitempty"`
@@ -55,7 +55,7 @@ type CreateInput struct {
 	Name     string            `json:"name"`
 	Slug     string            `json:"slug"`
 	Quota    *Quota            `json:"quota,omitempty"`
-	Config   *TenantConfig     `json:"config,omitempty"`
+	Config   *Config           `json:"config,omitempty"`
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
@@ -63,7 +63,7 @@ type CreateInput struct {
 type UpdateInput struct {
 	Name     *string           `json:"name,omitempty"`
 	Quota    *Quota            `json:"quota,omitempty"`
-	Config   *TenantConfig     `json:"config,omitempty"`
+	Config   *Config           `json:"config,omitempty"`
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 

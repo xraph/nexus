@@ -44,11 +44,11 @@ type Input struct {
 type Result struct {
 	CustomID string                       `json:"custom_id"`
 	Response *provider.CompletionResponse `json:"response,omitempty"`
-	Error    *BatchError                  `json:"error,omitempty"`
+	Error    *Error                       `json:"error,omitempty"`
 }
 
-// BatchError describes a batch item failure.
-type BatchError struct {
+// Error describes a batch item failure.
+type Error struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }

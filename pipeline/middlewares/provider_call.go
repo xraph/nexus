@@ -30,7 +30,7 @@ func NewProviderCall(r router.Service, providers provider.Registry) *ProviderCal
 func (m *ProviderCallMiddleware) Name() string  { return "provider_call" }
 func (m *ProviderCallMiddleware) Priority() int { return 350 }
 
-func (m *ProviderCallMiddleware) Process(ctx context.Context, req *pipeline.Request, next pipeline.NextFunc) (*pipeline.Response, error) {
+func (m *ProviderCallMiddleware) Process(ctx context.Context, req *pipeline.Request, _ pipeline.NextFunc) (*pipeline.Response, error) {
 	switch req.Type {
 	case pipeline.RequestCompletion:
 		return m.handleCompletion(ctx, req)

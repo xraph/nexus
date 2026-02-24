@@ -23,7 +23,7 @@ func (s *service) DailyRequests(ctx context.Context, tenantID string) (int, erro
 	return s.store.DailyRequests(ctx, tenantID)
 }
 
-func (s *service) Summary(ctx context.Context, tenantID string, period string) (*Summary, error) {
+func (s *service) Summary(ctx context.Context, tenantID, period string) (*Summary, error) {
 	return s.store.Summary(ctx, tenantID, period)
 }
 

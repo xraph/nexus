@@ -28,7 +28,7 @@ func newCohereStream(body io.ReadCloser, model string) *cohereStream {
 	}
 }
 
-func (s *cohereStream) Next(ctx context.Context) (*provider.StreamChunk, error) {
+func (s *cohereStream) Next(_ context.Context) (*provider.StreamChunk, error) {
 	if s.done {
 		return nil, io.EOF
 	}
@@ -51,23 +51,23 @@ func (s *cohereStream) Next(ctx context.Context) (*provider.StreamChunk, error) 
 			continue
 		}
 
-		eventType, _ := event["type"].(string)
+		eventType, _ := event["type"].(string) //nolint:errcheck // zero value is fine
 
 		switch eventType {
 		case "content-delta":
-			delta, _ := event["delta"].(map[string]any)
+			delta, _ := event["delta"].(map[string]any) //nolint:errcheck // zero value is fine
 			if delta == nil {
 				continue
 			}
-			message, _ := delta["message"].(map[string]any)
+			message, _ := delta["message"].(map[string]any) //nolint:errcheck // zero value is fine
 			if message == nil {
 				continue
 			}
-			content, _ := message["content"].(map[string]any)
+			content, _ := message["content"].(map[string]any) //nolint:errcheck // zero value is fine
 			if content == nil {
 				continue
 			}
-			text, _ := content["text"].(string)
+			text, _ := content["text"].(string) //nolint:errcheck // zero value is fine
 
 			return &provider.StreamChunk{
 				ID:       fmt.Sprintf("cohere-%d", time.Now().UnixNano()),
@@ -79,13 +79,13 @@ func (s *cohereStream) Next(ctx context.Context) (*provider.StreamChunk, error) 
 			}, nil
 
 		case "message-end":
-			delta, _ := event["delta"].(map[string]any)
+			delta, _ := event["delta"].(map[string]any) //nolint:errcheck // zero value is fine
 			if delta != nil {
 				if u, ok := delta["usage"].(map[string]any); ok {
-					tokens, _ := u["tokens"].(map[string]any)
+					tokens, _ := u["tokens"].(map[string]any) //nolint:errcheck // zero value is fine
 					if tokens != nil {
-						input, _ := tokens["input_tokens"].(float64)
-						output, _ := tokens["output_tokens"].(float64)
+						input, _ := tokens["input_tokens"].(float64)   //nolint:errcheck // zero value is fine
+						output, _ := tokens["output_tokens"].(float64) //nolint:errcheck // zero value is fine
 						s.usage = &provider.Usage{
 							PromptTokens:     int(input),
 							CompletionTokens: int(output),
@@ -93,7 +93,7 @@ func (s *cohereStream) Next(ctx context.Context) (*provider.StreamChunk, error) 
 						}
 					}
 				}
-				finishReason, _ := delta["finish_reason"].(string)
+				finishReason, _ := delta["finish_reason"].(string) //nolint:errcheck // zero value is fine
 				return &provider.StreamChunk{
 					ID:           fmt.Sprintf("cohere-%d", time.Now().UnixNano()),
 					Provider:     "cohere",

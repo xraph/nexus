@@ -9,9 +9,9 @@ import (
 	"github.com/xraph/nexus/provider"
 )
 
-// CacheKey generates a deterministic cache key from a request.
+// Key generates a deterministic cache key from a request.
 // The key is a SHA-256 hash of the relevant request fields.
-func CacheKey(req *provider.CompletionRequest) string {
+func Key(req *provider.CompletionRequest) string {
 	h := sha256.New()
 
 	// Model
@@ -24,7 +24,10 @@ func CacheKey(req *provider.CompletionRequest) string {
 		case string:
 			_, _ = fmt.Fprintf(h, "%s", c)
 		default:
-			data, _ := json.Marshal(c)
+			data, err := json.Marshal(c)
+			if err != nil {
+				continue
+			}
 			h.Write(data)
 		}
 		h.Write([]byte("\n"))
@@ -57,7 +60,10 @@ func CacheKey(req *provider.CompletionRequest) string {
 
 	// Tools (if present, changes the response)
 	if len(req.Tools) > 0 {
-		data, _ := json.Marshal(req.Tools)
+		data, err := json.Marshal(req.Tools)
+		if err != nil {
+			return ""
+		}
 		_, _ = fmt.Fprintf(h, "tools:%s\n", data)
 	}
 

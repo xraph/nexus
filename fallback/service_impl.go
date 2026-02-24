@@ -95,8 +95,8 @@ func (s *service) getCircuit(name string) *CircuitBreaker {
 	defer s.mu.Unlock()
 
 	// Double-check after acquiring write lock
-	if cb, ok := s.circuits[name]; ok {
-		return cb
+	if existingCB, ok := s.circuits[name]; ok {
+		return existingCB
 	}
 
 	cb = NewCircuitBreaker(s.policy.CircuitThreshold, s.policy.CircuitTimeout)

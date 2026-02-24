@@ -27,7 +27,7 @@ func newClient(projectID, location, accessToken string, credentialsJSON []byte, 
 		baseURL = fmt.Sprintf("https://%s-aiplatform.googleapis.com", location)
 	}
 
-	ts, _ := newTokenSource(accessToken, credentialsJSON)
+	ts, _ := newTokenSource(accessToken, credentialsJSON) //nolint:errcheck // optional auth
 
 	return &client{
 		projectID:   projectID,
@@ -151,8 +151,8 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("vertex: create request: %w", err)
 	}
-	if err := c.setHeaders(httpReq); err != nil {
-		return nil, err
+	if setErr := c.setHeaders(httpReq); setErr != nil {
+		return nil, fmt.Errorf("vertex: set headers: %w", setErr)
 	}
 
 	start := time.Now()
@@ -164,7 +164,7 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 	elapsed := time.Since(start)
 
 	if httpResp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("vertex: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -188,8 +188,8 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 	if err != nil {
 		return nil, fmt.Errorf("vertex: create request: %w", err)
 	}
-	if err := c.setHeaders(httpReq); err != nil {
-		return nil, err
+	if setErr := c.setHeaders(httpReq); setErr != nil {
+		return nil, fmt.Errorf("vertex: set headers: %w", setErr)
 	}
 
 	httpResp, err := c.http.Do(httpReq)
@@ -199,7 +199,7 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 
 	if httpResp.StatusCode != http.StatusOK {
 		defer func() { _ = httpResp.Body.Close() }()
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("vertex: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -222,8 +222,8 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 	if err != nil {
 		return nil, fmt.Errorf("vertex: create embed request: %w", err)
 	}
-	if err := c.setHeaders(httpReq); err != nil {
-		return nil, err
+	if setErr := c.setHeaders(httpReq); setErr != nil {
+		return nil, fmt.Errorf("vertex: set headers: %w", setErr)
 	}
 
 	httpResp, err := c.http.Do(httpReq)
@@ -233,7 +233,7 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 	defer func() { _ = httpResp.Body.Close() }()
 
 	if httpResp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("vertex: embed API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -261,12 +261,12 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 func (c *client) ping(ctx context.Context) error {
 	url := fmt.Sprintf("%s/v1/projects/%s/locations/%s/publishers/google/models",
 		c.baseURL, c.projectID, c.location)
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
 	if err != nil {
 		return err
 	}
-	if err := c.setHeaders(httpReq); err != nil {
-		return err
+	if setErr := c.setHeaders(httpReq); setErr != nil {
+		return fmt.Errorf("vertex: set headers: %w", setErr)
 	}
 
 	httpResp, err := c.http.Do(httpReq)
@@ -274,7 +274,7 @@ func (c *client) ping(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = httpResp.Body.Close() }()
-	_, _ = io.ReadAll(httpResp.Body)
+	_, _ = io.ReadAll(httpResp.Body) //nolint:errcheck // drain body before close
 
 	if httpResp.StatusCode >= 500 {
 		return fmt.Errorf("vertex: health check failed with status %d", httpResp.StatusCode)
@@ -327,7 +327,7 @@ func (c *client) toGeminiRequest(req *provider.CompletionRequest) *geminiRequest
 			parts := contentToParts(m.Content)
 			for _, tc := range m.ToolCalls {
 				var args map[string]any
-				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args) //nolint:errcheck // best-effort parse
 				parts = append(parts, geminiPart{
 					FunctionCall: &geminiFuncCall{
 						Name: tc.Function.Name,
@@ -341,7 +341,7 @@ func (c *client) toGeminiRequest(req *provider.CompletionRequest) *geminiRequest
 			})
 		case "tool":
 			var resp any
-			_ = json.Unmarshal([]byte(fmt.Sprintf("%v", m.Content)), &resp)
+			_ = json.Unmarshal([]byte(fmt.Sprintf("%v", m.Content)), &resp) //nolint:errcheck // best-effort parse
 			gemReq.Contents = append(gemReq.Contents, geminiContent{
 				Role: "user",
 				Parts: []geminiPart{{
@@ -368,7 +368,7 @@ func (c *client) toGeminiRequest(req *provider.CompletionRequest) *geminiRequest
 
 	// Tools.
 	if len(req.Tools) > 0 {
-		var decls []geminiFuncDecl
+		decls := make([]geminiFuncDecl, 0, len(req.Tools))
 		for _, t := range req.Tools {
 			decls = append(decls, geminiFuncDecl{
 				Name:        t.Function.Name,
@@ -393,8 +393,7 @@ func contentToParts(content any) []geminiPart {
 		var parts []geminiPart
 		for _, item := range v {
 			if m, ok := item.(map[string]any); ok {
-				switch m["type"] {
-				case "text":
+				if m["type"] == "text" {
 					if text, ok := m["text"].(string); ok {
 						parts = append(parts, geminiPart{Text: text})
 					}
@@ -408,7 +407,7 @@ func contentToParts(content any) []geminiPart {
 }
 
 func (c *client) fromGeminiResponse(resp *geminiResponse, model string, elapsed time.Duration) *provider.CompletionResponse {
-	var choices []provider.Choice
+	choices := make([]provider.Choice, 0, len(resp.Candidates))
 
 	for i, candidate := range resp.Candidates {
 		var content string
@@ -419,7 +418,7 @@ func (c *client) fromGeminiResponse(resp *geminiResponse, model string, elapsed 
 				content += part.Text
 			}
 			if part.FunctionCall != nil {
-				argsJSON, _ := json.Marshal(part.FunctionCall.Args)
+				argsJSON, _ := json.Marshal(part.FunctionCall.Args) //nolint:errcheck // known-good struct
 				toolCalls = append(toolCalls, provider.ToolCall{
 					ID:   fmt.Sprintf("call_%d", len(toolCalls)),
 					Type: "function",
@@ -494,7 +493,7 @@ func newVertexStream(body io.ReadCloser, model string) *vertexStream {
 	}
 }
 
-func (s *vertexStream) Next(ctx context.Context) (*provider.StreamChunk, error) {
+func (s *vertexStream) Next(_ context.Context) (*provider.StreamChunk, error) {
 	if s.done {
 		return nil, io.EOF
 	}
@@ -541,7 +540,7 @@ func (s *vertexStream) Next(ctx context.Context) (*provider.StreamChunk, error) 
 				content += part.Text
 			}
 			if part.FunctionCall != nil {
-				argsJSON, _ := json.Marshal(part.FunctionCall.Args)
+				argsJSON, _ := json.Marshal(part.FunctionCall.Args) //nolint:errcheck // known-good struct
 				toolCalls = append(toolCalls, provider.ToolCall{
 					ID:   fmt.Sprintf("call_%d", len(toolCalls)),
 					Type: "function",

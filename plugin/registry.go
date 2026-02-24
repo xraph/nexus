@@ -186,7 +186,7 @@ func (r *Registry) Count() int { return len(r.extensions) }
 // ──────────────────────────────────────────────────
 
 // EmitRequestReceived notifies all extensions that implement RequestReceived.
-func (r *Registry) EmitRequestReceived(ctx context.Context, requestID id.RequestID, model string, tenantID string) {
+func (r *Registry) EmitRequestReceived(ctx context.Context, requestID id.RequestID, model, tenantID string) {
 	for _, e := range r.requestReceived {
 		if err := e.hook.OnRequestReceived(ctx, requestID, model, tenantID); err != nil {
 			r.logHookError("OnRequestReceived", e.name, err)
@@ -195,7 +195,7 @@ func (r *Registry) EmitRequestReceived(ctx context.Context, requestID id.Request
 }
 
 // EmitRequestCompleted notifies all extensions that implement RequestCompleted.
-func (r *Registry) EmitRequestCompleted(ctx context.Context, requestID id.RequestID, model string, providerName string, elapsed time.Duration, inputTokens int, outputTokens int) {
+func (r *Registry) EmitRequestCompleted(ctx context.Context, requestID id.RequestID, model, providerName string, elapsed time.Duration, inputTokens, outputTokens int) {
 	for _, e := range r.requestCompleted {
 		if err := e.hook.OnRequestCompleted(ctx, requestID, model, providerName, elapsed, inputTokens, outputTokens); err != nil {
 			r.logHookError("OnRequestCompleted", e.name, err)
@@ -226,7 +226,7 @@ func (r *Registry) EmitRequestCached(ctx context.Context, requestID id.RequestID
 // ──────────────────────────────────────────────────
 
 // EmitProviderFailed notifies all extensions that implement ProviderFailed.
-func (r *Registry) EmitProviderFailed(ctx context.Context, providerName string, model string, provErr error) {
+func (r *Registry) EmitProviderFailed(ctx context.Context, providerName, model string, provErr error) {
 	for _, e := range r.providerFailed {
 		if err := e.hook.OnProviderFailed(ctx, providerName, model, provErr); err != nil {
 			r.logHookError("OnProviderFailed", e.name, err)
@@ -244,7 +244,7 @@ func (r *Registry) EmitCircuitOpened(ctx context.Context, providerName string) {
 }
 
 // EmitFallbackTriggered notifies all extensions that implement FallbackTriggered.
-func (r *Registry) EmitFallbackTriggered(ctx context.Context, from string, to string) {
+func (r *Registry) EmitFallbackTriggered(ctx context.Context, from, to string) {
 	for _, e := range r.fallbackTriggered {
 		if err := e.hook.OnFallbackTriggered(ctx, from, to); err != nil {
 			r.logHookError("OnFallbackTriggered", e.name, err)
@@ -266,7 +266,7 @@ func (r *Registry) EmitGuardrailBlocked(ctx context.Context, guardName string, r
 }
 
 // EmitGuardrailRedacted notifies all extensions that implement GuardrailRedacted.
-func (r *Registry) EmitGuardrailRedacted(ctx context.Context, guardName string, field string) {
+func (r *Registry) EmitGuardrailRedacted(ctx context.Context, guardName, field string) {
 	for _, e := range r.guardrailRedacted {
 		if err := e.hook.OnGuardrailRedacted(ctx, guardName, field); err != nil {
 			r.logHookError("OnGuardrailRedacted", e.name, err)

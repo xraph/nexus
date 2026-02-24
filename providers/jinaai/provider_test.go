@@ -2,6 +2,7 @@ package jinaai
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/xraph/nexus/provider"
@@ -84,7 +85,7 @@ func TestCompleteNotSupported(t *testing.T) {
 		Model:    "any-model",
 		Messages: []provider.Message{{Role: "user", Content: "Hello"}},
 	})
-	if err != provider.ErrNotSupported {
+	if !errors.Is(err, provider.ErrNotSupported) {
 		t.Fatalf("Complete() should return ErrNotSupported, got: %v", err)
 	}
 }
@@ -95,7 +96,7 @@ func TestCompleteStreamNotSupported(t *testing.T) {
 		Model:    "any-model",
 		Messages: []provider.Message{{Role: "user", Content: "Hello"}},
 	})
-	if err != provider.ErrNotSupported {
+	if !errors.Is(err, provider.ErrNotSupported) {
 		t.Fatalf("CompleteStream() should return ErrNotSupported, got: %v", err)
 	}
 }

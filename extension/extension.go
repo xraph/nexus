@@ -47,7 +47,7 @@ func (e *Extension) Dependencies() []string { return nil }
 // Register is called during Forge application setup.
 // It auto-discovers ecosystem extensions (Chronicle, Shield, Relay, Authsome)
 // and configures them as Nexus extensions/adapters.
-func (e *Extension) Register(ctx context.Context) error {
+func (e *Extension) Register(_ context.Context) error {
 	e.logger.Info("nexus: registering extension")
 
 	// Auto-discovery happens here in a full forge environment.
@@ -92,7 +92,7 @@ func (e *Extension) Stop(ctx context.Context) error {
 }
 
 // Health reports the gateway health status.
-func (e *Extension) Health(ctx context.Context) error {
+func (e *Extension) Health(_ context.Context) error {
 	if e.gateway == nil {
 		return fmt.Errorf("nexus: gateway not initialized")
 	}

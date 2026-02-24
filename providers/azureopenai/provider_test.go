@@ -153,7 +153,7 @@ func TestEmbed(t *testing.T) {
 	// Azure embed uses a custom path: /openai/deployments/{id}/embeddings
 	// The testutil mock's isEmbeddingPath only checks /embeddings and /v1/embeddings
 	// so we create a dedicated httptest server for this.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resp := map[string]any{
 			"data": []map[string]any{
 				{"embedding": []float64{0.1, 0.2, 0.3}, "index": 0},

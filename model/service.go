@@ -64,7 +64,7 @@ func (s *defaultService) Get(ctx context.Context, modelID string) (*provider.Mod
 	return nil, nil
 }
 
-func (s *defaultService) ResolveAlias(ctx context.Context, alias string, tenantID string) (string, string, error) {
+func (s *defaultService) ResolveAlias(ctx context.Context, alias, tenantID string) (resolvedModel, resolvedProvider string, err error) {
 	if s.aliases == nil {
 		return alias, "", nil
 	}

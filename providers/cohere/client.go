@@ -142,7 +142,7 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 	elapsed := time.Since(start)
 
 	if httpResp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("cohere: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -176,7 +176,7 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 
 	if httpResp.StatusCode != http.StatusOK {
 		defer func() { _ = httpResp.Body.Close() }()
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("cohere: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -208,7 +208,7 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 	defer func() { _ = httpResp.Body.Close() }()
 
 	if httpResp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("cohere: embed API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -229,7 +229,7 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 }
 
 func (c *client) ping(ctx context.Context) error {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/v2/models", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/v2/models", http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -240,7 +240,7 @@ func (c *client) ping(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = httpResp.Body.Close() }()
-	_, _ = io.ReadAll(httpResp.Body)
+	_, _ = io.ReadAll(httpResp.Body) //nolint:errcheck // drain body before close
 
 	if httpResp.StatusCode != http.StatusOK && httpResp.StatusCode != http.StatusUnauthorized {
 		return fmt.Errorf("cohere: health check failed with status %d", httpResp.StatusCode)
@@ -314,7 +314,7 @@ func (c *client) fromCohereResponse(resp *cohereResponse, elapsed time.Duration)
 		}
 	}
 
-	var toolCalls []provider.ToolCall
+	toolCalls := make([]provider.ToolCall, 0, len(resp.Message.ToolCalls))
 	for _, tc := range resp.Message.ToolCalls {
 		toolCalls = append(toolCalls, provider.ToolCall{
 			ID:   tc.ID,

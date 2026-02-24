@@ -93,10 +93,10 @@ type PromptArgument struct {
 	Required    bool   `json:"required,omitempty"`
 }
 
-// MCPAware marks a provider as supporting MCP tools natively.
+// Aware marks a provider as supporting MCP tools natively.
 // Providers implementing this interface can pass MCP tools directly
 // to the LLM without Nexus needing to handle tool execution.
-type MCPAware interface {
+type Aware interface {
 	// SupportsMCP returns true if the provider handles MCP tools.
 	SupportsMCP() bool
 

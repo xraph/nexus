@@ -19,7 +19,9 @@ func newEngine(gw *Gateway) *Engine {
 // NewEngine creates a standalone engine (no HTTP).
 func NewEngine(opts ...Option) *Engine {
 	gw := New(opts...)
-	_ = gw.Initialize(context.Background())
+	if err := gw.Initialize(context.Background()); err != nil {
+		return nil
+	}
 	return gw.engine
 }
 

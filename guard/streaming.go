@@ -2,6 +2,7 @@ package guard
 
 import (
 	"context"
+	"errors"
 	"io"
 
 	"github.com/xraph/nexus/provider"
@@ -78,7 +79,7 @@ func (gs *GuardedStream) nextBuffered(ctx context.Context) (*provider.StreamChun
 		// Buffer all chunks
 		for {
 			chunk, err := gs.inner.Next(ctx)
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {

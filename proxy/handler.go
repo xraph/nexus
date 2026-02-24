@@ -20,8 +20,8 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
 
 	var req provider.CompletionRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON: "+err.Error())
+	if unmarshalErr := json.Unmarshal(body, &req); unmarshalErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON: "+unmarshalErr.Error())
 		return
 	}
 
@@ -65,7 +65,7 @@ func (p *Proxy) handleStreamingCompletion(w http.ResponseWriter, r *http.Request
 	}
 	defer func() { _ = stream.Close() }()
 
-	streamSSE(w, ctx, stream, req.Model)
+	streamSSE(ctx, w, stream, req.Model)
 }
 
 // handleEmbeddings handles POST /v1/embeddings
@@ -79,24 +79,24 @@ func (p *Proxy) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 
 	// Parse request — accept string or array of strings for "input"
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if unmarshalErr := json.Unmarshal(body, &raw); unmarshalErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON")
 		return
 	}
 
 	var req provider.EmbeddingRequest
 	if modelRaw, ok := raw["model"]; ok {
-		_ = json.Unmarshal(modelRaw, &req.Model)
+		_ = json.Unmarshal(modelRaw, &req.Model) //nolint:errcheck // best-effort; validated below
 	}
 
 	if inputRaw, ok := raw["input"]; ok {
 		// Try as string first
 		var single string
-		if err := json.Unmarshal(inputRaw, &single); err == nil {
+		if unmarshalErr := json.Unmarshal(inputRaw, &single); unmarshalErr == nil {
 			req.Input = []string{single}
 		} else {
 			// Try as array of strings
-			_ = json.Unmarshal(inputRaw, &req.Input)
+			_ = json.Unmarshal(inputRaw, &req.Input) //nolint:errcheck // best-effort; validated below
 		}
 	}
 
@@ -174,7 +174,7 @@ func (p *Proxy) handleGetModel(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleHealth handles GET /health
-func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (p *Proxy) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
 		"server": "nexus",
@@ -307,7 +307,7 @@ func toOpenAIEmbeddingResponse(resp *provider.EmbeddingResponse) *openAIEmbeddin
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v) //nolint:errcheck // best-effort HTTP response write
 }
 
 func writeError(w http.ResponseWriter, status int, errType, message string) {

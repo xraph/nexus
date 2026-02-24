@@ -23,7 +23,7 @@ type Registry interface {
 	ForModel(model string) []Provider
 
 	// WithCapability returns providers with a specific capability.
-	WithCapability(cap string) []Provider
+	WithCapability(capability string) []Provider
 
 	// Healthy returns only healthy providers.
 	Healthy(ctx context.Context) []Provider
@@ -75,10 +75,10 @@ func (r *registry) Count() int {
 	return len(r.providers)
 }
 
-func (r *registry) ForModel(model string) []Provider {
+func (r *registry) ForModel(_ string) []Provider {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	var result []Provider
+	result := make([]Provider, 0, len(r.order))
 	for _, name := range r.order {
 		p := r.providers[name]
 		// Check if provider supports the model by querying its model list
@@ -89,13 +89,13 @@ func (r *registry) ForModel(model string) []Provider {
 	return result
 }
 
-func (r *registry) WithCapability(cap string) []Provider {
+func (r *registry) WithCapability(capability string) []Provider {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var result []Provider
 	for _, name := range r.order {
 		p := r.providers[name]
-		if p.Capabilities().Supports(cap) {
+		if p.Capabilities().Supports(capability) {
 			result = append(result, p)
 		}
 	}

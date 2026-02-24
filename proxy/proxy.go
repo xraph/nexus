@@ -29,11 +29,11 @@ type Proxy struct {
 	mux    *http.ServeMux
 }
 
-// ProxyOption configures the proxy.
-type ProxyOption func(*Proxy)
+// Option configures the proxy.
+type Option func(*Proxy)
 
 // New creates a new OpenAI-compatible proxy.
-func New(engine *nexus.Engine, opts ...ProxyOption) *Proxy {
+func New(engine *nexus.Engine, opts ...Option) *Proxy {
 	p := &Proxy{
 		engine: engine,
 		mux:    http.NewServeMux(),

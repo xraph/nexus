@@ -3,6 +3,7 @@ package anthropic_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
@@ -399,7 +400,7 @@ func TestCompleteStream(t *testing.T) {
 	var chunks []*provider.StreamChunk
 	for {
 		chunk, err := stream.Next(ctx)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -473,7 +474,7 @@ func TestEmbed_NotSupported(t *testing.T) {
 		Model: "any-model",
 		Input: []string{"Hello"},
 	})
-	if err != provider.ErrNotSupported {
+	if !errors.Is(err, provider.ErrNotSupported) {
 		t.Fatalf("Embed() = %v, want ErrNotSupported", err)
 	}
 }

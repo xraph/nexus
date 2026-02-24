@@ -22,7 +22,7 @@ func NewPriority(order ...string) *PriorityStrategy {
 
 func (s *PriorityStrategy) Name() string { return "priority" }
 
-func (s *PriorityStrategy) Select(ctx context.Context, req *provider.CompletionRequest, candidates []router.Candidate) (*router.Candidate, error) {
+func (s *PriorityStrategy) Select(_ context.Context, _ *provider.CompletionRequest, candidates []router.Candidate) (*router.Candidate, error) {
 	// Build lookup by name
 	byName := make(map[string]*router.Candidate, len(candidates))
 	for i := range candidates {

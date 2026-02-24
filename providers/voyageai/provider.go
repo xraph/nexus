@@ -42,17 +42,17 @@ func (p *Provider) Capabilities() provider.Capabilities {
 }
 
 // Models returns the list of available models.
-func (p *Provider) Models(ctx context.Context) ([]provider.Model, error) {
+func (p *Provider) Models(_ context.Context) ([]provider.Model, error) {
 	return voyageAIModels(), nil
 }
 
 // Complete is not supported by Voyage AI.
-func (p *Provider) Complete(ctx context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
+func (p *Provider) Complete(_ context.Context, _ *provider.CompletionRequest) (*provider.CompletionResponse, error) {
 	return nil, provider.ErrNotSupported
 }
 
 // CompleteStream is not supported by Voyage AI.
-func (p *Provider) CompleteStream(ctx context.Context, req *provider.CompletionRequest) (provider.Stream, error) {
+func (p *Provider) CompleteStream(_ context.Context, _ *provider.CompletionRequest) (provider.Stream, error) {
 	return nil, provider.ErrNotSupported
 }
 

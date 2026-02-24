@@ -60,9 +60,9 @@ func (m *UsageMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 		}
 	}
 
-	// Record asynchronously (non-blocking)
+	// Record asynchronously (non-blocking, best-effort)
 	go func() {
-		_ = m.usage.Record(context.Background(), rec)
+		_ = m.usage.Record(context.Background(), rec) //nolint:errcheck // best-effort async usage recording
 	}()
 
 	return resp, err

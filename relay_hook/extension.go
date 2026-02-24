@@ -89,7 +89,7 @@ func (e *Extension) Name() string { return "relay_hook" }
 // Lifecycle hooks
 // ──────────────────────────────────────────────────
 
-func (e *Extension) OnRequestReceived(ctx context.Context, requestID id.RequestID, model string, tenantID string) error {
+func (e *Extension) OnRequestReceived(ctx context.Context, requestID id.RequestID, model, tenantID string) error {
 	return e.send(ctx, EventRequestReceived, map[string]any{
 		"request_id": requestID.String(),
 		"model":      model,
@@ -97,7 +97,7 @@ func (e *Extension) OnRequestReceived(ctx context.Context, requestID id.RequestI
 	})
 }
 
-func (e *Extension) OnRequestCompleted(ctx context.Context, requestID id.RequestID, model string, providerName string, elapsed time.Duration, inputTokens int, outputTokens int) error {
+func (e *Extension) OnRequestCompleted(ctx context.Context, requestID id.RequestID, model, providerName string, elapsed time.Duration, inputTokens, outputTokens int) error {
 	return e.send(ctx, EventRequestCompleted, map[string]any{
 		"request_id":    requestID.String(),
 		"model":         model,
@@ -123,7 +123,7 @@ func (e *Extension) OnRequestCached(ctx context.Context, requestID id.RequestID,
 	})
 }
 
-func (e *Extension) OnProviderFailed(ctx context.Context, providerName string, model string, err error) error {
+func (e *Extension) OnProviderFailed(ctx context.Context, providerName, model string, err error) error {
 	return e.send(ctx, EventProviderFailed, map[string]any{
 		"provider": providerName,
 		"model":    model,
@@ -137,7 +137,7 @@ func (e *Extension) OnCircuitOpened(ctx context.Context, providerName string) er
 	})
 }
 
-func (e *Extension) OnFallbackTriggered(ctx context.Context, from string, to string) error {
+func (e *Extension) OnFallbackTriggered(ctx context.Context, from, to string) error {
 	return e.send(ctx, EventFallbackTriggered, map[string]any{
 		"from": from,
 		"to":   to,

@@ -73,7 +73,7 @@ func (c *RedisCache) Get(ctx context.Context, key string) (*provider.CompletionR
 	return nil, nil
 }
 
-func (c *RedisCache) Set(ctx context.Context, key string, resp *provider.CompletionResponse) error {
+func (c *RedisCache) Set(ctx context.Context, key string, _ *provider.CompletionResponse) error {
 	// Would json.Marshal resp here
 	_ = c.client.Set(ctx, c.prefix+key, []byte("{}"), c.ttl)
 	return nil

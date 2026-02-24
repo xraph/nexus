@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -50,7 +51,7 @@ func TestStream_DoneSignal(t *testing.T) {
 	// Further calls must return EOF.
 	ctx := context.Background()
 	_, err := stream.Next(ctx)
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		t.Errorf("expected io.EOF after [DONE], got %v", err)
 	}
 }
@@ -58,7 +59,7 @@ func TestStream_DoneSignal(t *testing.T) {
 func TestStream_MalformedJSON(t *testing.T) {
 	// If a data line contains invalid JSON, the stream should return an error.
 	mock := testutil.NewMockServer(t)
-	mock.Ctrl.SetStreamHandler(func(w http.ResponseWriter, r *http.Request) {
+	mock.Ctrl.SetStreamHandler(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 		// Write a chunk with malformed JSON.
@@ -120,7 +121,7 @@ func TestStream_UsageInFinalChunk(t *testing.T) {
 func TestStream_EmptyLinesAndComments(t *testing.T) {
 	// SSE spec: empty lines and lines beginning with ":" are comments/keep-alives.
 	mock := testutil.NewMockServer(t)
-	mock.Ctrl.SetStreamHandler(func(w http.ResponseWriter, r *http.Request) {
+	mock.Ctrl.SetStreamHandler(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 
@@ -266,7 +267,7 @@ func TestStream_CloseStopsIteration(t *testing.T) {
 	}
 	// Note: we use a handler that never sends [DONE] to test close behavior.
 	mock := testutil.NewMockServer(t)
-	mock.Ctrl.SetStreamHandler(func(w http.ResponseWriter, r *http.Request) {
+	mock.Ctrl.SetStreamHandler(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 		for _, c := range chunks {
@@ -296,13 +297,13 @@ func TestStream_CloseStopsIteration(t *testing.T) {
 		t.Fatalf("first Next() error: %v", err)
 	}
 
-	if err := stream.Close(); err != nil {
-		t.Fatalf("Close() error: %v", err)
+	if closeErr := stream.Close(); closeErr != nil {
+		t.Fatalf("Close() error: %v", closeErr)
 	}
 
 	// After close, done flag should be set.
 	_, err = stream.Next(ctx)
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		t.Errorf("expected io.EOF after Close(), got %v", err)
 	}
 }
@@ -340,7 +341,7 @@ func TestStream_EmptyChoicesChunkSkipped(t *testing.T) {
 func TestStream_NonDataLinesIgnored(t *testing.T) {
 	// Lines that are not "data: " prefixed should be silently skipped.
 	mock := testutil.NewMockServer(t)
-	mock.Ctrl.SetStreamHandler(func(w http.ResponseWriter, r *http.Request) {
+	mock.Ctrl.SetStreamHandler(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 
@@ -408,7 +409,7 @@ func drainContent(t *testing.T, stream provider.Stream) string {
 	var out string
 	for {
 		chunk, err := stream.Next(ctx)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

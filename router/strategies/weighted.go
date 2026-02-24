@@ -22,7 +22,7 @@ func NewWeighted(weights map[string]float64) *WeightedStrategy {
 
 func (s *WeightedStrategy) Name() string { return "weighted" }
 
-func (s *WeightedStrategy) Select(ctx context.Context, req *provider.CompletionRequest, candidates []router.Candidate) (*router.Candidate, error) {
+func (s *WeightedStrategy) Select(_ context.Context, _ *provider.CompletionRequest, candidates []router.Candidate) (*router.Candidate, error) {
 	// Assign weights to candidates
 	type weighted struct {
 		candidate *router.Candidate
@@ -49,7 +49,7 @@ func (s *WeightedStrategy) Select(ctx context.Context, req *provider.CompletionR
 	}
 
 	// Weighted random selection
-	r := rand.Float64() * totalWeight
+	r := rand.Float64() * totalWeight //nolint:gosec // G404 -- weighted selection, not security-sensitive
 	for _, item := range items {
 		r -= item.weight
 		if r <= 0 {

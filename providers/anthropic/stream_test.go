@@ -2,6 +2,7 @@ package anthropic_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 
@@ -149,7 +150,7 @@ func TestStream_ContentBlockDelta_TextDelta(t *testing.T) {
 	var collected string
 	for {
 		chunk, err := stream.Next(ctx)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -293,7 +294,7 @@ func TestStream_MessageDelta_StopReason(t *testing.T) {
 			var lastChunk *provider.StreamChunk
 			for {
 				chunk, err := stream.Next(ctx)
-				if err == io.EOF {
+				if errors.Is(err, io.EOF) {
 					break
 				}
 				if err != nil {
@@ -369,7 +370,7 @@ func TestStream_MessageDelta_Usage(t *testing.T) {
 	// Drain the stream
 	for {
 		_, err := stream.Next(ctx)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -446,8 +447,8 @@ func TestStream_MessageStop_ReturnsEOF(t *testing.T) {
 
 	// Drain the stream
 	for {
-		_, err := stream.Next(ctx)
-		if err == io.EOF {
+		_, err = stream.Next(ctx)
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -457,7 +458,7 @@ func TestStream_MessageStop_ReturnsEOF(t *testing.T) {
 
 	// Calling Next() again after EOF should still return EOF
 	_, err = stream.Next(ctx)
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		t.Errorf("Next() after EOF = %v, want io.EOF", err)
 	}
 }
@@ -580,7 +581,7 @@ func TestStream_EmptyContent(t *testing.T) {
 
 	// Should immediately get EOF since there are no content_block_delta events
 	_, err = stream.Next(ctx)
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		t.Errorf("Next() = %v, want io.EOF for empty stream", err)
 	}
 }

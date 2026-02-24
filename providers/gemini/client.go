@@ -136,7 +136,7 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 	elapsed := time.Since(start)
 
 	if httpResp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("gemini: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -170,7 +170,7 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 
 	if httpResp.StatusCode != http.StatusOK {
 		defer func() { _ = httpResp.Body.Close() }()
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("gemini: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -209,7 +209,7 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 	defer func() { _ = httpResp.Body.Close() }()
 
 	if httpResp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
 		return nil, fmt.Errorf("gemini: embed API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
@@ -236,7 +236,7 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 
 func (c *client) ping(ctx context.Context) error {
 	url := fmt.Sprintf("%s/v1beta/models?key=%s", c.baseURL, c.apiKey)
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -246,7 +246,7 @@ func (c *client) ping(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = httpResp.Body.Close() }()
-	_, _ = io.ReadAll(httpResp.Body)
+	_, _ = io.ReadAll(httpResp.Body) //nolint:errcheck // drain body before close
 
 	if httpResp.StatusCode != http.StatusOK {
 		return fmt.Errorf("gemini: health check failed with status %d", httpResp.StatusCode)
@@ -287,7 +287,7 @@ func (c *client) toGeminiRequest(req *provider.CompletionRequest) *geminiRequest
 			// Include tool calls as function call parts.
 			for _, tc := range m.ToolCalls {
 				var args map[string]any
-				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args) //nolint:errcheck // best-effort parse
 				parts = append(parts, geminiPart{
 					FunctionCall: &geminiFuncCall{
 						Name: tc.Function.Name,
@@ -302,7 +302,7 @@ func (c *client) toGeminiRequest(req *provider.CompletionRequest) *geminiRequest
 		case "tool":
 			// Tool response.
 			var resp any
-			_ = json.Unmarshal([]byte(fmt.Sprintf("%v", m.Content)), &resp)
+			_ = json.Unmarshal([]byte(fmt.Sprintf("%v", m.Content)), &resp) //nolint:errcheck // best-effort parse
 			gemReq.Contents = append(gemReq.Contents, geminiContent{
 				Role: "user",
 				Parts: []geminiPart{{
@@ -329,7 +329,7 @@ func (c *client) toGeminiRequest(req *provider.CompletionRequest) *geminiRequest
 
 	// Tools.
 	if len(req.Tools) > 0 {
-		var decls []geminiFuncDecl
+		decls := make([]geminiFuncDecl, 0, len(req.Tools))
 		for _, t := range req.Tools {
 			decls = append(decls, geminiFuncDecl{
 				Name:        t.Function.Name,
@@ -354,8 +354,7 @@ func contentToParts(content any) []geminiPart {
 		var parts []geminiPart
 		for _, item := range v {
 			if m, ok := item.(map[string]any); ok {
-				switch m["type"] {
-				case "text":
+				if m["type"] == "text" {
 					if text, ok := m["text"].(string); ok {
 						parts = append(parts, geminiPart{Text: text})
 					}
@@ -369,7 +368,7 @@ func contentToParts(content any) []geminiPart {
 }
 
 func (c *client) fromGeminiResponse(resp *geminiResponse, model string, elapsed time.Duration) *provider.CompletionResponse {
-	var choices []provider.Choice
+	choices := make([]provider.Choice, 0, len(resp.Candidates))
 
 	for i, candidate := range resp.Candidates {
 		var content string
@@ -380,7 +379,7 @@ func (c *client) fromGeminiResponse(resp *geminiResponse, model string, elapsed 
 				content += part.Text
 			}
 			if part.FunctionCall != nil {
-				argsJSON, _ := json.Marshal(part.FunctionCall.Args)
+				argsJSON, _ := json.Marshal(part.FunctionCall.Args) //nolint:errcheck // known-good struct
 				toolCalls = append(toolCalls, provider.ToolCall{
 					ID:   fmt.Sprintf("call_%d", len(toolCalls)),
 					Type: "function",

@@ -44,7 +44,7 @@ func (p *Provider) Capabilities() provider.Capabilities {
 }
 
 // Models returns the list of available models.
-func (p *Provider) Models(ctx context.Context) ([]provider.Model, error) {
+func (p *Provider) Models(_ context.Context) ([]provider.Model, error) {
 	return anthropicModels(), nil
 }
 
@@ -59,7 +59,7 @@ func (p *Provider) CompleteStream(ctx context.Context, req *provider.CompletionR
 }
 
 // Embed sends an embedding request — Anthropic does not support embeddings.
-func (p *Provider) Embed(ctx context.Context, req *provider.EmbeddingRequest) (*provider.EmbeddingResponse, error) {
+func (p *Provider) Embed(_ context.Context, _ *provider.EmbeddingRequest) (*provider.EmbeddingResponse, error) {
 	return nil, provider.ErrNotSupported
 }
 

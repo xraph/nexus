@@ -30,7 +30,7 @@ func New(authenticator Authenticator) *Adapter {
 
 // Authenticate validates credentials from the request context.
 // It extracts the bearer token from context and validates via Authsome.
-func (a *Adapter) Authenticate(ctx context.Context) (*auth.Claims, error) {
+func (a *Adapter) Authenticate(_ context.Context) (*auth.Claims, error) {
 	// In a full implementation, extract bearer token from context.
 	// For now, return empty claims.
 	return &auth.Claims{}, nil

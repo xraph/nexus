@@ -18,7 +18,7 @@ func NewLatencyOptimized() *LatencyOptimizedStrategy {
 
 func (s *LatencyOptimizedStrategy) Name() string { return "latency_optimized" }
 
-func (s *LatencyOptimizedStrategy) Select(ctx context.Context, req *provider.CompletionRequest, candidates []router.Candidate) (*router.Candidate, error) {
+func (s *LatencyOptimizedStrategy) Select(_ context.Context, _ *provider.CompletionRequest, candidates []router.Candidate) (*router.Candidate, error) {
 	var best *router.Candidate
 	for i := range candidates {
 		c := &candidates[i]
