@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-# release.sh — Tag a release for one or all modules.
+# release.sh — Tag a release for one or more modules.
 #
 # Usage:
-#   ./scripts/release.sh v0.1.0                    # Release root module
-#   ./scripts/release.sh v0.1.0 providers/openai    # Release a single provider
-#   ./scripts/release.sh v0.1.0 all                 # Release root + all sub-modules
+#   ./scripts/release.sh v0.1.0                          # Release root module
+#   ./scripts/release.sh v0.1.0 providers/openai          # Release a single provider (full path)
+#   ./scripts/release.sh v0.1.0 openai                    # Release a single provider (short name)
+#   ./scripts/release.sh v0.1.0 openai,anthropic,gemini   # Release multiple providers
+#   ./scripts/release.sh v0.1.0 config                    # Release config module
+#   ./scripts/release.sh v0.1.0 all                       # Release root + config + all providers
 #
 # This script:
 #   1. Validates the version argument
-#   2. Strips replace directives from the target module(s)
-#   3. Updates require versions to use the real tag
-#   4. Commits the cleaned go.mod files
-#   5. Creates the git tag(s)
-#   6. Restores replace directives
-#   7. Commits the restore
+#   2. Resolves short provider names to full paths
+#   3. Strips replace directives from the target module(s)
+#   4. Updates require versions to use the real tag
+#   5. Commits the cleaned go.mod files
+#   6. Creates the git tag(s)
+#   7. Restores replace directives
+#   8. Commits the restore
 #
 # After running, push the tag(s): git push origin --tags
 
@@ -24,14 +28,27 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
+KNOWN_PROVIDERS="ai21 anthropic anyscale azureopenai bedrock cerebras cohere deepinfra deepseek fireworks gemini groq hyperbolic jinaai lepton lmstudio mistral nebius novita nvidia ollama openai opencompat openrouter perplexity sambanova together vertex voyageai xai"
+
 VERSION="${1:-}"
 TARGET="${2:-.}"
 
 if [ -z "$VERSION" ]; then
-  echo -e "${RED}Usage: $0 <version> [module-path|all]${NC}"
-  echo "  version:     Semver tag (e.g., v0.1.0)"
-  echo "  module-path: Module to release (default: root)"
-  echo "               Use 'all' to release root + all sub-modules"
+  echo -e "${RED}Usage: $0 <version> [modules]${NC}"
+  echo ""
+  echo "  version:  Semver tag (e.g., v0.1.0)"
+  echo "  modules:  What to release (default: root)"
+  echo ""
+  echo "  Examples:"
+  echo "    $0 v0.1.0                          # Root module only"
+  echo "    $0 v0.1.0 openai                   # Single provider (short name)"
+  echo "    $0 v0.1.0 providers/openai          # Single provider (full path)"
+  echo "    $0 v0.1.0 openai,anthropic,gemini   # Multiple providers"
+  echo "    $0 v0.1.0 config                    # Config module"
+  echo "    $0 v0.1.0 all                       # Root + config + all providers"
+  echo ""
+  echo "  Available providers:"
+  echo "    $KNOWN_PROVIDERS"
   exit 1
 fi
 
@@ -50,6 +67,28 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
+# Resolve a module name to its directory path.
+# Short provider names (e.g., "openai") are expanded to "./providers/openai".
+resolve_module() {
+  local name="$1"
+  case "$name" in
+    .)          echo "." ;;
+    config)     echo "./config" ;;
+    providers/*) echo "./$name" ;;
+    ./*)        echo "$name" ;;
+    *)
+      # Assume it's a short provider name
+      if echo "$KNOWN_PROVIDERS" | grep -qw "$name"; then
+        echo "./providers/$name"
+      else
+        echo -e "${RED}Error: Unknown module '$name'. Must be 'config', 'all', a provider name, or a path like 'providers/openai'.${NC}" >&2
+        echo -e "Available providers: $KNOWN_PROVIDERS" >&2
+        exit 1
+      fi
+      ;;
+  esac
+}
+
 echo -e "${GREEN}Releasing ${VERSION}...${NC}"
 
 # Collect module paths to release
@@ -63,8 +102,21 @@ if [ "$TARGET" = "all" ]; then
 elif [ "$TARGET" = "." ]; then
   MODULES+=(".")
 else
-  MODULES+=("./$TARGET")
+  # Support comma-separated list: "openai,anthropic,gemini"
+  IFS=',' read -ra TARGETS <<< "$TARGET"
+  for t in "${TARGETS[@]}"; do
+    t=$(echo "$t" | xargs) # trim whitespace
+    MODULES+=("$(resolve_module "$t")")
+  done
 fi
+
+# Verify all module directories exist
+for mod in "${MODULES[@]}"; do
+  if [ ! -f "$mod/go.mod" ]; then
+    echo -e "${RED}Error: go.mod not found at $mod${NC}"
+    exit 1
+  fi
+done
 
 echo -e "${YELLOW}Modules to release:${NC}"
 for mod in "${MODULES[@]}"; do
@@ -91,11 +143,10 @@ for mod in "${MODULES[@]}"; do
   f="$mod/go.mod"
   if [ -f "$f" ]; then
     sed -i.bak "s|github.com/xraph/nexus v0.0.0|github.com/xraph/nexus ${VERSION}|g" "$f"
-    sed -i.bak "s|github.com/xraph/nexus/providers/openai v0.0.0|github.com/xraph/nexus/providers/openai ${VERSION}|g" "$f"
-    # Update all provider versions in config/go.mod
-    for provider in ai21 anthropic anyscale azureopenai bedrock cerebras cohere deepinfra deepseek fireworks gemini groq hyperbolic jinaai lepton lmstudio mistral nebius novita nvidia ollama openai opencompat openrouter perplexity sambanova together vertex voyageai xai; do
+    for provider in $KNOWN_PROVIDERS; do
       sed -i.bak "s|github.com/xraph/nexus/providers/$provider v0.0.0|github.com/xraph/nexus/providers/$provider ${VERSION}|g" "$f"
     done
+    sed -i.bak "s|github.com/xraph/nexus/config v0.0.0|github.com/xraph/nexus/config ${VERSION}|g" "$f"
     rm -f "$f.bak"
     echo "  Updated versions in $f"
   fi
@@ -103,11 +154,6 @@ done
 
 # Step 3: Verify build
 echo -e "${YELLOW}Verifying build...${NC}"
-GOWORK=off
-for mod in "${MODULES[@]}"; do
-  echo "  Building $mod..."
-  # Use workspace for build verification (replace directives are gone but workspace resolves)
-done
 # Use workspace build since modules reference each other
 go build ./...
 echo -e "${GREEN}Build verified.${NC}"
@@ -145,10 +191,10 @@ git checkout HEAD~1 -- $(find . -name 'go.mod' | tr '\n' ' ')
 # Update the version back to v0.0.0 in restored files
 for f in $(find . -name 'go.mod'); do
   sed -i.bak "s|github.com/xraph/nexus ${VERSION}|github.com/xraph/nexus v0.0.0|g" "$f"
-  sed -i.bak "s|github.com/xraph/nexus/providers/openai ${VERSION}|github.com/xraph/nexus/providers/openai v0.0.0|g" "$f"
-  for provider in ai21 anthropic anyscale azureopenai bedrock cerebras cohere deepinfra deepseek fireworks gemini groq hyperbolic jinaai lepton lmstudio mistral nebius novita nvidia ollama openai opencompat openrouter perplexity sambanova together vertex voyageai xai; do
+  for provider in $KNOWN_PROVIDERS; do
     sed -i.bak "s|github.com/xraph/nexus/providers/$provider ${VERSION}|github.com/xraph/nexus/providers/$provider v0.0.0|g" "$f"
   done
+  sed -i.bak "s|github.com/xraph/nexus/config ${VERSION}|github.com/xraph/nexus/config v0.0.0|g" "$f"
   rm -f "$f.bak"
 done
 

@@ -8,62 +8,286 @@ on:
       - "config/v*"
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Release tag (e.g., v1.0.0 or providers/openai/v1.0.0)'
+      module:
+        description: 'Module to release'
+        required: true
+        type: choice
+        options:
+          - nexus
+          - config
+          - all
+          - ai21
+          - anthropic
+          - anyscale
+          - azureopenai
+          - bedrock
+          - cerebras
+          - cohere
+          - deepinfra
+          - deepseek
+          - fireworks
+          - gemini
+          - groq
+          - hyperbolic
+          - jinaai
+          - lepton
+          - lmstudio
+          - mistral
+          - nebius
+          - novita
+          - nvidia
+          - ollama
+          - openai
+          - opencompat
+          - openrouter
+          - perplexity
+          - sambanova
+          - together
+          - vertex
+          - voyageai
+          - xai
+      version:
+        description: 'Semantic version to release (e.g. 1.0.0 or 1.0.0-beta.1)'
         required: true
         type: string
+      dry_run:
+        description: 'Dry run — validate everything but do not publish'
+        required: false
+        type: boolean
+        default: false
+      skip_tests:
+        description: 'Skip tests (use for hotfixes when tests already passed)'
+        required: false
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Mark as a pre-release'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
-jobs:
-  release:
-    name: Release
-    runs-on: ubuntu-latest
+defaults:
+  run:
+    shell: bash
 
+# -------------------------------------------------------------------
+# Job: detect
+# Normalises inputs from both tag-push and workflow_dispatch triggers
+# into a single set of outputs consumed by downstream jobs.
+# -------------------------------------------------------------------
+jobs:
+  detect:
+    name: Detect release parameters
+    runs-on: ubuntu-latest
+    outputs:
+      module_type: ${{ steps.resolve.outputs.module_type }}
+      module_name: ${{ steps.resolve.outputs.module_name }}
+      module_path: ${{ steps.resolve.outputs.module_path }}
+      module_import: ${{ steps.resolve.outputs.module_import }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      is_prerelease: ${{ steps.resolve.outputs.is_prerelease }}
+      dry_run: ${{ steps.resolve.outputs.dry_run }}
+      skip_tests: ${{ steps.resolve.outputs.skip_tests }}
+      is_all: ${{ steps.resolve.outputs.is_all }}
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Set release tag
-        id: set-tag
+      - name: Resolve release parameters
+        id: resolve
         run: |
+          DRY_RUN="false"
+          SKIP_TESTS="false"
+          IS_ALL="false"
+
+          PROVIDERS="ai21 anthropic anyscale azureopenai bedrock cerebras cohere deepinfra deepseek fireworks gemini groq hyperbolic jinaai lepton lmstudio mistral nebius novita nvidia ollama openai opencompat openrouter perplexity sambanova together vertex voyageai xai"
+
+          # ---- workflow_dispatch path ----
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ github.event.inputs.tag }}"
-            echo "Creating tag $TAG"
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
+            MODULE="${{ inputs.module }}"
+            VERSION="${{ inputs.version }}"
+            DRY_RUN="${{ inputs.dry_run }}"
+            SKIP_TESTS="${{ inputs.skip_tests }}"
+            IS_PRERELEASE="${{ inputs.prerelease }}"
+
+            # Validate semver
+            if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+              echo "::error::Invalid semantic version: $VERSION (expected N.N.N or N.N.N-pre)"
+              exit 1
+            fi
+
+            if [ "$MODULE" = "all" ]; then
+              IS_ALL="true"
+              MODULE_TYPE="root"
+              MODULE_NAME="nexus"
+              MODULE_PATH="."
+              MODULE_IMPORT="github.com/xraph/nexus"
+              TAG="v${VERSION}"
+            elif [ "$MODULE" = "nexus" ]; then
+              MODULE_TYPE="root"
+              MODULE_NAME="nexus"
+              MODULE_PATH="."
+              MODULE_IMPORT="github.com/xraph/nexus"
+              TAG="v${VERSION}"
+            elif [ "$MODULE" = "config" ]; then
+              MODULE_TYPE="config"
+              MODULE_NAME="config"
+              MODULE_PATH="config"
+              MODULE_IMPORT="github.com/xraph/nexus/config"
+              TAG="config/v${VERSION}"
+            else
+              # Must be a provider
+              if ! echo "$PROVIDERS" | grep -qw "$MODULE"; then
+                echo "::error::Unknown provider: $MODULE"
+                exit 1
+              fi
+              MODULE_TYPE="provider"
+              MODULE_NAME="$MODULE"
+              MODULE_PATH="providers/$MODULE"
+              MODULE_IMPORT="github.com/xraph/nexus/providers/$MODULE"
+              TAG="providers/${MODULE}/v${VERSION}"
+            fi
+
+            # Auto-detect prerelease from version string
+            if [[ "$VERSION" == *"-"* ]]; then
+              IS_PRERELEASE="true"
+            fi
+
+          # ---- tag push path ----
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+
+            if [[ "$TAG" =~ ^providers/([^/]+)/v(.+)$ ]]; then
+              MODULE_TYPE="provider"
+              MODULE_NAME="${BASH_REMATCH[1]}"
+              VERSION="${BASH_REMATCH[2]}"
+              MODULE_PATH="providers/$MODULE_NAME"
+              MODULE_IMPORT="github.com/xraph/nexus/providers/$MODULE_NAME"
+            elif [[ "$TAG" =~ ^config/v(.+)$ ]]; then
+              MODULE_TYPE="config"
+              MODULE_NAME="config"
+              VERSION="${BASH_REMATCH[1]}"
+              MODULE_PATH="config"
+              MODULE_IMPORT="github.com/xraph/nexus/config"
+            elif [[ "$TAG" =~ ^v(.+)$ ]]; then
+              MODULE_TYPE="root"
+              MODULE_NAME="nexus"
+              VERSION="${BASH_REMATCH[1]}"
+              MODULE_PATH="."
+              MODULE_IMPORT="github.com/xraph/nexus"
+            else
+              echo "::error::Unrecognised tag format: $TAG"
+              exit 1
+            fi
+
+            if [[ "$VERSION" == *"-"* ]]; then
+              IS_PRERELEASE="true"
+            else
+              IS_PRERELEASE="false"
+            fi
+          fi
+
+          # Verify module directory exists
+          if [ ! -f "$MODULE_PATH/go.mod" ]; then
+            echo "::error::go.mod not found at $MODULE_PATH"
+            exit 1
+          fi
+
+          # Emit outputs
+          {
+            echo "module_type=$MODULE_TYPE"
+            echo "module_name=$MODULE_NAME"
+            echo "module_path=$MODULE_PATH"
+            echo "module_import=$MODULE_IMPORT"
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "is_prerelease=$IS_PRERELEASE"
+            echo "dry_run=$DRY_RUN"
+            echo "skip_tests=$SKIP_TESTS"
+            echo "is_all=$IS_ALL"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "### Release Parameters" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Key | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-----|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Module | \`$MODULE_NAME\` ($MODULE_TYPE) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Version | \`$VERSION\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Tag | \`$TAG\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Import | \`$MODULE_IMPORT\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Pre-release | $IS_PRERELEASE |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Dry run | $DRY_RUN |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Skip tests | $SKIP_TESTS |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Release all | $IS_ALL |" >> "$GITHUB_STEP_SUMMARY"
+
+      # For manual dispatch, create & push the main tag if it doesn't exist
+      - name: Create tag (manual dispatch)
+        if: github.event_name == 'workflow_dispatch' && steps.resolve.outputs.dry_run == 'false'
+        run: |
+          TAG="${{ steps.resolve.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists — skipping creation"
+          else
             git tag "$TAG"
             git push origin "$TAG"
-          else
-            TAG="${{ github.ref_name }}"
+            echo "Created and pushed tag $TAG"
           fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-          # Extract module path and version from tag
-          # providers/openai/v1.0.0 -> module_path=providers/openai, version=v1.0.0
-          # config/v1.0.0 -> module_path=config, version=v1.0.0
-          # v1.0.0 -> module_path=., version=v1.0.0
-          if [[ "$TAG" == providers/* ]] || [[ "$TAG" == config/* ]]; then
-            MODULE_PATH=$(echo "$TAG" | sed 's|/v[0-9].*||')
-            VERSION=$(echo "$TAG" | grep -oP 'v[0-9].*')
-          else
-            MODULE_PATH="."
-            VERSION="$TAG"
-          fi
-          echo "module_path=$MODULE_PATH" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      # For "all" mode, also create tags for config + every provider module
+      - name: Create module tags (all mode)
+        if: github.event_name == 'workflow_dispatch' && steps.resolve.outputs.is_all == 'true' && steps.resolve.outputs.dry_run == 'false'
+        run: |
+          VERSION="${{ steps.resolve.outputs.version }}"
+          PROVIDERS=(ai21 anthropic anyscale azureopenai bedrock cerebras cohere deepinfra deepseek fireworks gemini groq hyperbolic jinaai lepton lmstudio mistral nebius novita nvidia ollama openai opencompat openrouter perplexity sambanova together vertex voyageai xai)
 
-          # Build the go get install command
-          if [ "$MODULE_PATH" = "." ]; then
-            echo "install_cmd=go get github.com/xraph/nexus@${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "module_name=github.com/xraph/nexus" >> "$GITHUB_OUTPUT"
+          # Config tag
+          CONFIG_TAG="config/v${VERSION}"
+          if git rev-parse "$CONFIG_TAG" >/dev/null 2>&1; then
+            echo "Tag $CONFIG_TAG already exists — skipping"
           else
-            echo "install_cmd=go get github.com/xraph/nexus/${MODULE_PATH}@${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "module_name=github.com/xraph/nexus/${MODULE_PATH}" >> "$GITHUB_OUTPUT"
+            git tag "$CONFIG_TAG"
+            echo "Created tag $CONFIG_TAG"
           fi
+
+          # Provider tags
+          for prov in "${PROVIDERS[@]}"; do
+            PROV_TAG="providers/${prov}/v${VERSION}"
+            if git rev-parse "$PROV_TAG" >/dev/null 2>&1; then
+              echo "Tag $PROV_TAG already exists — skipping"
+            else
+              git tag "$PROV_TAG"
+              echo "Created tag $PROV_TAG"
+            fi
+          done
+
+          # Push all new tags in one go
+          git push origin --tags
+          echo "Pushed all module tags"
+
+  # -------------------------------------------------------------------
+  # Job: test
+  # Runs tests for the module being released (skippable).
+  # -------------------------------------------------------------------
+  test:
+    name: Test (${{ matrix.os }})
+    needs: detect
+    if: needs.detect.outputs.skip_tests == 'false'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -72,28 +296,52 @@ jobs:
           cache: true
           cache-dependency-path: "**/go.sum"
 
-      - name: Verify build (all modules)
+      - name: Run tests (single module)
+        if: needs.detect.outputs.is_all == 'false'
+        run: |
+          cd ${{ needs.detect.outputs.module_path }}
+          go mod download
+          go test -v -race -count=1 -timeout=15m ./...
+
+      - name: Run tests (all modules)
+        if: needs.detect.outputs.is_all == 'true'
         run: |
           for mod in $(find . -name 'go.mod' -exec dirname {} \; | sort); do
-            echo "Building $mod..."
-            (cd "$mod" && go build ./...)
+            echo "::group::Testing $mod"
+            (cd "$mod" && go test -race -count=1 -timeout=15m ./...)
+            echo "::endgroup::"
           done
 
-      - name: Verify tests (all modules)
-        run: |
-          for mod in $(find . -name 'go.mod' -exec dirname {} \; | sort); do
-            echo "Testing $mod..."
-            (cd "$mod" && go test -race -count=1 ./...)
-          done
+  # -------------------------------------------------------------------
+  # Job: release-module
+  # Creates GitHub release(s) and notifies the Go proxy.
+  # -------------------------------------------------------------------
+  release-module:
+    name: Publish Go module
+    needs: [detect, test]
+    if: |
+      always() &&
+      needs.detect.outputs.dry_run == 'false' &&
+      needs.detect.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Generate release notes
         id: notes
         run: |
-          MODULE_PATH="${{ steps.set-tag.outputs.module_path }}"
+          MODULE_PATH="${{ needs.detect.outputs.module_path }}"
+          TAG="${{ needs.detect.outputs.tag }}"
 
           # Find previous tag for this module
           if [ "$MODULE_PATH" = "." ]; then
             PREV_TAG=$(git tag -l 'v*' --sort=-v:refname | grep -v '/' | sed -n '2p' || echo "")
+          elif [ "$MODULE_PATH" = "config" ]; then
+            PREV_TAG=$(git tag -l 'config/v*' --sort=-v:refname | sed -n '2p' || echo "")
           else
             PREV_TAG=$(git tag -l "${MODULE_PATH}/v*" --sort=-v:refname | sed -n '2p' || echo "")
           fi
@@ -102,15 +350,15 @@ jobs:
             NOTES=$(git log --pretty=format:"- %s (%h)" HEAD)
           else
             if [ "$MODULE_PATH" = "." ]; then
-              NOTES=$(git log --pretty=format:"- %s (%h)" ${PREV_TAG}..HEAD)
+              NOTES=$(git log --pretty=format:"- %s (%h)" "${PREV_TAG}..HEAD")
             else
-              NOTES=$(git log --pretty=format:"- %s (%h)" ${PREV_TAG}..HEAD -- "$MODULE_PATH")
+              NOTES=$(git log --pretty=format:"- %s (%h)" "${PREV_TAG}..HEAD" -- "$MODULE_PATH")
             fi
           fi
 
           # Fallback if no module-specific changes
           if [ -z "$NOTES" ]; then
-            NOTES="- Release ${{ steps.set-tag.outputs.version }}"
+            NOTES="- Release v${{ needs.detect.outputs.version }}"
           fi
 
           {
@@ -119,13 +367,15 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub release
+      # Single module release
+      - name: Create GitHub Release (single)
+        if: needs.detect.outputs.is_all == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.set-tag.outputs.tag }}
-          name: "${{ steps.set-tag.outputs.module_name }} ${{ steps.set-tag.outputs.version }}"
+          tag_name: ${{ needs.detect.outputs.tag }}
+          name: "${{ needs.detect.outputs.module_name }} v${{ needs.detect.outputs.version }}"
           body: |
-            ## ${{ steps.set-tag.outputs.module_name }} ${{ steps.set-tag.outputs.version }}
+            ## ${{ needs.detect.outputs.module_import }} v${{ needs.detect.outputs.version }}
 
             ### Changes
 
@@ -136,6 +386,199 @@ jobs:
             ### Installation
 
             ```bash
-            ${{ steps.set-tag.outputs.install_cmd }}
+            go get ${{ needs.detect.outputs.module_import }}@v${{ needs.detect.outputs.version }}
             ```
-          generate_release_notes: false
+
+            ### Documentation
+
+            - [pkg.go.dev](https://pkg.go.dev/${{ needs.detect.outputs.module_import }}@v${{ needs.detect.outputs.version }})
+          draft: false
+          prerelease: ${{ needs.detect.outputs.is_prerelease == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # All modules release — create releases for root, config, and each provider
+      - name: Create GitHub Releases (all)
+        if: needs.detect.outputs.is_all == 'true'
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          PROVIDERS="ai21 anthropic anyscale azureopenai bedrock cerebras cohere deepinfra deepseek fireworks gemini groq hyperbolic jinaai lepton lmstudio mistral nebius novita nvidia ollama openai opencompat openrouter perplexity sambanova together vertex voyageai xai"
+
+          create_release() {
+            local tag="$1"
+            local name="$2"
+            local import_path="$3"
+            local body="## ${import_path} v${VERSION}
+
+          ### Installation
+
+          \`\`\`bash
+          go get ${import_path}@v${VERSION}
+          \`\`\`
+
+          ### Documentation
+
+          - [pkg.go.dev](https://pkg.go.dev/${import_path}@v${VERSION})"
+
+            echo "Creating release for $tag..."
+            gh release create "$tag" \
+              --title "$name v${VERSION}" \
+              --notes "$body" \
+              ${{ needs.detect.outputs.is_prerelease == 'true' && '--prerelease' || '' }} \
+              || echo "Release for $tag may already exist — skipping"
+          }
+
+          # Root module
+          create_release "v${VERSION}" "nexus" "github.com/xraph/nexus"
+
+          # Config module
+          create_release "config/v${VERSION}" "config" "github.com/xraph/nexus/config"
+
+          # Provider modules
+          for prov in $PROVIDERS; do
+            create_release "providers/${prov}/v${VERSION}" "$prov" "github.com/xraph/nexus/providers/$prov"
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify Go proxy
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          IS_ALL="${{ needs.detect.outputs.is_all }}"
+
+          notify_proxy() {
+            local module="$1"
+            local tag="$2"
+            echo "Requesting Go proxy to cache ${module}@${tag}"
+            curl -sf "https://proxy.golang.org/${module}/@v/${tag}.info" || \
+              echo "Go proxy notification failed for ${module} (normal for private repos)"
+          }
+
+          if [ "$IS_ALL" = "true" ]; then
+            notify_proxy "github.com/xraph/nexus" "v${VERSION}"
+            sleep 2
+            notify_proxy "github.com/xraph/nexus/config" "config/v${VERSION}"
+            PROVIDERS="ai21 anthropic anyscale azureopenai bedrock cerebras cohere deepinfra deepseek fireworks gemini groq hyperbolic jinaai lepton lmstudio mistral nebius novita nvidia ollama openai opencompat openrouter perplexity sambanova together vertex voyageai xai"
+            for prov in $PROVIDERS; do
+              sleep 1
+              notify_proxy "github.com/xraph/nexus/providers/$prov" "providers/${prov}/v${VERSION}"
+            done
+          else
+            sleep 5
+            notify_proxy "${{ needs.detect.outputs.module_import }}" "${{ needs.detect.outputs.tag }}"
+          fi
+
+  # -------------------------------------------------------------------
+  # Job: dry-run
+  # Validates the release pipeline without publishing anything.
+  # -------------------------------------------------------------------
+  dry-run:
+    name: Dry run
+    needs: [detect, test]
+    if: |
+      always() &&
+      needs.detect.outputs.dry_run == 'true' &&
+      needs.detect.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.7"
+          cache: true
+          cache-dependency-path: "**/go.sum"
+
+      - name: Validate module builds (single)
+        if: needs.detect.outputs.is_all == 'false'
+        run: |
+          cd ${{ needs.detect.outputs.module_path }}
+          go build ./...
+
+      - name: Validate module builds (all)
+        if: needs.detect.outputs.is_all == 'true'
+        run: |
+          for mod in $(find . -name 'go.mod' -exec dirname {} \; | sort); do
+            echo "::group::Building $mod"
+            (cd "$mod" && go build ./...)
+            echo "::endgroup::"
+          done
+
+      - name: Dry run summary
+        run: |
+          {
+            echo "### Dry Run Complete"
+            echo ""
+            echo "Module **${{ needs.detect.outputs.module_name }}** v${{ needs.detect.outputs.version }} validated successfully."
+            if [ "${{ needs.detect.outputs.is_all }}" = "true" ]; then
+              echo ""
+              echo "All 32 modules would be released at version v${{ needs.detect.outputs.version }}."
+            fi
+            echo ""
+            echo "No artifacts were published."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # -------------------------------------------------------------------
+  # Job: summary
+  # Provides a unified release summary.
+  # -------------------------------------------------------------------
+  summary:
+    name: Release summary
+    needs: [detect, test, release-module, dry-run]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate summary
+        run: |
+          MODULE="${{ needs.detect.outputs.module_name }}"
+          VERSION="${{ needs.detect.outputs.version }}"
+          TAG="${{ needs.detect.outputs.tag }}"
+          TYPE="${{ needs.detect.outputs.module_type }}"
+          IMPORT="${{ needs.detect.outputs.module_import }}"
+          DRY="${{ needs.detect.outputs.dry_run }}"
+          IS_ALL="${{ needs.detect.outputs.is_all }}"
+
+          {
+            echo "# Release Summary"
+            echo ""
+
+            if [ "$DRY" = "true" ]; then
+              echo "> **Dry run** — nothing was published."
+              echo ""
+            fi
+
+            echo "| Key | Value |"
+            echo "|-----|-------|"
+            echo "| Module | \`$MODULE\` ($TYPE) |"
+            echo "| Version | \`$VERSION\` |"
+            echo "| Tag | \`$TAG\` |"
+            echo "| Release all | $IS_ALL |"
+
+            if [ "$DRY" != "true" ]; then
+              echo ""
+              echo "## Installation"
+              echo ""
+              if [ "$IS_ALL" = "true" ]; then
+                echo '```bash'
+                echo "go get github.com/xraph/nexus@v${VERSION}"
+                echo '```'
+              else
+                echo '```bash'
+                echo "go get ${IMPORT}@v${VERSION}"
+                echo '```'
+              fi
+            fi
+
+            echo ""
+            echo "## Job Results"
+            echo ""
+            echo "| Job | Status |"
+            echo "|-----|--------|"
+            echo "| Detect | ${{ needs.detect.result }} |"
+            echo "| Test | ${{ needs.test.result }} |"
+            echo "| Module Release | ${{ needs.release-module.result }} |"
+            echo "| Dry Run | ${{ needs.dry-run.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
