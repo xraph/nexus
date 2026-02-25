@@ -11,6 +11,8 @@
     "...core",
     "---Providers---",
     "...providers",
+    "---Stores---",
+    "...stores",
     "---Infrastructure---",
     "...infrastructure",
     "---Guides---",

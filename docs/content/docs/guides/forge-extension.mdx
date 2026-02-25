@@ -41,6 +41,42 @@ nexusext.New(
 )
 ```
 
+## Grove database integration
+
+When your Forge app uses the [Grove extension](https://github.com/xraph/grove) to manage database connections, Nexus can automatically resolve a `grove.DB` from the DI container and construct the correct store backend based on the driver type.
+
+### Using the default grove database
+
+If the Grove extension registers a single database (or a default in multi-DB mode), use `WithGroveDatabase` with an empty name:
+
+```go
+ext := nexusext.New(
+    nexusext.WithGroveDatabase(""),
+    nexusext.WithProvider(openai.New(key)),
+)
+```
+
+### Using a named grove database
+
+In multi-database setups, reference a specific database by name:
+
+```go
+ext := nexusext.New(
+    nexusext.WithGroveDatabase("nexus"),
+    nexusext.WithProvider(openai.New(key)),
+)
+```
+
+This resolves the grove.DB named `"nexus"` from the DI container and auto-constructs the matching store. The driver type is detected automatically -- you do not need to import individual store packages.
+
+### Store resolution order
+
+The extension resolves its store in this order:
+
+1. **Explicit store** -- if `WithDatabase(s)` was called, it is used directly and grove is ignored.
+2. **Grove database** -- if `WithGroveDatabase(name)` was called, the named or default `grove.DB` is resolved from DI.
+3. **In-memory fallback** -- if neither is configured, an in-memory store is used.
+
 ## DI Registration
 
 The extension registers the Gateway in the vessel container:

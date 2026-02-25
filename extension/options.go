@@ -57,3 +57,13 @@ func WithDisableMigrate() Option {
 func WithRequireConfig(require bool) Option {
 	return func(e *Extension) { e.config.RequireConfig = require }
 }
+
+// WithGroveDatabase sets the name of the grove.DB to resolve from the DI container.
+// The extension will auto-construct the appropriate store backend (postgres/sqlite/mongo)
+// based on the grove driver type. Pass an empty string to use the default (unnamed) grove.DB.
+func WithGroveDatabase(name string) Option {
+	return func(e *Extension) {
+		e.config.GroveDatabase = name
+		e.useGrove = true
+	}
+}

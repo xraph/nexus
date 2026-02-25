@@ -14,9 +14,14 @@ import (
 	"fmt"
 
 	"github.com/xraph/forge"
+	"github.com/xraph/grove"
 	"github.com/xraph/vessel"
 
 	nexus "github.com/xraph/nexus"
+	"github.com/xraph/nexus/store"
+	mongostore "github.com/xraph/nexus/store/mongo"
+	pgstore "github.com/xraph/nexus/store/postgres"
+	sqlitestore "github.com/xraph/nexus/store/sqlite"
 )
 
 // ExtensionName is the name registered with Forge.
@@ -38,6 +43,7 @@ type Extension struct {
 	config      Config
 	gateway     *nexus.Gateway
 	gatewayOpts []nexus.Option
+	useGrove    bool
 }
 
 // New creates a new Nexus Forge extension with the given options.
@@ -64,6 +70,19 @@ func (e *Extension) Register(fapp forge.App) error {
 
 	if err := e.loadConfiguration(); err != nil {
 		return err
+	}
+
+	// Resolve store from grove DI if configured.
+	if e.useGrove {
+		groveDB, err := e.resolveGroveDB(fapp)
+		if err != nil {
+			return fmt.Errorf("nexus: %w", err)
+		}
+		s, err := e.buildStoreFromGroveDB(groveDB)
+		if err != nil {
+			return err
+		}
+		e.gatewayOpts = append(e.gatewayOpts, nexus.WithDatabase(s))
 	}
 
 	// Apply extension config to gateway options.
@@ -160,10 +179,16 @@ func (e *Extension) loadConfiguration() error {
 		e.config = e.mergeConfigurations(fileConfig, programmaticConfig)
 	}
 
+	// Enable grove resolution if YAML config specifies a grove database.
+	if e.config.GroveDatabase != "" {
+		e.useGrove = true
+	}
+
 	e.Logger().Debug("nexus: configuration loaded",
 		forge.F("disable_routes", e.config.DisableRoutes),
 		forge.F("disable_migrate", e.config.DisableMigrate),
 		forge.F("base_path", e.config.BasePath),
+		forge.F("grove_database", e.config.GroveDatabase),
 	)
 
 	return nil
@@ -247,6 +272,9 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 	if yamlConfig.LogLevel == "" && programmaticConfig.LogLevel != "" {
 		yamlConfig.LogLevel = programmaticConfig.LogLevel
 	}
+	if yamlConfig.GroveDatabase == "" && programmaticConfig.GroveDatabase != "" {
+		yamlConfig.GroveDatabase = programmaticConfig.GroveDatabase
+	}
 
 	// Duration/int fields: YAML takes precedence, programmatic fills gaps.
 	if yamlConfig.DefaultTimeout == 0 && programmaticConfig.DefaultTimeout != 0 {
@@ -266,4 +294,37 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 
 	// Fill remaining zeros with defaults.
 	return e.mergeWithDefaults(yamlConfig)
+}
+
+// resolveGroveDB resolves a *grove.DB from the DI container.
+// If GroveDatabase is set, it looks up the named DB; otherwise it uses the default.
+func (e *Extension) resolveGroveDB(fapp forge.App) (*grove.DB, error) {
+	if e.config.GroveDatabase != "" {
+		db, err := vessel.InjectNamed[*grove.DB](fapp.Container(), e.config.GroveDatabase)
+		if err != nil {
+			return nil, fmt.Errorf("grove database %q not found in container: %w", e.config.GroveDatabase, err)
+		}
+		return db, nil
+	}
+	db, err := vessel.Inject[*grove.DB](fapp.Container())
+	if err != nil {
+		return nil, fmt.Errorf("default grove database not found in container: %w", err)
+	}
+	return db, nil
+}
+
+// buildStoreFromGroveDB constructs the appropriate store backend
+// based on the grove driver type (pg, sqlite, mongo).
+func (e *Extension) buildStoreFromGroveDB(db *grove.DB) (store.Store, error) {
+	driverName := db.Driver().Name()
+	switch driverName {
+	case "pg":
+		return pgstore.New(db), nil
+	case "sqlite":
+		return sqlitestore.New(db), nil
+	case "mongo":
+		return mongostore.New(db), nil
+	default:
+		return nil, fmt.Errorf("nexus: unsupported grove driver %q", driverName)
+	}
 }

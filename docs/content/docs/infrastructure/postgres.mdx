@@ -3,30 +3,35 @@ title: PostgreSQL
 description: Configure PostgreSQL as the persistence backend for tenants, API keys, and usage data.
 ---
 
+The `store/postgres` package implements Nexus's `store.Store` interface using the grove ORM with the PostgreSQL driver. It is the recommended store for production deployments.
+
 ## Setup
 
 ```go
-import "github.com/xraph/nexus/store/postgres"
+import (
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/pgdriver"
+    "github.com/xraph/nexus/store/postgres"
+)
 
-store, err := postgres.New(pool) // *pgxpool.Pool
+db, err := grove.Open(pgdriver.Open("postgres://user:pass@localhost:5432/nexus?sslmode=disable"))
 if err != nil {
-    panic(err)
+    log.Fatal(err)
+}
+
+s := postgres.New(db)
+if err := s.Migrate(); err != nil {
+    log.Fatal(err)
 }
 
 gw := nexus.New(
-    nexus.WithDatabase(store),
+    nexus.WithDatabase(s),
 )
 ```
 
 ## Migrations
 
-The Postgres store includes automatic schema migrations:
-
-```go
-if err := store.Migrate(ctx); err != nil {
-    panic(err)
-}
-```
+Call `s.Migrate()` before first use. This creates all required tables and indexes. Migrations are idempotent -- safe to run on every startup.
 
 Tables created: `tenants`, `api_keys`, `usage_records`.
 
@@ -34,15 +39,22 @@ Tables created: `tenants`, `api_keys`, `usage_records`.
 
 All tables include tenant scoping columns and JSONB fields for flexible metadata:
 
-- `tenants` — id, name, enabled, config (JSONB), created_at, updated_at
-- `api_keys` — id, tenant_id, name, hash, enabled, expires_at, created_at
-- `usage_records` — id, tenant_id, request_id, model, provider, input_tokens, output_tokens, cost, created_at
+- `tenants` -- id, name, enabled, config (JSONB), created_at, updated_at
+- `api_keys` -- id, tenant_id, name, hash, enabled, expires_at, created_at
+- `usage_records` -- id, tenant_id, request_id, model, provider, input_tokens, output_tokens, cost, created_at
 
-## Connection Pooling
+## Internals
 
-Pass a pre-configured `*pgxpool.Pool` for connection pooling:
+| Aspect | Detail |
+|--------|--------|
+| Driver | grove ORM + pgdriver |
+| Migrations | grove orchestrator with programmatic migrations |
+| Transactions | Database-level ACID |
+| Ping | `db.Ping(ctx)` |
+| Close | Caller-owned -- call `db.Close()` |
 
-```go
-pool, _ := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
-store, _ := postgres.New(pool)
-```
+## When to use
+
+- Production deployments requiring ACID transactions and full SQL query power.
+- Multi-process environments with connection pooling.
+- When you need advanced PostgreSQL features like JSONB indexing.
