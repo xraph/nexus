@@ -1,4 +1,4 @@
 {
   "title": "Stores",
-  "pages": ["sqlite", "mongo"]
+  "pages": ["postgres", "sqlite", "mongo"]
 }

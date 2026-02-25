@@ -55,3 +55,45 @@ type Config struct {
 | `WithTimeout(duration)` | Set default request timeout |
 | `WithMaxRetries(n)` | Set default max retries |
 | `WithTenantAlias(tid, name, targets...)` | Per-tenant alias override |
+
+## File-based configuration (Forge extension)
+
+When Nexus runs as a [Forge extension](/docs/guides/forge-extension), it can load configuration from the application's YAML config file. The extension checks two keys in order:
+
+1. **`extensions.nexus`** -- namespaced under the Forge extensions convention (recommended)
+2. **`nexus`** -- legacy top-level key
+
+```yaml title="forge.yaml"
+extensions:
+  nexus:
+    base_path: "/ai"
+    default_timeout: "30s"
+    default_max_retries: 2
+    global_rate_limit: 1000
+    log_level: "info"
+    enable_usage: true
+    enable_cache: false
+    grove_database: ""
+    disable_routes: false
+    disable_migrate: false
+```
+
+### Extension-specific fields
+
+In addition to the gateway config fields, the extension config adds:
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `disable_routes` | `bool` | Disable automatic route registration | `false` |
+| `disable_migrate` | `bool` | Disable automatic store migration | `false` |
+| `grove_database` | `string` | Name of grove.DB to resolve from DI (empty = default DB) | `""` |
+
+### Configuration precedence
+
+When both file-based and programmatic options are provided, they are merged:
+
+1. **YAML values** take precedence for string, duration, and integer fields.
+2. **Programmatic boolean flags** (`DisableRoutes`, `DisableMigrate`, `EnableCache`) override when set to `true`.
+3. Any remaining zero-valued fields are filled from `DefaultConfig()`.
+
+If no file-based config is found and `RequireConfig` is not set, the extension falls back to programmatic options merged with defaults.

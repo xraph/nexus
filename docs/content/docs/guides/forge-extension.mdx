@@ -29,17 +29,83 @@ When running in a Forge application, the Nexus extension automatically discovers
 - **Authsome** — Wires Authsome as auth provider
 - **Metrics** — Wires observability with `gu.MetricFactory`
 
-## Options
+## YAML configuration
+
+When running inside Forge, Nexus automatically loads configuration from the application's YAML config file. The extension looks for settings under two keys (in order):
+
+1. `extensions.nexus` (namespaced, recommended)
+2. `nexus` (legacy shorthand)
+
+```yaml title="forge.yaml"
+extensions:
+  nexus:
+    base_path: "/ai"
+    default_timeout: "30s"
+    default_max_retries: 2
+    global_rate_limit: 1000
+    log_level: "info"
+    enable_usage: true
+    enable_cache: false
+    grove_database: ""
+    disable_routes: false
+    disable_migrate: false
+```
+
+### Configuration reference
+
+| Field | YAML key | Type | Default | Description |
+|-------|----------|------|---------|-------------|
+| `BasePath` | `base_path` | `string` | `"/ai"` | URL prefix for gateway routes |
+| `DefaultTimeout` | `default_timeout` | `duration` | `30s` | Default timeout for provider requests |
+| `DefaultMaxRetries` | `default_max_retries` | `int` | `2` | Default retries per request |
+| `GlobalRateLimit` | `global_rate_limit` | `int` | `0` | Global rate limit in RPM (0 = unlimited) |
+| `LogLevel` | `log_level` | `string` | `"info"` | Gateway log level |
+| `EnableUsage` | `enable_usage` | `bool` | `true` | Enable usage tracking |
+| `EnableCache` | `enable_cache` | `bool` | `false` | Enable response caching |
+| `GroveDatabase` | `grove_database` | `string` | `""` | Name of grove.DB to resolve from DI |
+| `DisableRoutes` | `disable_routes` | `bool` | `false` | Disable automatic route registration |
+| `DisableMigrate` | `disable_migrate` | `bool` | `false` | Disable automatic store migration |
+
+### Merge behavior
+
+File-based and programmatic configuration are merged with these rules:
+
+| Category | Precedence |
+|----------|------------|
+| Boolean flags (`disable_routes`, `disable_migrate`, `enable_cache`) | Programmatic `true` wins |
+| String fields (`base_path`, `log_level`, `grove_database`) | YAML takes precedence; programmatic fills gaps |
+| Duration/int fields (`default_timeout`, `default_max_retries`, `global_rate_limit`) | YAML takes precedence; programmatic fills gaps |
+| Pointer fields (`enable_usage`) | YAML takes precedence; programmatic fills gaps |
+
+Any remaining zero-valued fields are filled from `DefaultConfig()`.
+
+### Requiring file config
+
+If your deployment relies on the config file being present, use `WithRequireConfig`:
 
 ```go
-nexusext.New(
-    nexusext.WithProvider(openai.New(key)),
-    nexusext.WithDatabase(pgStore),
-    nexusext.WithBasePath("/ai"),
-    nexusext.WithLogger(logger),
-    nexusext.WithGatewayOption(nexus.WithRateLimit(1000)),
+app := forge.New(
+    forge.WithExtension(nexusext.New(
+        nexusext.WithRequireConfig(true),
+    )),
 )
 ```
+
+When `RequireConfig` is `true` and no config is found under either key, `Register` returns an error.
+
+## Extension options
+
+| Option | Purpose |
+|--------|---------|
+| `WithProvider(p)` | Register an LLM provider |
+| `WithDatabase(s)` | Set the persistence store directly |
+| `WithGatewayOption(opt)` | Pass a raw `nexus.Option` to the gateway |
+| `WithBasePath(path)` | Set the HTTP base path (default: `/ai`) |
+| `WithConfig(cfg)` | Set extension configuration directly |
+| `WithDisableRoutes()` | Disable automatic route registration |
+| `WithDisableMigrate()` | Disable automatic store migration |
+| `WithRequireConfig(bool)` | Require config to be present in YAML files |
+| `WithGroveDatabase(name)` | Resolve a grove.DB from DI by name |
 
 ## Grove database integration
 
@@ -68,6 +134,18 @@ ext := nexusext.New(
 ```
 
 This resolves the grove.DB named `"nexus"` from the DI container and auto-constructs the matching store. The driver type is detected automatically -- you do not need to import individual store packages.
+
+### Via YAML
+
+Grove database can also be configured via the YAML config file:
+
+```yaml
+extensions:
+  nexus:
+    grove_database: "nexus"
+```
+
+When `grove_database` is set in YAML, the extension enables grove resolution automatically.
 
 ### Store resolution order
 
