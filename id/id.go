@@ -1,126 +1,263 @@
-// Package id provides TypeID-based identity types for all Nexus entities.
+// Package id defines TypeID-based identity types for all Nexus entities.
 //
-// Every entity in Nexus gets a type-prefixed, K-sortable, UUIDv7-based
-// identifier. IDs are compile-time safe — you cannot pass a TenantID where a
-// KeyID is expected.
-//
-// Examples:
-//
-//	tenant_01h2xcejqtf2nbrexx3vqjhp41
-//	key_01h455vb4pex5vsknk084sn02q
-//	usage_01h6rz1g6p2m3q9xvz1t2b7c4d
-//	req_01h9a1b2c3d4e5f6g7h8j9k0m1
+// Every entity in Nexus uses a single ID struct with a prefix that identifies
+// the entity type. IDs are K-sortable (UUIDv7-based), globally unique,
+// and URL-safe in the format "prefix_suffix".
 package id
 
-import "go.jetify.com/typeid"
+import (
+	"database/sql/driver"
+	"fmt"
+
+	"go.jetify.com/typeid/v2"
+)
+
+// Prefix identifies the entity type encoded in a TypeID.
+type Prefix string
+
+// Prefix constants for all Nexus entity types.
+const (
+	PrefixTenant  Prefix = "tenant"
+	PrefixKey     Prefix = "key"
+	PrefixUsage   Prefix = "usage"
+	PrefixRequest Prefix = "req"
+)
+
+// ID is the primary identifier type for all Nexus entities.
+// It wraps a TypeID providing a prefix-qualified, globally unique,
+// sortable, URL-safe identifier in the format "prefix_suffix".
+//
+//nolint:recvcheck // Value receivers for read-only methods, pointer receivers for UnmarshalText/Scan.
+type ID struct {
+	inner typeid.TypeID
+	valid bool
+}
+
+// Nil is the zero-value ID.
+var Nil ID
+
+// New generates a new globally unique ID with the given prefix.
+// It panics if prefix is not a valid TypeID prefix (programming error).
+func New(prefix Prefix) ID {
+	tid, err := typeid.Generate(string(prefix))
+	if err != nil {
+		panic(fmt.Sprintf("id: invalid prefix %q: %v", prefix, err))
+	}
+
+	return ID{inner: tid, valid: true}
+}
+
+// Parse parses a TypeID string (e.g., "tenant_01h455vb4pex5vsknk084sn02q")
+// into an ID. Returns an error if the string is not valid.
+func Parse(s string) (ID, error) {
+	if s == "" {
+		return Nil, fmt.Errorf("id: parse %q: empty string", s)
+	}
+
+	tid, err := typeid.Parse(s)
+	if err != nil {
+		return Nil, fmt.Errorf("id: parse %q: %w", s, err)
+	}
+
+	return ID{inner: tid, valid: true}, nil
+}
+
+// ParseWithPrefix parses a TypeID string and validates that its prefix
+// matches the expected value.
+func ParseWithPrefix(s string, expected Prefix) (ID, error) {
+	parsed, err := Parse(s)
+	if err != nil {
+		return Nil, err
+	}
+
+	if parsed.Prefix() != expected {
+		return Nil, fmt.Errorf("id: expected prefix %q, got %q", expected, parsed.Prefix())
+	}
+
+	return parsed, nil
+}
+
+// MustParse is like Parse but panics on error. Use for hardcoded ID values.
+func MustParse(s string) ID {
+	parsed, err := Parse(s)
+	if err != nil {
+		panic(fmt.Sprintf("id: must parse %q: %v", s, err))
+	}
+
+	return parsed
+}
+
+// MustParseWithPrefix is like ParseWithPrefix but panics on error.
+func MustParseWithPrefix(s string, expected Prefix) ID {
+	parsed, err := ParseWithPrefix(s, expected)
+	if err != nil {
+		panic(fmt.Sprintf("id: must parse with prefix %q: %v", expected, err))
+	}
+
+	return parsed
+}
 
 // ──────────────────────────────────────────────────
-// Prefix types — each entity has its own prefix
+// Backward-compatible type aliases
 // ──────────────────────────────────────────────────
 
-// TenantPrefix is the TypeID prefix for tenants.
-type TenantPrefix struct{}
+// TenantID is an alias for ID (backward compatibility).
+type TenantID = ID
 
-// Prefix returns "tenant".
-func (TenantPrefix) Prefix() string { return "tenant" }
+// KeyID is an alias for ID (backward compatibility).
+type KeyID = ID
 
-// KeyPrefix is the TypeID prefix for API keys.
-type KeyPrefix struct{}
+// UsageID is an alias for ID (backward compatibility).
+type UsageID = ID
 
-// Prefix returns "key".
-func (KeyPrefix) Prefix() string { return "key" }
+// RequestID is an alias for ID (backward compatibility).
+type RequestID = ID
 
-// UsagePrefix is the TypeID prefix for usage records.
-type UsagePrefix struct{}
-
-// Prefix returns "usage".
-func (UsagePrefix) Prefix() string { return "usage" }
-
-// RequestPrefix is the TypeID prefix for requests.
-type RequestPrefix struct{}
-
-// Prefix returns "req".
-func (RequestPrefix) Prefix() string { return "req" }
+// AnyID is an alias for ID (backward compatibility).
+type AnyID = ID
 
 // ──────────────────────────────────────────────────
-// Typed ID aliases — compile-time safe
+// Convenience constructors
 // ──────────────────────────────────────────────────
 
-// TenantID is a type-safe identifier for tenants (prefix: "tenant").
-type TenantID = typeid.TypeID[TenantPrefix]
+// NewTenantID generates a new unique tenant ID.
+func NewTenantID() ID { return New(PrefixTenant) }
 
-// KeyID is a type-safe identifier for API keys (prefix: "key").
-type KeyID = typeid.TypeID[KeyPrefix]
+// NewKeyID generates a new unique API key ID.
+func NewKeyID() ID { return New(PrefixKey) }
 
-// UsageID is a type-safe identifier for usage records (prefix: "usage").
-type UsageID = typeid.TypeID[UsagePrefix]
+// NewUsageID generates a new unique usage record ID.
+func NewUsageID() ID { return New(PrefixUsage) }
 
-// RequestID is a type-safe identifier for requests (prefix: "req").
-type RequestID = typeid.TypeID[RequestPrefix]
-
-// AnyID is a TypeID that accepts any valid prefix. Use for cases where
-// the prefix is dynamic or unknown at compile time.
-type AnyID = typeid.AnyID
+// NewRequestID generates a new unique request ID.
+func NewRequestID() ID { return New(PrefixRequest) }
 
 // ──────────────────────────────────────────────────
-// Constructors
+// Convenience parsers
 // ──────────────────────────────────────────────────
 
-// NewTenantID returns a new random TenantID.
-func NewTenantID() TenantID { return must(typeid.New[TenantID]()) }
+// ParseTenantID parses a string and validates the "tenant" prefix.
+func ParseTenantID(s string) (ID, error) { return ParseWithPrefix(s, PrefixTenant) }
 
-// NewKeyID returns a new random KeyID.
-func NewKeyID() KeyID { return must(typeid.New[KeyID]()) }
+// ParseKeyID parses a string and validates the "key" prefix.
+func ParseKeyID(s string) (ID, error) { return ParseWithPrefix(s, PrefixKey) }
 
-// NewUsageID returns a new random UsageID.
-func NewUsageID() UsageID { return must(typeid.New[UsageID]()) }
+// ParseUsageID parses a string and validates the "usage" prefix.
+func ParseUsageID(s string) (ID, error) { return ParseWithPrefix(s, PrefixUsage) }
 
-// NewRequestID returns a new random RequestID.
-func NewRequestID() RequestID { return must(typeid.New[RequestID]()) }
+// ParseRequestID parses a string and validates the "req" prefix.
+func ParseRequestID(s string) (ID, error) { return ParseWithPrefix(s, PrefixRequest) }
 
-// ──────────────────────────────────────────────────
-// Parsing (type-safe: ParseTenantID("key_01h...") fails)
-// ──────────────────────────────────────────────────
-
-// ParseTenantID parses a string into a TenantID. Returns an error if the
-// prefix is not "tenant" or the suffix is invalid.
-func ParseTenantID(s string) (TenantID, error) { return typeid.Parse[TenantID](s) }
-
-// ParseKeyID parses a string into a KeyID.
-func ParseKeyID(s string) (KeyID, error) { return typeid.Parse[KeyID](s) }
-
-// ParseUsageID parses a string into a UsageID.
-func ParseUsageID(s string) (UsageID, error) { return typeid.Parse[UsageID](s) }
-
-// ParseRequestID parses a string into a RequestID.
-func ParseRequestID(s string) (RequestID, error) { return typeid.Parse[RequestID](s) }
-
-// ParseAny parses a string into an AnyID, accepting any valid prefix.
-func ParseAny(s string) (AnyID, error) { return typeid.FromString(s) }
+// ParseAny parses a string into an ID without type checking the prefix.
+func ParseAny(s string) (ID, error) { return Parse(s) }
 
 // ──────────────────────────────────────────────────
-// Must parsers (panic on error — use only for trusted input)
+// Convenience must-parsers
 // ──────────────────────────────────────────────────
 
 // MustParseTenantID parses a TenantID or panics.
-func MustParseTenantID(s string) TenantID { return must(ParseTenantID(s)) }
+func MustParseTenantID(s string) ID { return MustParseWithPrefix(s, PrefixTenant) }
 
 // MustParseKeyID parses a KeyID or panics.
-func MustParseKeyID(s string) KeyID { return must(ParseKeyID(s)) }
+func MustParseKeyID(s string) ID { return MustParseWithPrefix(s, PrefixKey) }
 
 // MustParseUsageID parses a UsageID or panics.
-func MustParseUsageID(s string) UsageID { return must(ParseUsageID(s)) }
+func MustParseUsageID(s string) ID { return MustParseWithPrefix(s, PrefixUsage) }
 
 // MustParseRequestID parses a RequestID or panics.
-func MustParseRequestID(s string) RequestID { return must(ParseRequestID(s)) }
+func MustParseRequestID(s string) ID { return MustParseWithPrefix(s, PrefixRequest) }
 
 // ──────────────────────────────────────────────────
-// Helpers
+// ID methods
 // ──────────────────────────────────────────────────
 
-func must[T any](v T, err error) T {
-	if err != nil {
-		panic(err)
+// String returns the full TypeID string representation (prefix_suffix).
+// Returns an empty string for the Nil ID.
+func (i ID) String() string {
+	if !i.valid {
+		return ""
 	}
-	return v
+
+	return i.inner.String()
+}
+
+// Prefix returns the prefix component of this ID.
+func (i ID) Prefix() Prefix {
+	if !i.valid {
+		return ""
+	}
+
+	return Prefix(i.inner.Prefix())
+}
+
+// IsNil reports whether this ID is the zero value.
+func (i ID) IsNil() bool {
+	return !i.valid
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (i ID) MarshalText() ([]byte, error) {
+	if !i.valid {
+		return []byte{}, nil
+	}
+
+	return []byte(i.inner.String()), nil
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (i *ID) UnmarshalText(data []byte) error {
+	if len(data) == 0 {
+		*i = Nil
+
+		return nil
+	}
+
+	parsed, err := Parse(string(data))
+	if err != nil {
+		return err
+	}
+
+	*i = parsed
+
+	return nil
+}
+
+// Value implements driver.Valuer for database storage.
+// Returns nil for the Nil ID so that optional foreign key columns store NULL.
+func (i ID) Value() (driver.Value, error) {
+	if !i.valid {
+		return nil, nil //nolint:nilnil // nil is the canonical NULL for driver.Valuer
+	}
+
+	return i.inner.String(), nil
+}
+
+// Scan implements sql.Scanner for database retrieval.
+func (i *ID) Scan(src any) error {
+	if src == nil {
+		*i = Nil
+
+		return nil
+	}
+
+	switch v := src.(type) {
+	case string:
+		if v == "" {
+			*i = Nil
+
+			return nil
+		}
+
+		return i.UnmarshalText([]byte(v))
+	case []byte:
+		if len(v) == 0 {
+			*i = Nil
+
+			return nil
+		}
+
+		return i.UnmarshalText(v)
+	default:
+		return fmt.Errorf("id: cannot scan %T into ID", src)
+	}
 }

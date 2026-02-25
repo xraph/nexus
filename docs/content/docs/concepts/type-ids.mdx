@@ -1,0 +1,65 @@
+---
+title: Identity (TypeID)
+description: How Nexus uses prefix-qualified, globally unique identifiers for every entity.
+---
+
+Every entity in Nexus has a TypeID. TypeIDs are globally unique, sortable, URL-safe identifiers built on UUIDv7 with a human-readable prefix that tells you what kind of entity you're looking at.
+
+A TypeID looks like this:
+
+```
+tenant_01h455vb4pex5vsknk084sn02q
+```
+
+The `tenant` prefix identifies this as a tenant. The suffix is a base32-encoded UUIDv7 that encodes creation time, so IDs sort chronologically.
+
+## The `id` package
+
+The `id` package wraps the [TypeID Go library](https://github.com/jetify-com/typeid-go) (v2) with a single `ID` struct. All entity types share the same struct -- the prefix distinguishes them.
+
+### Creating IDs
+
+```go
+import "github.com/xraph/nexus/id"
+
+tenantID  := id.New(id.PrefixTenant)   // tenant_01h455vb...
+keyID     := id.New(id.PrefixKey)      // key_01h455vb...
+usageID   := id.New(id.PrefixUsage)    // usage_01h455vb...
+requestID := id.New(id.PrefixRequest)  // req_01h455vb...
+```
+
+Convenience constructors: `id.NewTenantID()`, `id.NewKeyID()`, `id.NewUsageID()`, `id.NewRequestID()`.
+
+### Parsing IDs
+
+```go
+parsed, err := id.Parse("tenant_01h455vb4pex5vsknk084sn02q")
+parsed, err := id.ParseWithPrefix("tenant_01h455vb...", id.PrefixTenant)  // validates prefix
+parsed, err := id.ParseTenantID("tenant_01h455vb...")                     // convenience
+```
+
+### Nil ID
+
+```go
+var empty id.ID
+empty.IsNil()  // true
+empty.String() // ""
+id.Nil.IsNil() // true
+```
+
+### Database storage
+
+`id.ID` implements `Scanner` and `driver.Valuer`. Stores as a string, returns `NULL` for nil IDs.
+
+### JSON serialization
+
+`id.ID` implements `TextMarshaler` and `TextUnmarshaler`. Nil IDs serialize as empty strings.
+
+## Prefix reference
+
+| Constant | Prefix | Entity |
+|----------|--------|--------|
+| `id.PrefixTenant` | `tenant` | Tenant |
+| `id.PrefixKey` | `key` | API key |
+| `id.PrefixUsage` | `usage` | Usage record |
+| `id.PrefixRequest` | `req` | Request |

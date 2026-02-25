@@ -1,4 +1,4 @@
 {
   "title": "Core Concepts",
-  "pages": ["identity", "entities", "configuration", "errors", "multi-tenancy"]
+  "pages": ["type-ids", "identity", "entities", "configuration", "errors", "multi-tenancy"]
 }
