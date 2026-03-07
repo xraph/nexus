@@ -3,7 +3,6 @@ package dashboard
 import (
 	"context"
 	"fmt"
-	"time"
 
 	nexus "github.com/xraph/nexus"
 	"github.com/xraph/nexus/dashboard/components"
@@ -153,7 +152,10 @@ func fetchProviderInfos(ctx context.Context, gw *nexus.Gateway) []components.Pro
 
 	var infos []components.ProviderInfo
 	for _, p := range providers {
-		models, _ := p.Models(ctx)
+		models, modErr := p.Models(ctx)
+		if modErr != nil {
+			models = nil
+		}
 		infos = append(infos, components.ProviderInfo{
 			Name:       p.Name(),
 			ModelCount: len(models),
@@ -161,72 +163,4 @@ func fetchProviderInfos(ctx context.Context, gw *nexus.Gateway) []components.Pro
 		})
 	}
 	return infos
-}
-
-// --- Helpers ---
-
-func formatTimeAgo(t time.Time) string {
-	d := time.Since(t)
-	if d < 0 {
-		d = -d
-	}
-
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	case d < 30*24*time.Hour:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-	case d < 365*24*time.Hour:
-		return fmt.Sprintf("%dmo ago", int(d.Hours()/(24*30)))
-	default:
-		return fmt.Sprintf("%dy ago", int(d.Hours()/(24*365)))
-	}
-}
-
-func formatCost(costUSD float64) string {
-	if costUSD == 0 {
-		return "$0.00"
-	}
-	if costUSD < 0.01 {
-		return fmt.Sprintf("$%.4f", costUSD)
-	}
-	return fmt.Sprintf("$%.2f", costUSD)
-}
-
-func formatDuration(d time.Duration) string {
-	if d < time.Millisecond {
-		return fmt.Sprintf("%dµs", d.Microseconds())
-	}
-	if d < time.Second {
-		return fmt.Sprintf("%dms", d.Milliseconds())
-	}
-	return fmt.Sprintf("%.1fs", d.Seconds())
-}
-
-func truncateString(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	if max <= 3 {
-		return s[:max]
-	}
-	return s[:max-3] + "..."
-}
-
-func formatQuotaValue(v int) string {
-	if v == 0 {
-		return "Unlimited"
-	}
-	return fmt.Sprintf("%d", v)
-}
-
-func formatBudget(v float64) string {
-	if v == 0 {
-		return "Unlimited"
-	}
-	return fmt.Sprintf("$%.2f", v)
 }

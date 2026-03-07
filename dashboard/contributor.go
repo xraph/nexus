@@ -114,7 +114,10 @@ func (c *Contributor) RenderSettings(ctx context.Context, settingID string) (tem
 // ─── Page Renderers ──────────────────────────────────────────────────────────
 
 func (c *Contributor) renderOverview(ctx context.Context) (templ.Component, error) {
-	summary, _ := fetchUsageSummary(ctx, c.gw, "", "month")
+	summary, err := fetchUsageSummary(ctx, c.gw, "", "month")
+	if err != nil {
+		summary = nil
+	}
 
 	stats := pages.OverviewStats{
 		TenantCount:   fetchTenantCount(ctx, c.gw),
@@ -132,7 +135,10 @@ func (c *Contributor) renderOverview(ctx context.Context) (templ.Component, erro
 		stats.ProviderCount = c.gw.Providers().Count()
 	}
 
-	recentUsage, _ := fetchRecentUsage(ctx, c.gw, 10)
+	recentUsage, err := fetchRecentUsage(ctx, c.gw, 10)
+	if err != nil {
+		recentUsage = nil
+	}
 
 	return pages.OverviewPage(stats, recentUsage), nil
 }
@@ -184,11 +190,17 @@ func (c *Contributor) renderTenantDetail(ctx context.Context, params contributor
 	if action := params.QueryParams["action"]; action != "" {
 		switch action {
 		case "enable":
-			_ = c.gw.Tenants().SetStatus(ctx, tenantID, tenant.StatusActive)
+			if setErr := c.gw.Tenants().SetStatus(ctx, tenantID, tenant.StatusActive); setErr != nil {
+				return nil, fmt.Errorf("dashboard: enable tenant: %w", setErr)
+			}
 		case "disable":
-			_ = c.gw.Tenants().SetStatus(ctx, tenantID, tenant.StatusDisabled)
+			if setErr := c.gw.Tenants().SetStatus(ctx, tenantID, tenant.StatusDisabled); setErr != nil {
+				return nil, fmt.Errorf("dashboard: disable tenant: %w", setErr)
+			}
 		case "suspend":
-			_ = c.gw.Tenants().SetStatus(ctx, tenantID, tenant.StatusSuspended)
+			if setErr := c.gw.Tenants().SetStatus(ctx, tenantID, tenant.StatusSuspended); setErr != nil {
+				return nil, fmt.Errorf("dashboard: suspend tenant: %w", setErr)
+			}
 		}
 	}
 
@@ -197,8 +209,14 @@ func (c *Contributor) renderTenantDetail(ctx context.Context, params contributor
 		return nil, fmt.Errorf("dashboard: resolve tenant: %w", err)
 	}
 
-	keys, _ := fetchKeys(ctx, c.gw, tenantID)
-	summary, _ := fetchUsageSummary(ctx, c.gw, tenantID, "month")
+	keys, keysErr := fetchKeys(ctx, c.gw, tenantID)
+	if keysErr != nil {
+		keys = nil
+	}
+	summary, sumErr := fetchUsageSummary(ctx, c.gw, tenantID, "month")
+	if sumErr != nil {
+		summary = nil
+	}
 
 	return pages.TenantDetailPage(pages.TenantDetailData{
 		Tenant:  t,
@@ -218,20 +236,19 @@ func (c *Contributor) renderTenantCreate(ctx context.Context, params contributor
 		// Parse quota.
 		quota := &tenant.Quota{}
 		if v := params.FormData["rpm"]; v != "" {
-			quota.RPM, _ = strconv.Atoi(v)
+			quota.RPM = safeAtoi(v)
 		}
 		if v := params.FormData["tpm"]; v != "" {
-			quota.TPM, _ = strconv.Atoi(v)
+			quota.TPM = safeAtoi(v)
 		}
 		if v := params.FormData["daily_requests"]; v != "" {
-			quota.DailyRequests, _ = strconv.Atoi(v)
+			quota.DailyRequests = safeAtoi(v)
 		}
 		if v := params.FormData["monthly_budget_usd"]; v != "" {
-			f, _ := strconv.ParseFloat(v, 64)
-			quota.MonthlyBudgetUSD = f
+			quota.MonthlyBudgetUSD = safeParseFloat(v)
 		}
 		if v := params.FormData["max_tokens_per_req"]; v != "" {
-			quota.MaxTokensPerReq, _ = strconv.Atoi(v)
+			quota.MaxTokensPerReq = safeAtoi(v)
 		}
 		input.Quota = quota
 
@@ -258,7 +275,10 @@ func (c *Contributor) renderTenantCreate(ctx context.Context, params contributor
 		}
 
 		// Redirect to detail page.
-		keys, _ := fetchKeys(ctx, c.gw, created.ID.String())
+		keys, keysErr := fetchKeys(ctx, c.gw, created.ID.String())
+		if keysErr != nil {
+			keys = nil
+		}
 		return pages.TenantDetailPage(pages.TenantDetailData{
 			Tenant: created,
 			Keys:   keys,
@@ -287,20 +307,19 @@ func (c *Contributor) renderTenantEdit(ctx context.Context, params contributor.P
 
 		quota := &tenant.Quota{}
 		if v := params.FormData["rpm"]; v != "" {
-			quota.RPM, _ = strconv.Atoi(v)
+			quota.RPM = safeAtoi(v)
 		}
 		if v := params.FormData["tpm"]; v != "" {
-			quota.TPM, _ = strconv.Atoi(v)
+			quota.TPM = safeAtoi(v)
 		}
 		if v := params.FormData["daily_requests"]; v != "" {
-			quota.DailyRequests, _ = strconv.Atoi(v)
+			quota.DailyRequests = safeAtoi(v)
 		}
 		if v := params.FormData["monthly_budget_usd"]; v != "" {
-			f, _ := strconv.ParseFloat(v, 64)
-			quota.MonthlyBudgetUSD = f
+			quota.MonthlyBudgetUSD = safeParseFloat(v)
 		}
 		if v := params.FormData["max_tokens_per_req"]; v != "" {
-			quota.MaxTokensPerReq, _ = strconv.Atoi(v)
+			quota.MaxTokensPerReq = safeAtoi(v)
 		}
 		input.Quota = quota
 
@@ -326,8 +345,14 @@ func (c *Contributor) renderTenantEdit(ctx context.Context, params contributor.P
 			}), nil
 		}
 
-		keys, _ := fetchKeys(ctx, c.gw, updated.ID.String())
-		summary, _ := fetchUsageSummary(ctx, c.gw, updated.ID.String(), "month")
+		keys, keysErr := fetchKeys(ctx, c.gw, updated.ID.String())
+		if keysErr != nil {
+			keys = nil
+		}
+		summary, sumErr := fetchUsageSummary(ctx, c.gw, updated.ID.String(), "month")
+		if sumErr != nil {
+			summary = nil
+		}
 		return pages.TenantDetailPage(pages.TenantDetailData{
 			Tenant:  updated,
 			Keys:    keys,
@@ -346,7 +371,11 @@ func (c *Contributor) renderKeys(ctx context.Context, params contributor.Params)
 
 	var keys []*key.APIKey
 	if tenantIDFilter != "" {
-		keys, _ = fetchKeys(ctx, c.gw, tenantIDFilter)
+		var fetchErr error
+		keys, fetchErr = fetchKeys(ctx, c.gw, tenantIDFilter)
+		if fetchErr != nil {
+			keys = nil
+		}
 	} else {
 		keys = fetchAllKeys(ctx, c.gw)
 	}
@@ -373,7 +402,9 @@ func (c *Contributor) renderKeyDetail(ctx context.Context, params contributor.Pa
 	if action := params.QueryParams["action"]; action != "" {
 		switch action {
 		case "revoke":
-			_ = c.gw.Keys().Revoke(ctx, keyID)
+			if revErr := c.gw.Keys().Revoke(ctx, keyID); revErr != nil {
+				return nil, fmt.Errorf("dashboard: revoke key: %w", revErr)
+			}
 		case "rotate":
 			newKey, rawKey, err := c.gw.Keys().Rotate(ctx, keyID)
 			if err == nil {
@@ -389,10 +420,13 @@ func (c *Contributor) renderKeyDetail(ctx context.Context, params contributor.Pa
 	}
 
 	// Fetch usage records for this key.
-	records, _, _ := fetchUsageRecords(ctx, c.gw, &usage.QueryOptions{
+	records, _, recErr := fetchUsageRecords(ctx, c.gw, &usage.QueryOptions{
 		TenantID: k.TenantID.String(),
 		Limit:    20,
 	})
+	if recErr != nil {
+		records = nil
+	}
 
 	return pages.KeyDetailPage(pages.KeyDetailData{
 		Key:       k,
@@ -403,7 +437,10 @@ func (c *Contributor) renderKeyDetail(ctx context.Context, params contributor.Pa
 
 func (c *Contributor) renderKeyCreate(ctx context.Context, params contributor.Params) (templ.Component, error) {
 	// Get tenants for dropdown.
-	tenants, _, _ := fetchTenants(ctx, c.gw, &tenant.ListOptions{Limit: 1000})
+	tenants, _, tErr := fetchTenants(ctx, c.gw, &tenant.ListOptions{Limit: 1000})
+	if tErr != nil {
+		tenants = nil
+	}
 
 	// Handle form submission.
 	if tenantID := params.FormData["tenant_id"]; tenantID != "" {
@@ -452,7 +489,10 @@ func (c *Contributor) renderUsage(ctx context.Context, params contributor.Params
 	}
 	tenantID := params.QueryParams["tenant_id"]
 
-	summary, _ := fetchUsageSummary(ctx, c.gw, tenantID, period)
+	summary, sumErr := fetchUsageSummary(ctx, c.gw, tenantID, period)
+	if sumErr != nil {
+		summary = nil
+	}
 
 	return pages.UsagePage(pages.UsagePageData{
 		Summary:      summary,
@@ -479,7 +519,11 @@ func (c *Contributor) renderUsageRecords(ctx context.Context, params contributor
 		opts.Model = modelFilter
 	}
 
-	records, total, _ := fetchUsageRecords(ctx, c.gw, opts)
+	records, total, recErr := fetchUsageRecords(ctx, c.gw, opts)
+	if recErr != nil {
+		records = nil
+		total = 0
+	}
 
 	return pages.UsageRecordsPage(pages.UsageRecordsPageData{
 		Records:  records,
@@ -491,7 +535,10 @@ func (c *Contributor) renderUsageRecords(ctx context.Context, params contributor
 }
 
 func (c *Contributor) renderModels(ctx context.Context) (templ.Component, error) {
-	models, _ := fetchModels(ctx, c.gw)
+	models, modErr := fetchModels(ctx, c.gw)
+	if modErr != nil {
+		models = nil
+	}
 	providers := fetchProviderInfos(ctx, c.gw)
 
 	return pages.ModelsPage(pages.ModelsPageData{
@@ -533,7 +580,10 @@ func (c *Contributor) renderSettings(_ context.Context) (templ.Component, error)
 // ─── Widget Renderers ────────────────────────────────────────────────────────
 
 func (c *Contributor) renderStatsWidget(ctx context.Context) (templ.Component, error) {
-	summary, _ := fetchUsageSummary(ctx, c.gw, "", "month")
+	summary, sErr := fetchUsageSummary(ctx, c.gw, "", "month")
+	if sErr != nil {
+		summary = nil
+	}
 
 	data := widgets.StatsData{
 		TenantCount:  fetchTenantCount(ctx, c.gw),
@@ -554,7 +604,10 @@ func (c *Contributor) renderMonthlySpendWidget(ctx context.Context) (templ.Compo
 }
 
 func (c *Contributor) renderRecentActivityWidget(ctx context.Context) (templ.Component, error) {
-	records, _ := fetchRecentUsage(ctx, c.gw, 5)
+	records, recErr := fetchRecentUsage(ctx, c.gw, 5)
+	if recErr != nil {
+		records = nil
+	}
 	return widgets.RecentActivityWidget(records), nil
 }
 
@@ -576,4 +629,20 @@ func splitAndTrim(s string) []string {
 		}
 	}
 	return result
+}
+
+func safeAtoi(s string) int {
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+func safeParseFloat(s string) float64 {
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return v
 }

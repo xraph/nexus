@@ -1,6 +1,6 @@
 module github.com/xraph/nexus/providers/deepseek
 
-go 1.25
+go 1.25.7
 
 require (
 	github.com/xraph/nexus v0.0.0
