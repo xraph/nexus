@@ -9,8 +9,9 @@ import (
 	"io"
 	"net/http"
 
-	log "github.com/xraph/go-utils/log"
 	"time"
+
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/plugin"
