@@ -7,8 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net/http"
+
+	log "github.com/xraph/go-utils/log"
 	"time"
 
 	"github.com/xraph/nexus/id"
@@ -49,14 +50,14 @@ func (f SenderFunc) Send(ctx context.Context, event *Event) error {
 // Extension is the relay webhook extension.
 type Extension struct {
 	sender Sender
-	logger *slog.Logger
+	logger log.Logger
 }
 
 // Option configures the relay extension.
 type Option func(*Extension)
 
 // WithLogger sets a custom logger.
-func WithLogger(l *slog.Logger) Option {
+func WithLogger(l log.Logger) Option {
 	return func(e *Extension) { e.logger = l }
 }
 
@@ -64,7 +65,7 @@ func WithLogger(l *slog.Logger) Option {
 func New(sender Sender, opts ...Option) *Extension {
 	e := &Extension{
 		sender: sender,
-		logger: slog.Default(),
+		logger: log.NewNoopLogger(),
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -198,8 +199,8 @@ func (e *Extension) send(ctx context.Context, eventType EventType, data map[stri
 	}
 	if err := e.sender.Send(ctx, event); err != nil {
 		e.logger.Warn("relay_hook: failed to send event",
-			slog.String("event", string(eventType)),
-			slog.String("error", err.Error()),
+			log.String("event", string(eventType)),
+			log.String("error", err.Error()),
 		)
 		// Non-fatal: relay errors must not block the pipeline
 		return nil

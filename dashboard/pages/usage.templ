@@ -1,0 +1,174 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/nexus/dashboard/components"
+	"github.com/xraph/nexus/usage"
+)
+
+// UsagePageData holds data for the usage analytics page.
+type UsagePageData struct {
+	Summary      *usage.Summary
+	MonthlySpend float64
+	DailyReqs    int
+	Period       string // "day", "week", "month"
+	TenantID     string
+}
+
+templ UsagePage(data UsagePageData) {
+	<div class="space-y-6">
+		<!-- Page Header -->
+		<div>
+			<h1 class="text-3xl font-bold tracking-tight">Usage Analytics</h1>
+			<p class="text-muted-foreground mt-1">LLM usage, costs, and performance metrics.</p>
+		</div>
+		<!-- Period Selector -->
+		<div class="flex items-center gap-2">
+			@periodButton("Day", "day", data.Period)
+			@periodButton("Week", "week", data.Period)
+			@periodButton("Month", "month", data.Period)
+		</div>
+		<!-- Stats Row -->
+		if data.Summary != nil {
+			<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
+				@components.StatCard("activity", "Requests", strconv.Itoa(data.Summary.TotalRequests), periodLabel(data.Period))
+				@components.StatCard("hash", "Tokens", strconv.Itoa(data.Summary.TotalTokens), "Total tokens used")
+				@components.StatCard("dollar-sign", "Cost", formatCost(data.Summary.TotalCostUSD), "Total spend")
+				@components.StatCard("zap", "Cache Hit Rate", formatPercent(data.Summary.CacheHitRate), "Cached responses")
+				@components.StatCard("clock", "Avg Latency", formatDuration(data.Summary.AvgLatency), "Per request")
+			</div>
+			<!-- By Provider Breakdown -->
+			if len(data.Summary.ByProvider) > 0 {
+				@card.Card(card.Props{Class: "rounded-sm"}) {
+					@card.Header() {
+						@card.Title() {
+							By Provider
+						}
+						@card.Description() {
+							Usage breakdown by LLM provider.
+						}
+					}
+					@card.Content() {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Provider }
+									@table.Head() { Requests }
+									@table.Head() { Tokens }
+									@table.Head() { Cost }
+								}
+							}
+							@table.Body() {
+								for name, pu := range data.Summary.ByProvider {
+									@table.Row(table.RowProps{Class: "hover:bg-muted/50"}) {
+										@table.Cell() {
+											<span class="font-medium">{ name }</span>
+										}
+										@table.Cell() {
+											{ strconv.Itoa(pu.Requests) }
+										}
+										@table.Cell() {
+											{ strconv.Itoa(pu.Tokens) }
+										}
+										@table.Cell() {
+											{ formatCost(pu.CostUSD) }
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			<!-- By Model Breakdown -->
+			if len(data.Summary.ByModel) > 0 {
+				@card.Card(card.Props{Class: "rounded-sm"}) {
+					@card.Header() {
+						@card.Title() {
+							By Model
+						}
+						@card.Description() {
+							Usage breakdown by model.
+						}
+					}
+					@card.Content() {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Model }
+									@table.Head() { Requests }
+									@table.Head() { Tokens }
+									@table.Head() { Cost }
+								}
+							}
+							@table.Body() {
+								for name, mu := range data.Summary.ByModel {
+									@table.Row(table.RowProps{Class: "hover:bg-muted/50"}) {
+										@table.Cell() {
+											<code class="text-xs bg-muted/50 rounded-sm px-1.5 py-0.5">{ name }</code>
+										}
+										@table.Cell() {
+											{ strconv.Itoa(mu.Requests) }
+										}
+										@table.Cell() {
+											{ strconv.Itoa(mu.Tokens) }
+										}
+										@table.Cell() {
+											{ formatCost(mu.CostUSD) }
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		} else {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Content() {
+					@components.EmptyState("bar-chart-3", "No usage data", "Usage data will appear here as API requests are made.")
+				}
+			}
+		}
+	</div>
+}
+
+templ periodButton(label string, period string, activePeriod string) {
+	if period == activePeriod {
+		@button.Button(button.Props{
+			Size: button.SizeSm,
+		}) {
+			{ label }
+		}
+	} else {
+		@button.Button(button.Props{
+			Variant: button.VariantOutline,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      ".?period=" + period,
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-push-url": "true",
+			},
+		}) {
+			{ label }
+		}
+	}
+}
+
+func periodLabel(period string) string {
+	switch period {
+	case "day":
+		return "Today"
+	case "week":
+		return "This week"
+	case "month":
+		return "This month"
+	default:
+		return "This month"
+	}
+}

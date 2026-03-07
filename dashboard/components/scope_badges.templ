@@ -1,0 +1,22 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/badge"
+)
+
+// ScopeBadges renders a list of scope tags as badges.
+templ ScopeBadges(scopes []string) {
+	<div class="flex flex-wrap gap-2">
+		if len(scopes) == 0 {
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				all scopes
+			}
+		} else {
+			for _, scope := range scopes {
+				@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+					{ scope }
+				}
+			}
+		}
+	</div>
+}

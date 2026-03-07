@@ -2,8 +2,9 @@ package plugin
 
 import (
 	"context"
-	"log/slog"
 	"time"
+
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/nexus/id"
 )
@@ -92,7 +93,7 @@ type budgetExceededEntry struct {
 // iterate only over extensions that implement the relevant hook.
 type Registry struct {
 	extensions []Extension
-	logger     *slog.Logger
+	logger     log.Logger
 
 	// Type-cached slices for each lifecycle hook.
 	requestReceived   []requestReceivedEntry
@@ -114,11 +115,11 @@ type Registry struct {
 
 // NewRegistry creates an extension registry with a default logger.
 func NewRegistry() *Registry {
-	return &Registry{logger: slog.Default()}
+	return &Registry{logger: log.NewNoopLogger()}
 }
 
 // NewRegistryWithLogger creates an extension registry with the given logger.
-func NewRegistryWithLogger(logger *slog.Logger) *Registry {
+func NewRegistryWithLogger(logger log.Logger) *Registry {
 	return &Registry{logger: logger}
 }
 
@@ -340,8 +341,8 @@ func (r *Registry) EmitBudgetExceeded(ctx context.Context, tenantID id.TenantID)
 // Errors from hooks are never propagated — they must not block the pipeline.
 func (r *Registry) logHookError(hook, extName string, err error) {
 	r.logger.Warn("extension hook error",
-		slog.String("hook", hook),
-		slog.String("extension", extName),
-		slog.String("error", err.Error()),
+		log.String("hook", hook),
+		log.String("extension", extName),
+		log.String("error", err.Error()),
 	)
 }

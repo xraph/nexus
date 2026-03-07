@@ -1,0 +1,28 @@
+package components
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/icons"
+)
+
+// ProviderCard renders a card with provider information.
+templ ProviderCard(info ProviderInfo) {
+	@card.Card(card.Props{Class: "rounded-sm"}) {
+		@card.Content(card.ContentProps{Class: "p-6"}) {
+			<div class="flex items-center justify-between mb-3">
+				<div class="flex items-center gap-2">
+					<span class="text-muted-foreground">
+						@icons.Globe(icons.WithSize(20))
+					</span>
+					<h3 class="font-semibold text-lg">{ info.Name }</h3>
+				</div>
+				@HealthBadge(info.Healthy)
+			</div>
+			<div class="text-sm text-muted-foreground">
+				{ strconv.Itoa(info.ModelCount) } models available
+			</div>
+		}
+	}
+}

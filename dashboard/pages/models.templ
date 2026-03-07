@@ -1,0 +1,48 @@
+package pages
+
+import (
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/nexus/dashboard/components"
+	"github.com/xraph/nexus/provider"
+)
+
+// ModelsPageData holds data for the models & providers page.
+type ModelsPageData struct {
+	Models    []provider.Model
+	Providers []components.ProviderInfo
+}
+
+templ ModelsPage(data ModelsPageData) {
+	<div class="space-y-6">
+		<!-- Page Header -->
+		<div>
+			<h1 class="text-3xl font-bold tracking-tight">Models & Providers</h1>
+			<p class="text-muted-foreground mt-1">Available LLM providers and their models.</p>
+		</div>
+		<!-- Providers Grid -->
+		if len(data.Providers) > 0 {
+			<div>
+				<h2 class="text-lg font-semibold mb-4">Providers</h2>
+				<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+					for _, p := range data.Providers {
+						@components.ProviderCard(p)
+					}
+				</div>
+			</div>
+		}
+		<!-- Models Table -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					All Models
+				}
+				@card.Description() {
+					Models available across all connected providers.
+				}
+			}
+			@card.Content() {
+				@components.ModelTable(data.Models)
+			}
+		}
+	</div>
+}

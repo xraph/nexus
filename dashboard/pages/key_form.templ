@@ -1,0 +1,145 @@
+package pages
+
+import (
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/icons"
+	"github.com/xraph/nexus/key"
+	"github.com/xraph/nexus/tenant"
+)
+
+// KeyFormData holds data for the create key form.
+type KeyFormData struct {
+	Tenants    []*tenant.Tenant
+	Error      string
+	CreatedKey *key.APIKey // set after creation
+	RawKey     string      // the full key (only shown once)
+}
+
+// AvailableScopes lists the default scopes for API keys.
+var AvailableScopes = []string{"completions", "embeddings", "models", "admin"}
+
+templ KeyFormPage(data KeyFormData) {
+	<div class="space-y-6">
+		<!-- Back Button -->
+		@button.Button(button.Props{
+			Variant: button.VariantGhost,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      "../keys",
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-push-url": "true",
+			},
+		}) {
+			@icons.ChevronLeft(icons.WithSize(16))
+			Back to API Keys
+		}
+		if data.CreatedKey != nil {
+			<!-- Success: Show created key -->
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						API Key Created
+					}
+					@card.Description() {
+						Copy the key below. You won't be able to see it again.
+					}
+				}
+				@card.Content() {
+					<div class="space-y-4">
+						<div class="bg-primary/10 border border-primary/20 rounded-sm p-4 space-y-3">
+							<div class="flex items-center gap-2 text-sm font-medium">
+								@icons.TriangleAlert(icons.WithSize(16))
+								Save this key securely — it will not be shown again.
+							</div>
+							@credentialField(data.RawKey)
+						</div>
+						<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+							@fieldRow("Name", data.CreatedKey.Name)
+							@fieldRow("Prefix", data.CreatedKey.Prefix)
+							@fieldRow("Key ID", data.CreatedKey.ID.String())
+							@fieldRow("Tenant ID", data.CreatedKey.TenantID.String())
+						</dl>
+					</div>
+				}
+			}
+		} else {
+			<!-- Create Form -->
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Create API Key
+					}
+					@card.Description() {
+						Generate a new API key for a tenant.
+					}
+				}
+				@card.Content() {
+					if data.Error != "" {
+						<div class="bg-destructive/10 text-destructive rounded-sm p-3 mb-4 text-sm">
+							{ data.Error }
+						</div>
+					}
+					<form
+						hx-post="./create"
+						hx-target="#content"
+						hx-swap="innerHTML"
+						class="space-y-6"
+					>
+						<div class="space-y-4">
+							<div class="space-y-2">
+								<label for="tenant_id" class="text-sm font-medium">Tenant</label>
+								<select name="tenant_id" class="flex h-10 w-full rounded-sm border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+									<option value="">Select a tenant...</option>
+									for _, t := range data.Tenants {
+										<option value={ t.ID.String() }>{ t.Name } ({ t.Slug })</option>
+									}
+								</select>
+							</div>
+							<div class="space-y-2">
+								<label for="name" class="text-sm font-medium">Key Name</label>
+								@input.Input(input.Props{
+									Name:        "name",
+									Placeholder: "e.g. production-key",
+								})
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Scopes</label>
+								<div class="flex flex-wrap gap-4">
+									for _, scope := range AvailableScopes {
+										<label class="flex items-center gap-2 text-sm">
+											<input type="checkbox" name="scopes" value={ scope } class="rounded-sm border border-input"/>
+											{ scope }
+										</label>
+									}
+								</div>
+								<p class="text-xs text-muted-foreground">Leave unchecked to grant all scopes.</p>
+							</div>
+						</div>
+						<!-- Submit -->
+						<div class="flex justify-end gap-2">
+							@button.Button(button.Props{
+								Variant: button.VariantOutline,
+								Attributes: templ.Attributes{
+									"hx-get":      "../keys",
+									"hx-target":   "#content",
+									"hx-swap":     "innerHTML",
+									"hx-push-url": "true",
+								},
+							}) {
+								Cancel
+							}
+							@button.Button(button.Props{
+								Type: "submit",
+							}) {
+								Create Key
+							}
+						</div>
+					</form>
+				}
+			}
+		}
+	</div>
+}

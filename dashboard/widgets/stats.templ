@@ -1,0 +1,35 @@
+package widgets
+
+import (
+	"strconv"
+
+	"github.com/xraph/nexus/dashboard/components"
+)
+
+// StatsData holds aggregate stats for the stats widget.
+type StatsData struct {
+	TenantCount  int
+	ActiveKeys   int
+	MonthlySpend float64
+	TotalRequests int
+}
+
+// StatsWidget renders the gateway stats widget for the dashboard overview.
+templ StatsWidget(data StatsData) {
+	<div class="grid grid-cols-2 gap-4">
+		@components.StatCard("users", "Tenants", strconv.Itoa(data.TenantCount), "Active tenants")
+		@components.StatCard("key-round", "API Keys", strconv.Itoa(data.ActiveKeys), "Active keys")
+		@components.StatCard("dollar-sign", "Spend", formatCost(data.MonthlySpend), "This month")
+		@components.StatCard("activity", "Requests", strconv.Itoa(data.TotalRequests), "This month")
+	</div>
+}
+
+func formatCost(costUSD float64) string {
+	if costUSD == 0 {
+		return "$0.00"
+	}
+	if costUSD < 0.01 {
+		return "$" + strconv.FormatFloat(costUSD, 'f', 4, 64)
+	}
+	return "$" + strconv.FormatFloat(costUSD, 'f', 2, 64)
+}

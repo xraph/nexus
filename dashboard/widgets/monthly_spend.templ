@@ -1,0 +1,15 @@
+package widgets
+
+import (
+	"github.com/xraph/nexus/dashboard/components"
+)
+
+// MonthlySpendData holds the monthly spend value.
+type MonthlySpendData struct {
+	Spend float64
+}
+
+// MonthlySpendWidget renders the monthly spend widget.
+templ MonthlySpendWidget(data MonthlySpendData) {
+	@components.StatCard("dollar-sign", "Monthly Spend", formatCost(data.Spend), "Current billing period")
+}

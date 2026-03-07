@@ -1,0 +1,63 @@
+package components
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/nexus/provider"
+)
+
+// ModelTable renders a table of available models.
+templ ModelTable(models []provider.Model) {
+	if len(models) == 0 {
+		@EmptyState("cpu", "No models", "No models available from providers.")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Model ID }
+					@table.Head() { Provider }
+					@table.Head() { Name }
+					@table.Head() { Context Window }
+					@table.Head() { Max Output }
+					@table.Head() { Input $/M }
+					@table.Head() { Output $/M }
+				}
+			}
+			@table.Body() {
+				for _, m := range models {
+					@table.Row(table.RowProps{Class: "hover:bg-muted/50"}) {
+						@table.Cell() {
+							<code class="text-xs bg-muted/50 rounded-sm px-1.5 py-0.5">{ m.ID }</code>
+						}
+						@table.Cell() {
+							<span class="font-medium">{ m.Provider }</span>
+						}
+						@table.Cell() {
+							{ m.Name }
+						}
+						@table.Cell() {
+							{ strconv.Itoa(m.ContextWindow) }
+						}
+						@table.Cell() {
+							{ strconv.Itoa(m.MaxOutput) }
+						}
+						@table.Cell() {
+							{ formatPricing(m.Pricing.InputPerMillion) }
+						}
+						@table.Cell() {
+							{ formatPricing(m.Pricing.OutputPerMillion) }
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func formatPricing(v float64) string {
+	if v == 0 {
+		return "-"
+	}
+	return formatCost(v)
+}

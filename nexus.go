@@ -104,7 +104,7 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 		gw.store = store.NewMemory()
 	}
 	if gw.logger == nil {
-		gw.logger = NewDefaultLogger(gw.config.LogLevel)
+		gw.logger = NewNoopLogger()
 	}
 
 	// Initialize model service
@@ -246,6 +246,11 @@ func (gw *Gateway) Pipeline() pipeline.Service { return gw.pipeline }
 
 // Logger returns the gateway logger.
 func (gw *Gateway) Logger() Logger { return gw.logger }
+
+// Health checks the health of the Gateway.
+func (gw *Gateway) Health(_ context.Context) error {
+	return nil
+}
 
 // Shutdown gracefully stops all services.
 func (gw *Gateway) Shutdown(_ context.Context) error {

@@ -1,0 +1,60 @@
+package components
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/nexus/usage"
+)
+
+// UsageRecordTable renders a table of usage records.
+templ UsageRecordTable(records []*usage.Record) {
+	if len(records) == 0 {
+		@EmptyState("activity", "No usage records", "Usage records will appear here as API requests are made.")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Provider }
+					@table.Head() { Model }
+					@table.Head() { Tokens }
+					@table.Head() { Cost }
+					@table.Head() { Latency }
+					@table.Head() { Cached }
+					@table.Head() { Status }
+					@table.Head() { Created }
+				}
+			}
+			@table.Body() {
+				for _, r := range records {
+					@table.Row(table.RowProps{Class: "hover:bg-muted/50"}) {
+						@table.Cell() {
+							<span class="font-medium">{ r.Provider }</span>
+						}
+						@table.Cell() {
+							<code class="text-xs bg-muted/50 rounded-sm px-1.5 py-0.5">{ r.Model }</code>
+						}
+						@table.Cell() {
+							{ strconv.Itoa(r.TotalTokens) }
+						}
+						@table.Cell() {
+							{ formatCost(r.CostUSD) }
+						}
+						@table.Cell() {
+							{ formatDuration(r.Latency) }
+						}
+						@table.Cell() {
+							@CachedBadge(r.Cached)
+						}
+						@table.Cell() {
+							{ strconv.Itoa(r.StatusCode) }
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground text-sm">{ formatTimeAgo(r.CreatedAt) }</span>
+						}
+					}
+				}
+			}
+		}
+	}
+}

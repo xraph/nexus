@@ -1,0 +1,225 @@
+package pages
+
+import (
+	"strconv"
+	"strings"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/separator"
+	"github.com/xraph/forgeui/icons"
+	"github.com/xraph/nexus/dashboard/components"
+	"github.com/xraph/nexus/key"
+	"github.com/xraph/nexus/tenant"
+	"github.com/xraph/nexus/usage"
+)
+
+// TenantDetailData holds all data needed for the tenant detail page.
+type TenantDetailData struct {
+	Tenant  *tenant.Tenant
+	Keys    []*key.APIKey
+	Summary *usage.Summary
+}
+
+templ TenantDetailPage(data TenantDetailData) {
+	<div class="space-y-6">
+		<!-- Back Button -->
+		@button.Button(button.Props{
+			Variant: button.VariantGhost,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      "../tenants",
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-push-url": "true",
+			},
+		}) {
+			@icons.ChevronLeft(icons.WithSize(16))
+			Back to Tenants
+		}
+		<!-- Tenant Info Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content(card.ContentProps{Class: "p-6"}) {
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-3">
+						<span class="text-muted-foreground">
+							@icons.Users(icons.WithSize(24))
+						</span>
+						<div>
+							<h2 class="text-xl font-semibold">{ data.Tenant.Name }</h2>
+							<code class="text-sm text-muted-foreground">{ data.Tenant.Slug }</code>
+						</div>
+					</div>
+					<div class="flex items-center gap-2">
+						@components.TenantStatusBadge(string(data.Tenant.Status))
+						<!-- Action Buttons -->
+						if data.Tenant.Status != tenant.StatusActive {
+							@button.Button(button.Props{
+								Size: button.SizeSm,
+								Attributes: templ.Attributes{
+									"hx-get":      "./detail?id=" + data.Tenant.ID.String() + "&action=enable",
+									"hx-target":   "#content",
+									"hx-swap":     "innerHTML",
+									"hx-confirm":  "Enable this tenant?",
+								},
+							}) {
+								Enable
+							}
+						}
+						if data.Tenant.Status == tenant.StatusActive {
+							@button.Button(button.Props{
+								Variant: button.VariantOutline,
+								Size:    button.SizeSm,
+								Attributes: templ.Attributes{
+									"hx-get":      "./detail?id=" + data.Tenant.ID.String() + "&action=disable",
+									"hx-target":   "#content",
+									"hx-swap":     "innerHTML",
+									"hx-confirm":  "Disable this tenant?",
+								},
+							}) {
+								Disable
+							}
+							@button.Button(button.Props{
+								Variant: button.VariantDestructive,
+								Size:    button.SizeSm,
+								Attributes: templ.Attributes{
+									"hx-get":      "./detail?id=" + data.Tenant.ID.String() + "&action=suspend",
+									"hx-target":   "#content",
+									"hx-swap":     "innerHTML",
+									"hx-confirm":  "Are you sure you want to suspend this tenant?",
+								},
+							}) {
+								Suspend
+							}
+						}
+						@button.Button(button.Props{
+							Variant: button.VariantGhost,
+							Size:    button.SizeSm,
+							Attributes: templ.Attributes{
+								"hx-get":      "../tenants/edit?id=" + data.Tenant.ID.String(),
+								"hx-target":   "#content",
+								"hx-swap":     "innerHTML",
+								"hx-push-url": "true",
+							},
+						}) {
+							Edit
+						}
+					</div>
+				</div>
+				@separator.Separator(separator.Props{Class: "my-4"})
+				<dl class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+					@fieldRow("ID", data.Tenant.ID.String())
+					@fieldRow("Slug", data.Tenant.Slug)
+					@fieldRow("Status", string(data.Tenant.Status))
+					@fieldRow("Created", formatTimeAgo(data.Tenant.CreatedAt))
+					@fieldRow("Updated", formatTimeAgo(data.Tenant.UpdatedAt))
+				</dl>
+			}
+		}
+		<!-- Quota Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Quotas
+				}
+				@card.Description() {
+					Rate limits and budget constraints for this tenant.
+				}
+			}
+			@card.Content() {
+				@components.QuotaDisplay(data.Tenant.Quota)
+			}
+		}
+		<!-- Config Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Configuration
+				}
+				@card.Description() {
+					Per-tenant overrides and model policies.
+				}
+			}
+			@card.Content() {
+				<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+					@fieldRow("Default Model", valueOrDash(data.Tenant.Config.DefaultModel))
+					@fieldRow("Routing Strategy", valueOrDash(data.Tenant.Config.RoutingStrategy))
+					@fieldRow("Guardrail Policy", valueOrDash(data.Tenant.Config.GuardrailPolicy))
+					@fieldRow("Cache Enabled", formatOptBool(data.Tenant.Config.CacheEnabled))
+					@fieldRow("Allowed Models", formatStringSlice(data.Tenant.Config.AllowedModels))
+					@fieldRow("Blocked Models", formatStringSlice(data.Tenant.Config.BlockedModels))
+				</dl>
+			}
+		}
+		<!-- Metadata Card -->
+		if len(data.Tenant.Metadata) > 0 {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Metadata
+					}
+				}
+				@card.Content() {
+					@codeBlock(formatJSON(data.Tenant.Metadata))
+				}
+			}
+		}
+		<!-- Associated API Keys -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					API Keys
+				}
+				@card.Description() {
+					Keys associated with this tenant.
+				}
+			}
+			@card.Content() {
+				@components.KeyTable(data.Keys)
+			}
+		}
+		<!-- Usage Summary -->
+		if data.Summary != nil {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Usage Summary (Month)
+					}
+				}
+				@card.Content() {
+					<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+						@components.StatCard("activity", "Requests", strconv.Itoa(data.Summary.TotalRequests), "This month")
+						@components.StatCard("hash", "Tokens", strconv.Itoa(data.Summary.TotalTokens), "Total tokens")
+						@components.StatCard("dollar-sign", "Cost", formatCost(data.Summary.TotalCostUSD), "Total spend")
+						@components.StatCard("zap", "Cache Hit Rate", formatPercent(data.Summary.CacheHitRate), "Cached responses")
+						@components.StatCard("clock", "Avg Latency", formatDuration(data.Summary.AvgLatency), "Per request")
+					</div>
+				}
+			}
+		}
+	</div>
+}
+
+func valueOrDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
+func formatOptBool(b *bool) string {
+	if b == nil {
+		return "Default"
+	}
+	if *b {
+		return "Enabled"
+	}
+	return "Disabled"
+}
+
+func formatStringSlice(ss []string) string {
+	if len(ss) == 0 {
+		return "—"
+	}
+	return strings.Join(ss, ", ")
+}

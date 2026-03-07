@@ -1,0 +1,75 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/badge"
+)
+
+// TenantStatusBadge renders a status badge for a tenant.
+templ TenantStatusBadge(status string) {
+	switch status {
+		case "active":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Active
+			}
+		case "disabled":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Disabled
+			}
+		case "suspended":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Suspended
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ status }
+			}
+	}
+}
+
+// KeyStatusBadge renders a status badge for an API key.
+templ KeyStatusBadge(status string) {
+	switch status {
+		case "active":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Active
+			}
+		case "revoked":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Revoked
+			}
+		case "expired":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Expired
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ status }
+			}
+	}
+}
+
+// CachedBadge renders a badge for cached status.
+templ CachedBadge(cached bool) {
+	if cached {
+		@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+			Cached
+		}
+	} else {
+		@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+			Live
+		}
+	}
+}
+
+// HealthBadge renders a health status badge.
+templ HealthBadge(healthy bool) {
+	if healthy {
+		@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+			Healthy
+		}
+	} else {
+		@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+			Unhealthy
+		}
+	}
+}

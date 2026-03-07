@@ -1,0 +1,52 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/nexus/dashboard/components"
+	"github.com/xraph/nexus/usage"
+)
+
+// OverviewStats holds aggregate counts for the overview page.
+type OverviewStats struct {
+	TenantCount   int
+	ActiveKeys    int
+	MonthlySpend  float64
+	TotalRequests int
+	CacheHitRate  float64
+	ProviderCount int
+}
+
+templ OverviewPage(stats OverviewStats, recentUsage []*usage.Record) {
+	<div class="space-y-8">
+		<!-- Page Header -->
+		<div>
+			<h1 class="text-3xl font-bold tracking-tight">Overview</h1>
+			<p class="text-muted-foreground mt-1">Monitor your AI gateway at a glance.</p>
+		</div>
+		<!-- Stats Grid -->
+		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+			@components.StatCard("users", "Tenants", strconv.Itoa(stats.TenantCount), "Active tenants")
+			@components.StatCard("key-round", "API Keys", strconv.Itoa(stats.ActiveKeys), "Active keys")
+			@components.StatCard("dollar-sign", "Monthly Spend", formatCost(stats.MonthlySpend), "Current month")
+			@components.StatCard("activity", "Total Requests", strconv.Itoa(stats.TotalRequests), "This month")
+			@components.StatCard("zap", "Cache Hit Rate", formatPercent(stats.CacheHitRate), "Cached responses")
+			@components.StatCard("cpu", "Providers", strconv.Itoa(stats.ProviderCount), "Connected")
+		</div>
+		<!-- Recent Usage -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Recent API Usage
+				}
+				@card.Description() {
+					Latest API requests across all tenants.
+				}
+			}
+			@card.Content() {
+				@components.UsageRecordTable(recentUsage)
+			}
+		}
+	</div>
+}

@@ -1,0 +1,298 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/separator"
+	"github.com/xraph/forgeui/icons"
+	"github.com/xraph/nexus/tenant"
+)
+
+// TenantFormData holds data for the create/edit tenant form.
+type TenantFormData struct {
+	Tenant *tenant.Tenant // nil for create
+	IsEdit bool
+	Error  string
+}
+
+templ TenantFormPage(data TenantFormData) {
+	<div class="space-y-6">
+		<!-- Back Button -->
+		@button.Button(button.Props{
+			Variant: button.VariantGhost,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      "../tenants",
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-push-url": "true",
+			},
+		}) {
+			@icons.ChevronLeft(icons.WithSize(16))
+			Back to Tenants
+		}
+		<!-- Form Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					if data.IsEdit {
+						Edit Tenant
+					} else {
+						Create Tenant
+					}
+				}
+				@card.Description() {
+					if data.IsEdit {
+						Update tenant configuration and quotas.
+					} else {
+						Create a new tenant with quotas and configuration.
+					}
+				}
+			}
+			@card.Content() {
+				if data.Error != "" {
+					<div class="bg-destructive/10 text-destructive rounded-sm p-3 mb-4 text-sm">
+						{ data.Error }
+					</div>
+				}
+				<form
+					if data.IsEdit {
+						hx-post={ string(templ.SafeURL("./edit?id=" + data.Tenant.ID.String())) }
+					} else {
+						hx-post="./create"
+					}
+					hx-target="#content"
+					hx-swap="innerHTML"
+					class="space-y-6"
+				>
+					<!-- Basic Info -->
+					<div class="space-y-4">
+						<h3 class="text-sm font-medium text-muted-foreground uppercase tracking-wider">Basic Information</h3>
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+							<div class="space-y-2">
+								<label for="name" class="text-sm font-medium">Name</label>
+								@input.Input(input.Props{
+									Name:        "name",
+									Placeholder: "e.g. Acme Corp",
+									Value:       tenantFieldValue(data.Tenant, "name"),
+								})
+							</div>
+							<div class="space-y-2">
+								<label for="slug" class="text-sm font-medium">Slug</label>
+								@input.Input(input.Props{
+									Name:        "slug",
+									Placeholder: "e.g. acme-corp",
+									Value:       tenantFieldValue(data.Tenant, "slug"),
+								})
+							</div>
+						</div>
+					</div>
+					@separator.Separator(separator.Props{})
+					<!-- Quotas -->
+					<div class="space-y-4">
+						<h3 class="text-sm font-medium text-muted-foreground uppercase tracking-wider">Quotas</h3>
+						<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+							<div class="space-y-2">
+								<label for="rpm" class="text-sm font-medium">Requests/min (RPM)</label>
+								@input.Input(input.Props{
+									Type:        input.TypeNumber,
+									Name:        "rpm",
+									Placeholder: "0 = unlimited",
+									Value:       tenantQuotaValue(data.Tenant, "rpm"),
+								})
+							</div>
+							<div class="space-y-2">
+								<label for="tpm" class="text-sm font-medium">Tokens/min (TPM)</label>
+								@input.Input(input.Props{
+									Type:        input.TypeNumber,
+									Name:        "tpm",
+									Placeholder: "0 = unlimited",
+									Value:       tenantQuotaValue(data.Tenant, "tpm"),
+								})
+							</div>
+							<div class="space-y-2">
+								<label for="daily_requests" class="text-sm font-medium">Daily Requests</label>
+								@input.Input(input.Props{
+									Type:        input.TypeNumber,
+									Name:        "daily_requests",
+									Placeholder: "0 = unlimited",
+									Value:       tenantQuotaValue(data.Tenant, "daily_requests"),
+								})
+							</div>
+							<div class="space-y-2">
+								<label for="monthly_budget_usd" class="text-sm font-medium">Monthly Budget (USD)</label>
+								@input.Input(input.Props{
+									Type:        input.TypeNumber,
+									Name:        "monthly_budget_usd",
+									Placeholder: "0 = unlimited",
+									Value:       tenantQuotaValue(data.Tenant, "monthly_budget_usd"),
+								})
+							</div>
+							<div class="space-y-2">
+								<label for="max_tokens_per_req" class="text-sm font-medium">Max Tokens/Request</label>
+								@input.Input(input.Props{
+									Type:        input.TypeNumber,
+									Name:        "max_tokens_per_req",
+									Placeholder: "0 = unlimited",
+									Value:       tenantQuotaValue(data.Tenant, "max_tokens_per_req"),
+								})
+							</div>
+						</div>
+					</div>
+					@separator.Separator(separator.Props{})
+					<!-- Config -->
+					<div class="space-y-4">
+						<h3 class="text-sm font-medium text-muted-foreground uppercase tracking-wider">Configuration</h3>
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+							<div class="space-y-2">
+								<label for="default_model" class="text-sm font-medium">Default Model</label>
+								@input.Input(input.Props{
+									Name:        "default_model",
+									Placeholder: "e.g. gpt-4o",
+									Value:       tenantConfigValue(data.Tenant, "default_model"),
+								})
+							</div>
+							<div class="space-y-2">
+								<label for="routing_strategy" class="text-sm font-medium">Routing Strategy</label>
+								@input.Input(input.Props{
+									Name:        "routing_strategy",
+									Placeholder: "e.g. cost-optimized",
+									Value:       tenantConfigValue(data.Tenant, "routing_strategy"),
+								})
+							</div>
+							<div class="space-y-2">
+								<label for="guardrail_policy" class="text-sm font-medium">Guardrail Policy</label>
+								@input.Input(input.Props{
+									Name:        "guardrail_policy",
+									Placeholder: "e.g. strict",
+									Value:       tenantConfigValue(data.Tenant, "guardrail_policy"),
+								})
+							</div>
+							<div class="space-y-2">
+								<label for="allowed_models" class="text-sm font-medium">Allowed Models (comma-separated)</label>
+								@input.Input(input.Props{
+									Name:        "allowed_models",
+									Placeholder: "e.g. gpt-4o,claude-3-opus",
+									Value:       tenantConfigValue(data.Tenant, "allowed_models"),
+								})
+							</div>
+							<div class="space-y-2">
+								<label for="blocked_models" class="text-sm font-medium">Blocked Models (comma-separated)</label>
+								@input.Input(input.Props{
+									Name:        "blocked_models",
+									Placeholder: "e.g. gpt-3.5-turbo",
+									Value:       tenantConfigValue(data.Tenant, "blocked_models"),
+								})
+							</div>
+						</div>
+					</div>
+					<!-- Submit -->
+					<div class="flex justify-end gap-2">
+						@button.Button(button.Props{
+							Variant: button.VariantOutline,
+							Attributes: templ.Attributes{
+								"hx-get":      "../tenants",
+								"hx-target":   "#content",
+								"hx-swap":     "innerHTML",
+								"hx-push-url": "true",
+							},
+						}) {
+							Cancel
+						}
+						@button.Button(button.Props{
+							Type: "submit",
+						}) {
+							if data.IsEdit {
+								Update Tenant
+							} else {
+								Create Tenant
+							}
+						}
+					</div>
+				</form>
+			}
+		}
+	</div>
+}
+
+func tenantFieldValue(t *tenant.Tenant, field string) string {
+	if t == nil {
+		return ""
+	}
+	switch field {
+	case "name":
+		return t.Name
+	case "slug":
+		return t.Slug
+	}
+	return ""
+}
+
+func tenantQuotaValue(t *tenant.Tenant, field string) string {
+	if t == nil {
+		return ""
+	}
+	switch field {
+	case "rpm":
+		return intToStr(t.Quota.RPM)
+	case "tpm":
+		return intToStr(t.Quota.TPM)
+	case "daily_requests":
+		return intToStr(t.Quota.DailyRequests)
+	case "monthly_budget_usd":
+		return floatToStr(t.Quota.MonthlyBudgetUSD)
+	case "max_tokens_per_req":
+		return intToStr(t.Quota.MaxTokensPerReq)
+	}
+	return ""
+}
+
+func tenantConfigValue(t *tenant.Tenant, field string) string {
+	if t == nil {
+		return ""
+	}
+	switch field {
+	case "default_model":
+		return t.Config.DefaultModel
+	case "routing_strategy":
+		return t.Config.RoutingStrategy
+	case "guardrail_policy":
+		return t.Config.GuardrailPolicy
+	case "allowed_models":
+		return joinStrings(t.Config.AllowedModels)
+	case "blocked_models":
+		return joinStrings(t.Config.BlockedModels)
+	}
+	return ""
+}
+
+func intToStr(v int) string {
+	if v == 0 {
+		return ""
+	}
+	return strconv.Itoa(v)
+}
+
+func floatToStr(v float64) string {
+	if v == 0 {
+		return ""
+	}
+	return strconv.FormatFloat(v, 'f', 2, 64)
+}
+
+func joinStrings(ss []string) string {
+	if len(ss) == 0 {
+		return ""
+	}
+	result := ""
+	for i, s := range ss {
+		if i > 0 {
+			result += ", "
+		}
+		result += s
+	}
+	return result
+}

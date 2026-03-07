@@ -1,0 +1,31 @@
+package components
+
+import (
+	"github.com/xraph/nexus/tenant"
+)
+
+// QuotaDisplay renders a grid of quota values.
+templ QuotaDisplay(quota tenant.Quota) {
+	<dl class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+		<div>
+			<dt class="text-sm font-medium text-muted-foreground">Requests/min (RPM)</dt>
+			<dd class="mt-1 text-sm font-mono">{ formatQuotaValue(quota.RPM) }</dd>
+		</div>
+		<div>
+			<dt class="text-sm font-medium text-muted-foreground">Tokens/min (TPM)</dt>
+			<dd class="mt-1 text-sm font-mono">{ formatQuotaValue(quota.TPM) }</dd>
+		</div>
+		<div>
+			<dt class="text-sm font-medium text-muted-foreground">Daily Requests</dt>
+			<dd class="mt-1 text-sm font-mono">{ formatQuotaValue(quota.DailyRequests) }</dd>
+		</div>
+		<div>
+			<dt class="text-sm font-medium text-muted-foreground">Monthly Budget</dt>
+			<dd class="mt-1 text-sm font-mono">{ formatBudget(quota.MonthlyBudgetUSD) }</dd>
+		</div>
+		<div>
+			<dt class="text-sm font-medium text-muted-foreground">Max Tokens/Request</dt>
+			<dd class="mt-1 text-sm font-mono">{ formatQuotaValue(quota.MaxTokensPerReq) }</dd>
+		</div>
+	</dl>
+}

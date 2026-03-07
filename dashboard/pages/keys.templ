@@ -1,0 +1,68 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/icons"
+	"github.com/xraph/nexus/dashboard/components"
+	"github.com/xraph/nexus/key"
+)
+
+// KeysPageData holds data for the API keys list page.
+type KeysPageData struct {
+	Keys     []*key.APIKey
+	TenantID string
+	Total    int
+}
+
+templ KeysPage(data KeysPageData) {
+	<div class="space-y-6">
+		<!-- Page Header -->
+		<div class="flex items-center justify-between">
+			<div class="flex items-center gap-3">
+				<h1 class="text-3xl font-bold tracking-tight">API Keys</h1>
+				@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+					{ strconv.Itoa(data.Total) }
+				}
+			</div>
+			@button.Button(button.Props{
+				Size: button.SizeSm,
+				Attributes: templ.Attributes{
+					"hx-get":      "./keys/create",
+					"hx-target":   "#content",
+					"hx-swap":     "innerHTML",
+					"hx-push-url": "true",
+				},
+			}) {
+				@icons.Plus(icons.WithSize(16))
+				Create Key
+			}
+		</div>
+		<!-- Filter -->
+		<div class="flex items-center gap-4">
+			@input.Input(input.Props{
+				Type:        input.TypeSearch,
+				Name:        "tenant_id",
+				Placeholder: "Filter by tenant ID...",
+				Value:       data.TenantID,
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"hx-get":     ".",
+					"hx-trigger": "keyup changed delay:300ms",
+					"hx-target":  "closest div.space-y-6",
+					"hx-swap":    "outerHTML",
+				},
+			})
+		</div>
+		<!-- Table -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				@components.KeyTable(data.Keys)
+			}
+		}
+	</div>
+}

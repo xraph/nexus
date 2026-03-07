@@ -34,9 +34,20 @@ gw := nexus.New(
 | Aspect | Detail |
 |--------|--------|
 | Driver | grove ORM + mongodriver |
-| Migrations | Index creation on collections |
+| Migrations | Grove migrations with JSON Schema validation + indexes |
 | Transactions | MongoDB sessions (replica-set required for multi-doc txns) |
 | Collections | `nexus_tenants`, `nexus_api_keys`, `nexus_usage_records` |
+
+## Grove Migrations
+
+The store exports a `Migrations` group for use with Grove's migration orchestrator. This enables tracked, versioned migrations across all stores in your application:
+
+```go
+import mongostore "github.com/xraph/nexus/store/mongo"
+
+// mongostore.Migrations is a migrate.Group for the nexus mongo store.
+// Register it with the grove migration orchestrator for coordinated migrations.
+```
 
 ## When to use
 

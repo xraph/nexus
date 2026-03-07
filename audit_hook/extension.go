@@ -12,8 +12,9 @@ package audit_hook
 
 import (
 	"context"
-	"log/slog"
 	"time"
+
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/plugin"
@@ -43,7 +44,7 @@ type AuditEvent struct {
 // Extension implements all plugin lifecycle hooks and records audit events.
 type Extension struct {
 	recorder Recorder
-	logger   *slog.Logger
+	logger   log.Logger
 	actions  map[Action]bool // nil = all actions
 }
 
@@ -61,7 +62,7 @@ func WithActions(actions ...Action) Option {
 }
 
 // WithLogger sets a custom logger for the extension.
-func WithLogger(l *slog.Logger) Option {
+func WithLogger(l log.Logger) Option {
 	return func(e *Extension) { e.logger = l }
 }
 
@@ -69,7 +70,7 @@ func WithLogger(l *slog.Logger) Option {
 func New(recorder Recorder, opts ...Option) *Extension {
 	e := &Extension{
 		recorder: recorder,
-		logger:   slog.Default(),
+		logger:   log.NewNoopLogger(),
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -104,8 +105,8 @@ func (e *Extension) record(ctx context.Context, action Action, resource Resource
 
 	if err := e.recorder.Record(ctx, event); err != nil {
 		e.logger.Warn("audit_hook: failed to record event",
-			"action", action,
-			"error", err,
+			log.Any("action", action),
+			log.Any("error", err),
 		)
 	}
 }

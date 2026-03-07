@@ -1,0 +1,58 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/nexus/tenant"
+)
+
+// TenantTable renders a clickable table of tenants.
+templ TenantTable(tenants []*tenant.Tenant) {
+	if len(tenants) == 0 {
+		@EmptyState("users", "No tenants", "Create a tenant to get started.")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Name }
+					@table.Head() { Slug }
+					@table.Head() { Status }
+					@table.Head() { RPM }
+					@table.Head() { Monthly Budget }
+					@table.Head() { Created }
+				}
+			}
+			@table.Body() {
+				for _, t := range tenants {
+					@table.Row(table.RowProps{
+						Class: "cursor-pointer hover:bg-muted/50",
+						Attributes: templ.Attributes{
+							"hx-get":      "./tenants/detail?id=" + t.ID.String(),
+							"hx-target":   "#content",
+							"hx-swap":     "innerHTML",
+							"hx-push-url": "true",
+						},
+					}) {
+						@table.Cell() {
+							<span class="font-medium">{ t.Name }</span>
+						}
+						@table.Cell() {
+							<code class="text-xs bg-muted/50 rounded-sm px-1.5 py-0.5">{ t.Slug }</code>
+						}
+						@table.Cell() {
+							@TenantStatusBadge(string(t.Status))
+						}
+						@table.Cell() {
+							{ formatQuotaValue(t.Quota.RPM) }
+						}
+						@table.Cell() {
+							{ formatBudget(t.Quota.MonthlyBudgetUSD) }
+						}
+						@table.Cell() {
+							<span class="text-muted-foreground text-sm">{ formatTimeAgo(t.CreatedAt) }</span>
+						}
+					}
+				}
+			}
+		}
+	}
+}

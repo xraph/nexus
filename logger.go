@@ -1,9 +1,7 @@
 package nexus
 
 import (
-	"log/slog"
-	"os"
-	"strings"
+	golog "github.com/xraph/go-utils/log"
 )
 
 // Logger is a minimal structured logger interface.
@@ -15,36 +13,39 @@ type Logger interface {
 	Error(msg string, args ...any)
 }
 
-// slogAdapter wraps *slog.Logger to implement Logger.
-type slogAdapter struct {
-	l *slog.Logger
+// logAdapter wraps a go-utils log.Logger to implement the nexus Logger interface.
+type logAdapter struct {
+	l golog.Logger
 }
 
-// NewSlogLogger wraps a *slog.Logger as a nexus Logger.
-func NewSlogLogger(l *slog.Logger) Logger {
-	return &slogAdapter{l: l}
+// NewLogger wraps a go-utils log.Logger as a nexus Logger.
+func NewLogger(l golog.Logger) Logger {
+	return &logAdapter{l: l}
 }
 
-func (a *slogAdapter) Debug(msg string, args ...any) { a.l.Debug(msg, args...) }
-func (a *slogAdapter) Info(msg string, args ...any)  { a.l.Info(msg, args...) }
-func (a *slogAdapter) Warn(msg string, args ...any)  { a.l.Warn(msg, args...) }
-func (a *slogAdapter) Error(msg string, args ...any) { a.l.Error(msg, args...) }
+func (a *logAdapter) Debug(msg string, args ...any) { a.l.Debug(msg, toFields(args)...) }
+func (a *logAdapter) Info(msg string, args ...any)  { a.l.Info(msg, toFields(args)...) }
+func (a *logAdapter) Warn(msg string, args ...any)  { a.l.Warn(msg, toFields(args)...) }
+func (a *logAdapter) Error(msg string, args ...any) { a.l.Error(msg, toFields(args)...) }
 
-// NewDefaultLogger creates a slog-based Logger with the given level.
-func NewDefaultLogger(level string) Logger {
-	var lvl slog.Level
-	switch strings.ToLower(level) {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "warn", "warning":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	default:
-		lvl = slog.LevelInfo
+// toFields converts bare key-value pairs to log.Field slice.
+func toFields(args []any) []golog.Field {
+	var fields []golog.Field
+	for i := 0; i < len(args); i++ {
+		if f, ok := args[i].(golog.Field); ok {
+			fields = append(fields, f)
+			continue
+		}
+		// Treat as key-value pair
+		key, ok := args[i].(string)
+		if !ok || i+1 >= len(args) {
+			fields = append(fields, golog.Any("unknown", args[i]))
+			continue
+		}
+		i++
+		fields = append(fields, golog.Any(key, args[i]))
 	}
-	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})
-	return &slogAdapter{l: slog.New(h)}
+	return fields
 }
 
 // noopLogger is a Logger that discards all output.

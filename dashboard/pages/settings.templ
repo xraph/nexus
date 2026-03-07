@@ -1,0 +1,90 @@
+package pages
+
+import (
+	"strconv"
+	"time"
+
+	"github.com/xraph/forgeui/components/card"
+)
+
+// SettingsData holds gateway configuration for the settings page.
+type SettingsData struct {
+	BasePath       string
+	DefaultTimeout time.Duration
+	MaxRetries     int
+	RateLimit      int
+	EnableUsage    bool
+	EnableCache    bool
+	LogLevel       string
+	ProviderCount  int
+	ExtensionCount int
+}
+
+templ SettingsPage(data SettingsData) {
+	<div class="space-y-6">
+		<!-- Page Header -->
+		<div>
+			<h1 class="text-3xl font-bold tracking-tight">Settings</h1>
+			<p class="text-muted-foreground mt-1">Gateway configuration (read-only).</p>
+		</div>
+		<!-- Engine Config -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Engine Configuration
+				}
+			}
+			@card.Content() {
+				<dl class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+					@fieldRow("Base Path", data.BasePath)
+					@fieldRow("Default Timeout", data.DefaultTimeout.String())
+					@fieldRow("Max Retries", strconv.Itoa(data.MaxRetries))
+					@fieldRow("Global Rate Limit", rateLimitStr(data.RateLimit))
+					@fieldRow("Log Level", data.LogLevel)
+				</dl>
+			}
+		}
+		<!-- Feature Flags -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Feature Flags
+				}
+			}
+			@card.Content() {
+				<dl class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+					@fieldRow("Usage Tracking", boolStr(data.EnableUsage))
+					@fieldRow("Cache", boolStr(data.EnableCache))
+				</dl>
+			}
+		}
+		<!-- System Info -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					System Information
+				}
+			}
+			@card.Content() {
+				<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+					@fieldRow("Providers", strconv.Itoa(data.ProviderCount))
+					@fieldRow("Extensions", strconv.Itoa(data.ExtensionCount))
+				</dl>
+			}
+		}
+	</div>
+}
+
+func rateLimitStr(v int) string {
+	if v == 0 {
+		return "Unlimited"
+	}
+	return strconv.Itoa(v) + " RPM"
+}
+
+func boolStr(v bool) string {
+	if v {
+		return "Enabled"
+	}
+	return "Disabled"
+}

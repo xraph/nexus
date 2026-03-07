@@ -1,0 +1,150 @@
+package pages
+
+import (
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/separator"
+	"github.com/xraph/forgeui/icons"
+	"github.com/xraph/nexus/dashboard/components"
+	"github.com/xraph/nexus/key"
+	"github.com/xraph/nexus/usage"
+)
+
+// KeyDetailData holds all data needed for the key detail page.
+type KeyDetailData struct {
+	Key     *key.APIKey
+	Records []*usage.Record
+	// Set after a rotate action; shows the new raw key.
+	NewRawKey string
+}
+
+templ KeyDetailPage(data KeyDetailData) {
+	<div class="space-y-6">
+		<!-- Back Button -->
+		@button.Button(button.Props{
+			Variant: button.VariantGhost,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      "../keys",
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-push-url": "true",
+			},
+		}) {
+			@icons.ChevronLeft(icons.WithSize(16))
+			Back to API Keys
+		}
+		<!-- New Key Alert (shown after rotate) -->
+		if data.NewRawKey != "" {
+			<div class="bg-primary/10 border border-primary/20 rounded-sm p-4 space-y-2">
+				<h3 class="font-semibold text-sm">New API Key Generated</h3>
+				<p class="text-sm text-muted-foreground">Copy this key now. You won't be able to see it again.</p>
+				@credentialField(data.NewRawKey)
+			</div>
+		}
+		<!-- Key Info Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content(card.ContentProps{Class: "p-6"}) {
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-3">
+						<span class="text-muted-foreground">
+							@icons.KeyRound(icons.WithSize(24))
+						</span>
+						<div>
+							<h2 class="text-xl font-semibold">{ data.Key.Name }</h2>
+							<code class="text-sm text-muted-foreground">{ data.Key.Prefix }</code>
+						</div>
+					</div>
+					<div class="flex items-center gap-2">
+						@components.KeyStatusBadge(string(data.Key.Status))
+						if data.Key.Status == key.KeyActive {
+							@button.Button(button.Props{
+								Variant: button.VariantOutline,
+								Size:    button.SizeSm,
+								Attributes: templ.Attributes{
+									"hx-get":     "./detail?id=" + data.Key.ID.String() + "&action=rotate",
+									"hx-target":  "#content",
+									"hx-swap":    "innerHTML",
+									"hx-confirm": "Rotate this key? The old key will be revoked immediately.",
+								},
+							}) {
+								Rotate
+							}
+							@button.Button(button.Props{
+								Variant: button.VariantDestructive,
+								Size:    button.SizeSm,
+								Attributes: templ.Attributes{
+									"hx-get":     "./detail?id=" + data.Key.ID.String() + "&action=revoke",
+									"hx-target":  "#content",
+									"hx-swap":    "innerHTML",
+									"hx-confirm": "Are you sure you want to revoke this key? This cannot be undone.",
+								},
+							}) {
+								Revoke
+							}
+						}
+					</div>
+				</div>
+				@separator.Separator(separator.Props{Class: "my-4"})
+				<dl class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+					@fieldRow("ID", data.Key.ID.String())
+					@fieldRow("Tenant ID", data.Key.TenantID.String())
+					@fieldRow("Prefix", data.Key.Prefix)
+					@fieldRow("Status", string(data.Key.Status))
+					@fieldRow("Created", formatTimeAgo(data.Key.CreatedAt))
+					if data.Key.LastUsedAt != nil {
+						@fieldRow("Last Used", formatTimeAgo(*data.Key.LastUsedAt))
+					} else {
+						@fieldRow("Last Used", "Never")
+					}
+					if data.Key.ExpiresAt != nil {
+						@fieldRow("Expires At", data.Key.ExpiresAt.Format("2006-01-02 15:04"))
+					} else {
+						@fieldRow("Expires At", "Never")
+					}
+				</dl>
+			}
+		}
+		<!-- Scopes Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Scopes
+				}
+				@card.Description() {
+					Permissions granted to this API key.
+				}
+			}
+			@card.Content() {
+				@components.ScopeBadges(data.Key.Scopes)
+			}
+		}
+		<!-- Metadata Card -->
+		if len(data.Key.Metadata) > 0 {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Metadata
+					}
+				}
+				@card.Content() {
+					@codeBlock(formatJSON(data.Key.Metadata))
+				}
+			}
+		}
+		<!-- Recent Usage -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Recent Usage
+				}
+				@card.Description() {
+					API requests made with this key.
+				}
+			}
+			@card.Content() {
+				@components.UsageRecordTable(data.Records)
+			}
+		}
+	</div>
+}

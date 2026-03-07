@@ -1,0 +1,11 @@
+package widgets
+
+import (
+	"github.com/xraph/nexus/dashboard/components"
+	"github.com/xraph/nexus/usage"
+)
+
+// RecentActivityWidget renders the latest usage records widget.
+templ RecentActivityWidget(records []*usage.Record) {
+	@components.UsageRecordTable(records)
+}
