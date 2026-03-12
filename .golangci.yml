@@ -76,9 +76,11 @@ linters:
       excludes:
         - G104
         - G117 # Secret field names are legitimate for HMAC signing secrets.
+        - G118
         - G304
         - G402
         - G704 # Endpoint URLs are stored config, not user-tainted input.
+        - G705 # SSE streams write JSON data, not HTML templates.
 
     errcheck:
       check-type-assertions: true

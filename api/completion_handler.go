@@ -80,7 +80,7 @@ func (a *API) handleStreamCompletion(ctx context.Context, w http.ResponseWriter,
 		if marshalErr != nil {
 			break
 		}
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", data) //nolint:gosec // G705 -- SSE stream, not HTML
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
 
