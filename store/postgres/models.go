@@ -18,7 +18,7 @@ import (
 // ──────────────────────────────────────────────────
 
 type tenantModel struct {
-	grove.BaseModel `grove:"table:tenants"`
+	grove.BaseModel `grove:"table:nexus_tenants"`
 	ID              string    `grove:"id,pk"`
 	Name            string    `grove:"name,notnull"`
 	Slug            string    `grove:"slug,notnull"`
@@ -75,7 +75,7 @@ func tenantFromModel(m *tenantModel) (*tenant.Tenant, error) {
 // ──────────────────────────────────────────────────
 
 type apiKeyModel struct {
-	grove.BaseModel `grove:"table:api_keys"`
+	grove.BaseModel `grove:"table:nexus_api_keys"`
 	ID              string     `grove:"id,pk"`
 	TenantID        string     `grove:"tenant_id,notnull"`
 	Name            string     `grove:"name,notnull"`
@@ -139,7 +139,7 @@ func apiKeyFromModel(m *apiKeyModel) (*key.APIKey, error) {
 // ──────────────────────────────────────────────────
 
 type usageModel struct {
-	grove.BaseModel  `grove:"table:usage_records"`
+	grove.BaseModel  `grove:"table:nexus_usage_records"`
 	ID               string    `grove:"id,pk"`
 	TenantID         string    `grove:"tenant_id,notnull"`
 	KeyID            string    `grove:"key_id,notnull"`

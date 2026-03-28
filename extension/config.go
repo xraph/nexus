@@ -12,7 +12,7 @@ type Config struct {
 	// DisableMigrate prevents auto-migration of the persistence store on start.
 	DisableMigrate bool `json:"disable_migrate" mapstructure:"disable_migrate" yaml:"disable_migrate"`
 
-	// BasePath is the URL prefix for gateway routes (default: "/ai").
+	// BasePath is the URL prefix for gateway routes (default: "/nexus").
 	BasePath string `json:"base_path" mapstructure:"base_path" yaml:"base_path"`
 
 	// DefaultTimeout is the default timeout for provider requests.
@@ -48,7 +48,7 @@ type Config struct {
 func DefaultConfig() Config {
 	enableUsage := true
 	return Config{
-		BasePath:          "/ai",
+		BasePath:          "/nexus",
 		DefaultTimeout:    30 * time.Second,
 		DefaultMaxRetries: 2,
 		GlobalRateLimit:   0,

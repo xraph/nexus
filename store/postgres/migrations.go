@@ -14,10 +14,10 @@ var Migrations = func() *migrate.Group {
 		&migrate.Migration{
 			Name:    "create_tenants",
 			Version: "20240101000001",
-			Comment: "Create tenants table",
+			Comment: "Create nexus_tenants table",
 			Up: func(ctx context.Context, exec migrate.Executor) error {
 				_, err := exec.Exec(ctx, `
-CREATE TABLE IF NOT EXISTS tenants (
+CREATE TABLE IF NOT EXISTS nexus_tenants (
     id         TEXT PRIMARY KEY,
     name       TEXT NOT NULL,
     slug       TEXT UNIQUE NOT NULL,
@@ -29,24 +29,24 @@ CREATE TABLE IF NOT EXISTS tenants (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_tenants_slug ON tenants(slug);
+CREATE INDEX IF NOT EXISTS idx_nexus_tenants_slug ON nexus_tenants(slug);
 `)
 				return err
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
-				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS tenants CASCADE`)
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS nexus_tenants CASCADE`)
 				return err
 			},
 		},
 		&migrate.Migration{
 			Name:    "create_api_keys",
 			Version: "20240101000002",
-			Comment: "Create api_keys table",
+			Comment: "Create nexus_api_keys table",
 			Up: func(ctx context.Context, exec migrate.Executor) error {
 				_, err := exec.Exec(ctx, `
-CREATE TABLE IF NOT EXISTS api_keys (
+CREATE TABLE IF NOT EXISTS nexus_api_keys (
     id           TEXT PRIMARY KEY,
-    tenant_id    TEXT NOT NULL REFERENCES tenants(id),
+    tenant_id    TEXT NOT NULL REFERENCES nexus_tenants(id),
     name         TEXT NOT NULL,
     prefix       TEXT NOT NULL,
     hash         TEXT NOT NULL,
@@ -58,25 +58,25 @@ CREATE TABLE IF NOT EXISTS api_keys (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(prefix);
-CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_nexus_api_keys_prefix ON nexus_api_keys(prefix);
+CREATE INDEX IF NOT EXISTS idx_nexus_api_keys_tenant ON nexus_api_keys(tenant_id);
 `)
 				return err
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
-				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS api_keys CASCADE`)
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS nexus_api_keys CASCADE`)
 				return err
 			},
 		},
 		&migrate.Migration{
 			Name:    "create_usage_records",
 			Version: "20240101000003",
-			Comment: "Create usage_records table",
+			Comment: "Create nexus_usage_records table",
 			Up: func(ctx context.Context, exec migrate.Executor) error {
 				_, err := exec.Exec(ctx, `
-CREATE TABLE IF NOT EXISTS usage_records (
+CREATE TABLE IF NOT EXISTS nexus_usage_records (
     id                TEXT PRIMARY KEY,
-    tenant_id         TEXT NOT NULL REFERENCES tenants(id),
+    tenant_id         TEXT NOT NULL REFERENCES nexus_tenants(id),
     key_id            TEXT NOT NULL,
     request_id        TEXT NOT NULL,
     provider          TEXT NOT NULL,
@@ -91,13 +91,13 @@ CREATE TABLE IF NOT EXISTS usage_records (
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_usage_tenant ON usage_records(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_usage_created ON usage_records(created_at);
+CREATE INDEX IF NOT EXISTS idx_nexus_usage_tenant ON nexus_usage_records(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_nexus_usage_created ON nexus_usage_records(created_at);
 `)
 				return err
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
-				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS usage_records CASCADE`)
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS nexus_usage_records CASCADE`)
 				return err
 			},
 		},

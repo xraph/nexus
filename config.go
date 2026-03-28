@@ -4,7 +4,7 @@ import "time"
 
 // Config holds the gateway configuration.
 type Config struct {
-	// BasePath is the HTTP base path for routes (default: "/ai").
+	// BasePath is the HTTP base path for routes (default: "/nexus").
 	BasePath string
 
 	// DefaultTimeout is the default timeout for provider requests (default: 30s).
@@ -29,7 +29,7 @@ type Config struct {
 // DefaultConfig returns the default gateway configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		BasePath:          "/ai",
+		BasePath:          "/nexus",
 		DefaultTimeout:    30 * time.Second,
 		DefaultMaxRetries: 2,
 		EnableUsage:       true,
