@@ -370,7 +370,7 @@ jobs:
       # Single module release
       - name: Create GitHub Release (single)
         if: needs.detect.outputs.is_all == 'false'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.detect.outputs.tag }}
           name: "${{ needs.detect.outputs.module_name }} v${{ needs.detect.outputs.version }}"
