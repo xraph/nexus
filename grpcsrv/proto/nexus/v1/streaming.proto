@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package nexus.v1;
+
+option go_package = "github.com/xraph/nexus/grpcsrv/proto/nexus/v1;nexusv1";
+
+// Completions service exposes a server-streaming completion endpoint that
+// mirrors httpstream.StreamEvent over gRPC. Clients send one CompletionRequest
+// and receive a stream of StreamEvent messages until the server emits an
+// event with type=DONE.
+service Completions {
+  rpc CompleteStream(CompletionRequest) returns (stream StreamEvent);
+}
+
+// CompletionRequest mirrors provider.CompletionRequest. Only the fields the
+// gRPC surface forwards to the gateway are listed; richer optional fields can
+// be added as the API stabilizes.
+message CompletionRequest {
+  string model = 1;
+  repeated Message messages = 2;
+  int32 max_tokens = 3;
+  optional double temperature = 4;
+  bool stream = 5;
+}
+
+message Message {
+  string role = 1;
+  string content = 2;
+}
+
+// StreamEvent is a discriminated union mirroring httpstream.StreamEvent.
+// Type drives interpretation of the optional fields.
+message StreamEvent {
+  enum Type {
+    UNKNOWN = 0;
+    DELTA = 1;
+    REASONING = 2;
+    TOOL_CALL = 3;
+    AUDIO = 4;
+    IMAGE = 5;
+    USAGE = 6;
+    ERROR = 7;
+    HEARTBEAT = 8;
+    DONE = 9;
+  }
+
+  Type type = 1;
+  string id = 2;
+  string model = 3;
+  string finish_reason = 4;
+
+  // Content payload — populated for DELTA / REASONING / TOOL_CALL.
+  Delta delta = 5;
+  // Token totals — populated for USAGE (and optionally DELTA).
+  Usage usage = 6;
+  // Sanitized error envelope — populated for ERROR.
+  WireError error = 7;
+}
+
+message Delta {
+  string role = 1;
+  string content = 2;
+  string reasoning = 3;
+  string refusal = 4;
+  repeated ToolCall tool_calls = 5;
+  Audio audio = 6;
+  Image image = 7;
+}
+
+message ToolCall {
+  string id = 1;
+  string type = 2;
+  string name = 3;
+  string arguments = 4;
+}
+
+message Audio {
+  string format = 1;
+  int32 sample_rate = 2;
+  bytes data = 3;
+  string transcript = 4;
+}
+
+message Image {
+  string mime_type = 1;
+  bytes data = 2;
+  string url = 3;
+}
+
+message Usage {
+  int32 prompt_tokens = 1;
+  int32 completion_tokens = 2;
+  int32 total_tokens = 3;
+  int32 thinking_tokens = 4;
+}
+
+message WireError {
+  string message = 1;
+  string type = 2;
+  string code = 3;
+  bool retryable = 4;
+  string request_id = 5;
+}

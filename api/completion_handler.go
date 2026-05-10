@@ -3,11 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 
+	"github.com/xraph/nexus/httpstream"
+	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/provider"
 )
 
@@ -34,7 +34,7 @@ func (a *API) handleCreateCompletion(w http.ResponseWriter, r *http.Request) {
 
 	// Streaming
 	if req.Stream {
-		a.handleStreamCompletion(ctx, w, &req)
+		a.handleStreamCompletion(ctx, w, r, &req)
 		return
 	}
 
@@ -47,43 +47,23 @@ func (a *API) handleCreateCompletion(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (a *API) handleStreamCompletion(ctx context.Context, w http.ResponseWriter, req *provider.CompletionRequest) {
+func (a *API) handleStreamCompletion(_ context.Context, w http.ResponseWriter, r *http.Request, req *provider.CompletionRequest) {
+	ctx, cancel := a.streamContext(r.Context())
+	defer cancel()
 	stream, err := a.gw.Engine().CompleteStream(ctx, req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	defer func() { _ = stream.Close() }()
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming not supported")
+	encoder := httpstream.Negotiate(r, a.encoders)
+	if encoder == nil {
+		_ = stream.Close()
+		writeError(w, http.StatusInternalServerError, "no stream encoder available")
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
-
-	for {
-		chunk, streamErr := stream.Next(ctx)
-		if errors.Is(streamErr, io.EOF) {
-			break
-		}
-		if streamErr != nil {
-			break
-		}
-
-		data, marshalErr := json.Marshal(chunk)
-		if marshalErr != nil {
-			break
-		}
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
-		flusher.Flush()
-	}
-
-	_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
-	flusher.Flush()
+	httpstream.Run(ctx, w, stream, encoder, httpstream.RunOptions{
+		RequestID: pipeline.RequestID(ctx),
+	})
 }

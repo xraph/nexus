@@ -18,6 +18,7 @@ import (
 
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/plugin"
+	"github.com/xraph/nexus/provider"
 )
 
 // Recorder persists audit events.
@@ -217,6 +218,46 @@ func (e *Extension) OnBudgetExceeded(ctx context.Context, tenantID id.TenantID) 
 	return nil
 }
 
+// ──────────────────────────────────────────────────
+// Stream lifecycle hooks
+// ──────────────────────────────────────────────────
+
+func (e *Extension) OnStreamStarted(ctx context.Context, requestID id.RequestID, model, providerName string) error {
+	e.record(ctx, ActionStreamStarted, ResourceRequest, CategoryRequest, requestID.String(),
+		"model", model, "provider", providerName)
+	return nil
+}
+
+func (e *Extension) OnStreamCompleted(ctx context.Context, requestID id.RequestID, model, providerName string, elapsed time.Duration, final *provider.CompletionResponse) error {
+	kv := []any{
+		"model", model,
+		"provider", providerName,
+		"elapsed_ms", elapsed.Milliseconds(),
+	}
+	if final != nil {
+		kv = append(kv,
+			"input_tokens", final.Usage.PromptTokens,
+			"output_tokens", final.Usage.CompletionTokens,
+			"total_tokens", final.Usage.TotalTokens,
+		)
+		if len(final.Choices) > 0 && final.Choices[0].FinishReason != "" {
+			kv = append(kv, "finish_reason", final.Choices[0].FinishReason)
+		}
+	}
+	e.record(ctx, ActionStreamCompleted, ResourceRequest, CategoryRequest, requestID.String(), kv...)
+	return nil
+}
+
+func (e *Extension) OnStreamFailed(ctx context.Context, requestID id.RequestID, model string, err error) error {
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	e.record(ctx, ActionStreamFailed, ResourceRequest, CategoryRequest, requestID.String(),
+		"model", model, "error", msg)
+	return nil
+}
+
 // Compile-time interface checks.
 var (
 	_ plugin.Extension         = (*Extension)(nil)
@@ -235,4 +276,7 @@ var (
 	_ plugin.KeyRevoked        = (*Extension)(nil)
 	_ plugin.BudgetWarning     = (*Extension)(nil)
 	_ plugin.BudgetExceeded    = (*Extension)(nil)
+	_ plugin.StreamStarted     = (*Extension)(nil)
+	_ plugin.StreamCompleted   = (*Extension)(nil)
+	_ plugin.StreamFailed      = (*Extension)(nil)
 )

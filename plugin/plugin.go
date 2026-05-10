@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/xraph/nexus/id"
+	"github.com/xraph/nexus/provider"
 )
 
 // Extension is the base interface all extensions must implement.
@@ -42,6 +43,36 @@ type RequestFailed interface {
 // RequestCached is called when a response is served from cache.
 type RequestCached interface {
 	OnRequestCached(ctx context.Context, requestID id.RequestID, model string) error
+}
+
+// ──────────────────────────────────────────────────
+// Stream lifecycle hooks
+// ──────────────────────────────────────────────────
+
+// StreamStarted is called once per streaming request, when the first chunk
+// arrives from the provider. Use this to start spans, open audit records, etc.
+type StreamStarted interface {
+	OnStreamStarted(ctx context.Context, requestID id.RequestID, model, providerName string) error
+}
+
+// ChunkReceived is called per chunk (or per N chunks, configurable). The
+// payload is intentionally tiny (kind + byte size) — full chunk payloads stay
+// off the hot path. Implementations must return promptly.
+type ChunkReceived interface {
+	OnChunkReceived(ctx context.Context, requestID id.RequestID, kind provider.EventKind, byteSize int) error
+}
+
+// StreamCompleted is called after a stream drains successfully. The final
+// argument carries the merged CompletionResponse (Content concat, ToolCalls
+// merged, Usage from the last chunk) — same shape Provider.Complete would
+// have produced. Implementations may treat it as authoritative.
+type StreamCompleted interface {
+	OnStreamCompleted(ctx context.Context, requestID id.RequestID, model, providerName string, elapsed time.Duration, final *provider.CompletionResponse) error
+}
+
+// StreamFailed is called when a stream errors mid-flight or fails to start.
+type StreamFailed interface {
+	OnStreamFailed(ctx context.Context, requestID id.RequestID, model string, err error) error
 }
 
 // ──────────────────────────────────────────────────

@@ -1,4 +1,4 @@
 {
   "title": "API Reference",
-  "pages": ["http-api", "go-packages"]
+  "pages": ["http-api", "streaming-api", "go-packages"]
 }

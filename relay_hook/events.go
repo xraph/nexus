@@ -32,6 +32,11 @@ const (
 	// Budget events
 	EventBudgetWarning  EventType = "budget.warning"
 	EventBudgetExceeded EventType = "budget.exceeded"
+
+	// Stream events
+	EventStreamStarted   EventType = "stream.started"
+	EventStreamCompleted EventType = "stream.completed"
+	EventStreamFailed    EventType = "stream.failed"
 )
 
 // Event is a relay webhook event payload.

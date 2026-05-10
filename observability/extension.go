@@ -7,6 +7,7 @@ import (
 
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/plugin"
+	"github.com/xraph/nexus/provider"
 )
 
 // Counter is a simple atomic counter for metrics.
@@ -46,6 +47,13 @@ type MetricsExtension struct {
 
 	BudgetWarnings Counter
 	BudgetExceeded Counter
+
+	// Stream lifecycle
+	StreamsStarted   Counter
+	StreamsCompleted Counter
+	StreamsFailed    Counter
+	ChunksEmitted    Counter
+	ChunkBytes       Counter
 }
 
 // NewMetricsExtension creates a new metrics extension.
@@ -140,6 +148,31 @@ func (e *MetricsExtension) OnBudgetExceeded(_ context.Context, _ id.TenantID) er
 	return nil
 }
 
+// Stream lifecycle hooks
+
+func (e *MetricsExtension) OnStreamStarted(_ context.Context, _ id.RequestID, _, _ string) error {
+	e.StreamsStarted.Inc()
+	return nil
+}
+
+func (e *MetricsExtension) OnChunkReceived(_ context.Context, _ id.RequestID, _ provider.EventKind, byteSize int) error {
+	e.ChunksEmitted.Inc()
+	if byteSize > 0 {
+		e.ChunkBytes.Add(int64(byteSize))
+	}
+	return nil
+}
+
+func (e *MetricsExtension) OnStreamCompleted(_ context.Context, _ id.RequestID, _, _ string, _ time.Duration, _ *provider.CompletionResponse) error {
+	e.StreamsCompleted.Inc()
+	return nil
+}
+
+func (e *MetricsExtension) OnStreamFailed(_ context.Context, _ id.RequestID, _ string, _ error) error {
+	e.StreamsFailed.Inc()
+	return nil
+}
+
 // Compile-time interface checks.
 var (
 	_ plugin.Extension         = (*MetricsExtension)(nil)
@@ -158,4 +191,8 @@ var (
 	_ plugin.KeyRevoked        = (*MetricsExtension)(nil)
 	_ plugin.BudgetWarning     = (*MetricsExtension)(nil)
 	_ plugin.BudgetExceeded    = (*MetricsExtension)(nil)
+	_ plugin.StreamStarted     = (*MetricsExtension)(nil)
+	_ plugin.ChunkReceived     = (*MetricsExtension)(nil)
+	_ plugin.StreamCompleted   = (*MetricsExtension)(nil)
+	_ plugin.StreamFailed      = (*MetricsExtension)(nil)
 )

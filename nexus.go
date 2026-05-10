@@ -72,6 +72,13 @@ type Gateway struct {
 	// Custom middleware to add to the pipeline
 	customMiddleware []pipeline.Middleware
 
+	// Stream lifecycle config — tunes per-chunk hook fan-out for streaming.
+	streamLifecycleCfg middlewares.StreamLifecycleConfig
+
+	// Stream cache (optional) for record-and-replay of streamed responses.
+	streamCache    cache.StreamCache
+	streamCacheCfg cache.StreamCacheOptions
+
 	initialized bool
 }
 
@@ -166,8 +173,12 @@ func (gw *Gateway) buildDefaultPipeline() pipeline.Service {
 	}
 
 	// Priority 280: Cache (if configured)
-	if gw.cache != nil {
-		b.Use(middlewares.NewCache(gw.cache))
+	if gw.cache != nil || gw.streamCache != nil {
+		mw := middlewares.NewCache(gw.cache)
+		if gw.streamCache != nil {
+			mw = mw.WithStreamCache(gw.streamCache, gw.streamCacheCfg)
+		}
+		b.Use(mw)
 	}
 
 	// Priority 340: Retry (if resilience configured)
@@ -180,6 +191,13 @@ func (gw *Gateway) buildDefaultPipeline() pipeline.Service {
 
 	// Priority 500: Response headers
 	b.Use(middlewares.NewHeaders("nexus"))
+
+	// Priority 545: Stream lifecycle hooks (only meaningful when extensions
+	// are registered; the middleware short-circuits when the registry is
+	// empty or the request isn't a stream).
+	if gw.extensions != nil {
+		b.Use(middlewares.NewStreamLifecycle(gw.extensions, gw.streamLifecycleCfg))
+	}
 
 	// Priority 550: Usage tracking (if store available)
 	if gw.usage != nil {

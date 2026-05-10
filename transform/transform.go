@@ -44,10 +44,30 @@ type OutputTransform interface {
 	TransformOutput(ctx context.Context, req *provider.CompletionRequest, resp *provider.CompletionResponse) error
 }
 
+// StreamingOutputTransform extends OutputTransform with per-chunk and
+// post-stream hooks. The middleware applies streaming transforms only when
+// resp.Stream is non-nil; non-streaming responses still go through
+// TransformOutput on the merged response.
+//
+// TransformChunk runs for every chunk that arrives. It may:
+//   - Return the chunk unchanged.
+//   - Return a modified copy.
+//   - Return nil to drop the chunk silently.
+//   - Return an error to abort the stream.
+//
+// TransformAccumulated runs once on Close with the merged final response.
+// Use it for post-hoc audit signal or final-state mutation.
+type StreamingOutputTransform interface {
+	OutputTransform
+	TransformChunk(ctx context.Context, req *provider.CompletionRequest, chunk *provider.StreamChunk) (*provider.StreamChunk, error)
+	TransformAccumulated(ctx context.Context, req *provider.CompletionRequest, resp *provider.CompletionResponse) error
+}
+
 // Registry manages transforms.
 type Registry struct {
-	input  []InputTransform
-	output []OutputTransform
+	input            []InputTransform
+	output           []OutputTransform
+	streamingOutputs []StreamingOutputTransform
 }
 
 // NewRegistry creates a new transform registry.
@@ -55,13 +75,17 @@ func NewRegistry() *Registry {
 	return &Registry{}
 }
 
-// Register adds a transform. It is type-asserted into input/output lists.
+// Register adds a transform. It is type-asserted into input/output and
+// (optionally) streaming-output lists.
 func (r *Registry) Register(t Transform) {
 	if it, ok := t.(InputTransform); ok {
 		r.input = append(r.input, it)
 	}
 	if ot, ok := t.(OutputTransform); ok {
 		r.output = append(r.output, ot)
+	}
+	if st, ok := t.(StreamingOutputTransform); ok {
+		r.streamingOutputs = append(r.streamingOutputs, st)
 	}
 }
 
@@ -90,6 +114,9 @@ func (r *Registry) InputTransforms() []InputTransform { return r.input }
 
 // OutputTransforms returns registered output transforms.
 func (r *Registry) OutputTransforms() []OutputTransform { return r.output }
+
+// StreamingOutputs returns registered streaming output transforms.
+func (r *Registry) StreamingOutputs() []StreamingOutputTransform { return r.streamingOutputs }
 
 // Count returns total number of registered transforms.
 func (r *Registry) Count() int { return len(r.input) + len(r.output) }

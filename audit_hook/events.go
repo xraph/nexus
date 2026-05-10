@@ -28,6 +28,11 @@ const (
 	// Budget actions
 	ActionBudgetWarning  Action = "budget.warning"
 	ActionBudgetExceeded Action = "budget.exceeded"
+
+	// Stream actions
+	ActionStreamStarted   Action = "stream.started"
+	ActionStreamCompleted Action = "stream.completed"
+	ActionStreamFailed    Action = "stream.failed"
 )
 
 // Resource is the type of resource being audited.

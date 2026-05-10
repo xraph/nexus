@@ -4,6 +4,8 @@ go 1.25.7
 
 require (
 	github.com/a-h/templ v0.3.1001
+	github.com/coder/websocket v1.8.14
+	github.com/openai/openai-go v1.12.0
 	github.com/xraph/forge v1.6.0
 	github.com/xraph/forgeui v1.4.1
 	github.com/xraph/go-utils v1.1.1
@@ -83,6 +85,10 @@ require (
 	github.com/redis/go-redis/v9 v9.14.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/tidwall/gjson v1.14.4 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/uptrace/bunrouter v1.0.23 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect

@@ -9,6 +9,7 @@ import (
 	"github.com/xraph/nexus/model"
 	"github.com/xraph/nexus/observability"
 	"github.com/xraph/nexus/pipeline"
+	"github.com/xraph/nexus/pipeline/middlewares"
 	"github.com/xraph/nexus/plugin"
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/router"
@@ -143,6 +144,26 @@ func WithTimeout(d time.Duration) Option {
 // WithMaxRetries sets the default max retries.
 func WithMaxRetries(n int) Option {
 	return func(gw *Gateway) { gw.config.DefaultMaxRetries = n }
+}
+
+// WithStreamLifecycleConfig tunes per-chunk plugin hook fan-out for streamed
+// responses. Default (zero value) emits OnChunkReceived for every chunk.
+//
+// Set EmitEveryNChunks to 16 or 32 in latency-sensitive deployments where
+// per-chunk hooks would otherwise dominate the hot path.
+func WithStreamLifecycleConfig(cfg middlewares.StreamLifecycleConfig) Option {
+	return func(gw *Gateway) { gw.streamLifecycleCfg = cfg }
+}
+
+// WithStreamCache enables record-and-replay caching for streaming responses
+// using the given backend and options. Streams that produce a cache hit are
+// served from the recorded frames; misses pass through and are recorded for
+// later use. Independent of WithCache (which only handles non-streaming).
+func WithStreamCache(sc cache.StreamCache, opts cache.StreamCacheOptions) Option {
+	return func(gw *Gateway) {
+		gw.streamCache = sc
+		gw.streamCacheCfg = opts
+	}
 }
 
 // WithTenantAlias registers a per-tenant model alias override.

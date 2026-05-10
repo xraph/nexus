@@ -39,9 +39,14 @@ type openAIRequest struct {
 	TopP           *float64                 `json:"top_p,omitempty"`
 	Stop           []string                 `json:"stop,omitempty"`
 	Stream         bool                     `json:"stream,omitempty"`
+	StreamOptions  *openAIStreamOptions     `json:"stream_options,omitempty"`
 	Tools          []provider.Tool          `json:"tools,omitempty"`
 	ToolChoice     any                      `json:"tool_choice,omitempty"`
 	ResponseFormat *provider.ResponseFormat `json:"response_format,omitempty"`
+}
+
+type openAIStreamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 type openAIMessage struct {
@@ -108,6 +113,9 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 func (c *client) completeStream(ctx context.Context, req *provider.CompletionRequest) (provider.Stream, error) {
 	oaiReq := c.toOpenAIRequest(req)
 	oaiReq.Stream = true
+	// Ask OpenAI to emit a final chunk carrying token usage. Without this,
+	// streaming requests silently bypass billing.
+	oaiReq.StreamOptions = &openAIStreamOptions{IncludeUsage: true}
 
 	body, err := json.Marshal(oaiReq)
 	if err != nil {
@@ -131,7 +139,7 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 		return nil, fmt.Errorf("openai: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
-	return newOpenAIStream(httpResp.Body, req.Model), nil
+	return newOpenAIStream(ctx, httpResp.Body, req.Model), nil
 }
 
 func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*provider.EmbeddingResponse, error) {

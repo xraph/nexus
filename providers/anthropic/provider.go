@@ -33,13 +33,16 @@ func (p *Provider) Name() string { return "anthropic" }
 // Capabilities returns what this provider supports.
 func (p *Provider) Capabilities() provider.Capabilities {
 	return provider.Capabilities{
-		Chat:      true,
-		Streaming: true,
-		Vision:    true,
-		Tools:     true,
-		JSON:      true,
-		Thinking:  true, // extended thinking
-		Batch:     true,
+		Chat:               true,
+		Streaming:          true,
+		Vision:             true,
+		Tools:              true,
+		JSON:               true,
+		Thinking:           true, // extended thinking
+		Batch:              true,
+		StreamingReasoning: true, // thinking_delta on claude-3.7+
+		StreamingTools:     true, // input_json_delta accumulator
+		StreamingCitations: true, // citations_delta
 	}
 }
 

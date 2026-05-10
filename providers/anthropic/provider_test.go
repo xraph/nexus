@@ -409,30 +409,36 @@ func TestCompleteStream(t *testing.T) {
 		chunks = append(chunks, chunk)
 	}
 
-	// Expect: content_block_delta("Hello"), content_block_delta(" world"), message_delta(stop)
-	if len(chunks) < 3 {
-		t.Fatalf("got %d chunks, want at least 3", len(chunks))
+	// Filter to text content deltas only — modern Anthropic streams also
+	// emit a discrete EventMessageStart frame, which would otherwise shift
+	// indexes in this assertion.
+	var textChunks []*provider.StreamChunk
+	for _, c := range chunks {
+		if c.Kind == provider.EventDelta && c.Delta.Content != "" {
+			textChunks = append(textChunks, c)
+		}
+	}
+	if len(textChunks) < 2 {
+		t.Fatalf("got %d text chunks, want at least 2", len(textChunks))
 	}
 
-	// First text chunk
-	if chunks[0].Delta.Content != "Hello" {
-		t.Errorf("chunk[0].Delta.Content = %q, want %q", chunks[0].Delta.Content, "Hello")
+	if textChunks[0].Delta.Content != "Hello" {
+		t.Errorf("text chunk[0].Delta.Content = %q, want %q", textChunks[0].Delta.Content, "Hello")
 	}
-	if chunks[0].ID != "msg_stream1" {
-		t.Errorf("chunk[0].ID = %q, want %q", chunks[0].ID, "msg_stream1")
+	if textChunks[0].ID != "msg_stream1" {
+		t.Errorf("text chunk[0].ID = %q, want %q", textChunks[0].ID, "msg_stream1")
 	}
-	if chunks[0].Provider != "anthropic" {
-		t.Errorf("chunk[0].Provider = %q, want %q", chunks[0].Provider, "anthropic")
-	}
-
-	// Second text chunk
-	if chunks[1].Delta.Content != " world" {
-		t.Errorf("chunk[1].Delta.Content = %q, want %q", chunks[1].Delta.Content, " world")
+	if textChunks[0].Provider != "anthropic" {
+		t.Errorf("text chunk[0].Provider = %q, want %q", textChunks[0].Provider, "anthropic")
 	}
 
-	// Final delta (message_delta) with stop reason
-	if chunks[2].FinishReason != "stop" {
-		t.Errorf("final chunk FinishReason = %q, want %q", chunks[2].FinishReason, "stop")
+	if textChunks[1].Delta.Content != " world" {
+		t.Errorf("text chunk[1].Delta.Content = %q, want %q", textChunks[1].Delta.Content, " world")
+	}
+
+	// Final chunk should carry the finish reason regardless of preceding frames.
+	if chunks[len(chunks)-1].FinishReason != "stop" {
+		t.Errorf("final chunk FinishReason = %q, want %q", chunks[len(chunks)-1].FinishReason, "stop")
 	}
 
 	// Usage should be captured

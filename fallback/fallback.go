@@ -13,6 +13,14 @@ type Service interface {
 	// Execute calls the provider with retry + circuit breaker + fallback.
 	Execute(ctx context.Context, primary provider.Provider, fallbacks []provider.Provider, req *provider.CompletionRequest) (*provider.CompletionResponse, error)
 
+	// ExecuteStream is the streaming counterpart to Execute. Primary and
+	// each fallback are tried in turn; the first one whose CompleteStream
+	// returns successfully wins. Mid-stream failures (errors surfaced from
+	// Stream.Next after a chunk has been delivered) are NOT retried — the
+	// consumer has already begun receiving data, and replaying upstream
+	// would duplicate content.
+	ExecuteStream(ctx context.Context, primary provider.Provider, fallbacks []provider.Provider, req *provider.CompletionRequest) (provider.Stream, error)
+
 	// CircuitState returns the circuit breaker state for a provider.
 	CircuitState(providerName string) State
 

@@ -2,6 +2,8 @@ package extension
 
 import (
 	nexus "github.com/xraph/nexus"
+	"github.com/xraph/nexus/cache"
+	"github.com/xraph/nexus/pipeline/middlewares"
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/store"
 )
@@ -56,6 +58,22 @@ func WithDisableMigrate() Option {
 // If true and no config is found, Register returns an error.
 func WithRequireConfig(require bool) Option {
 	return func(e *Extension) { e.config.RequireConfig = require }
+}
+
+// WithStreamCache enables stream record-and-replay caching backed by sc.
+// Convenience wrapper around nexus.WithStreamCache.
+func WithStreamCache(sc cache.StreamCache, opts cache.StreamCacheOptions) Option {
+	return func(e *Extension) {
+		e.gatewayOpts = append(e.gatewayOpts, nexus.WithStreamCache(sc, opts))
+	}
+}
+
+// WithStreamLifecycleConfig tunes per-chunk plugin hook fan-out and per-tenant
+// stream quotas. Convenience wrapper around nexus.WithStreamLifecycleConfig.
+func WithStreamLifecycleConfig(cfg middlewares.StreamLifecycleConfig) Option {
+	return func(e *Extension) {
+		e.gatewayOpts = append(e.gatewayOpts, nexus.WithStreamLifecycleConfig(cfg))
+	}
 }
 
 // WithGroveDatabase sets the name of the grove.DB to resolve from the DI container.

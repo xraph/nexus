@@ -34,15 +34,18 @@ func (p *Provider) Name() string { return "openai" }
 // Capabilities returns what this provider supports.
 func (p *Provider) Capabilities() provider.Capabilities {
 	return provider.Capabilities{
-		Chat:       true,
-		Streaming:  true,
-		Embeddings: true,
-		Vision:     true,
-		Tools:      true,
-		JSON:       true,
-		Images:     true,
-		Thinking:   true, // o-series
-		Batch:      true,
+		Chat:               true,
+		Streaming:          true,
+		Embeddings:         true,
+		Vision:             true,
+		Tools:              true,
+		JSON:               true,
+		Images:             true,
+		Thinking:           true, // o-series
+		Batch:              true,
+		StreamingReasoning: true, // o-series + Responses API
+		StreamingTools:     true, // tool_call deltas with index
+		StreamingAudio:     true, // gpt-4o-audio + Realtime
 	}
 }
 

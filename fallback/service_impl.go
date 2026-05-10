@@ -26,6 +26,52 @@ func NewService(policy *Policy) Service {
 	}
 }
 
+func (s *service) ExecuteStream(ctx context.Context, primary provider.Provider, fallbacks []provider.Provider, req *provider.CompletionRequest) (provider.Stream, error) {
+	stream, err := s.tryStreamWithRetries(ctx, primary, req)
+	if err == nil {
+		return stream, nil
+	}
+
+	for _, fb := range fallbacks {
+		stream, err = s.tryStreamWithRetries(ctx, fb, req)
+		if err == nil {
+			return stream, nil
+		}
+	}
+
+	return nil, fmt.Errorf("nexus: all stream providers failed, last error: %w", err)
+}
+
+func (s *service) tryStreamWithRetries(ctx context.Context, p provider.Provider, req *provider.CompletionRequest) (provider.Stream, error) {
+	cb := s.getCircuit(p.Name())
+	if !cb.Allow() {
+		return nil, fmt.Errorf("nexus: circuit open for %s", p.Name())
+	}
+
+	var lastErr error
+	delay := s.policy.RetryDelay
+	for attempt := 0; attempt <= s.policy.MaxRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+				delay = time.Duration(float64(delay) * s.policy.RetryBackoff)
+			}
+		}
+
+		stream, err := p.CompleteStream(ctx, req)
+		if err == nil {
+			cb.RecordSuccess()
+			return stream, nil
+		}
+		lastErr = err
+	}
+
+	cb.RecordFailure()
+	return nil, lastErr
+}
+
 func (s *service) Execute(ctx context.Context, primary provider.Provider, fallbacks []provider.Provider, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
 	// Try primary with retries
 	resp, err := s.tryWithRetries(ctx, primary, req)

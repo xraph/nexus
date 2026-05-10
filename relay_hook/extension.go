@@ -15,6 +15,7 @@ import (
 
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/plugin"
+	"github.com/xraph/nexus/provider"
 )
 
 // Compile-time interface checks.
@@ -34,6 +35,9 @@ var (
 	_ plugin.KeyRevoked        = (*Extension)(nil)
 	_ plugin.BudgetWarning     = (*Extension)(nil)
 	_ plugin.BudgetExceeded    = (*Extension)(nil)
+	_ plugin.StreamStarted     = (*Extension)(nil)
+	_ plugin.StreamCompleted   = (*Extension)(nil)
+	_ plugin.StreamFailed      = (*Extension)(nil)
 )
 
 // Sender delivers relay events to a destination.
@@ -188,6 +192,48 @@ func (e *Extension) OnBudgetWarning(ctx context.Context, tenantID id.TenantID, u
 func (e *Extension) OnBudgetExceeded(ctx context.Context, tenantID id.TenantID) error {
 	return e.send(ctx, EventBudgetExceeded, map[string]any{
 		"tenant_id": tenantID.String(),
+	})
+}
+
+// ──────────────────────────────────────────────────
+// Stream lifecycle hooks
+// ──────────────────────────────────────────────────
+
+func (e *Extension) OnStreamStarted(ctx context.Context, requestID id.RequestID, model, providerName string) error {
+	return e.send(ctx, EventStreamStarted, map[string]any{
+		"request_id": requestID.String(),
+		"model":      model,
+		"provider":   providerName,
+	})
+}
+
+func (e *Extension) OnStreamCompleted(ctx context.Context, requestID id.RequestID, model, providerName string, elapsed time.Duration, final *provider.CompletionResponse) error {
+	data := map[string]any{
+		"request_id": requestID.String(),
+		"model":      model,
+		"provider":   providerName,
+		"elapsed_ms": elapsed.Milliseconds(),
+	}
+	if final != nil {
+		data["input_tokens"] = final.Usage.PromptTokens
+		data["output_tokens"] = final.Usage.CompletionTokens
+		data["total_tokens"] = final.Usage.TotalTokens
+		if len(final.Choices) > 0 && final.Choices[0].FinishReason != "" {
+			data["finish_reason"] = final.Choices[0].FinishReason
+		}
+	}
+	return e.send(ctx, EventStreamCompleted, data)
+}
+
+func (e *Extension) OnStreamFailed(ctx context.Context, requestID id.RequestID, model string, err error) error {
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	return e.send(ctx, EventStreamFailed, map[string]any{
+		"request_id": requestID.String(),
+		"model":      model,
+		"error":      msg,
 	})
 }
 

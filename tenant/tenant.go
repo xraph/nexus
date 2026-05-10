@@ -37,6 +37,11 @@ type Quota struct {
 	DailyRequests    int     `json:"daily_requests"`     // max requests per day (0 = unlimited)
 	MonthlyBudgetUSD float64 `json:"monthly_budget_usd"` // max spend per month (0 = unlimited)
 	MaxTokensPerReq  int     `json:"max_tokens_per_req"` // max tokens per single request
+
+	// Streaming-specific limits. Enforced by middlewares.NewStreamLifecycle
+	// when wired with a QuotaResolver.
+	MaxStreamDuration time.Duration `json:"max_stream_duration,omitempty"` // wall-clock cap per stream (0 = unlimited)
+	MaxStreamTokens   int           `json:"max_stream_tokens,omitempty"`   // output-token cap per stream (0 = unlimited)
 }
 
 // Config holds per-tenant overrides.

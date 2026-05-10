@@ -3,6 +3,8 @@ package stores
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/xraph/nexus/provider"
@@ -63,28 +65,46 @@ func NewRedis(client RedisClient, opts ...RedisOption) *RedisCache {
 	return c
 }
 
+// Get retrieves a cached completion response. Returns (nil, nil) on miss.
 func (c *RedisCache) Get(ctx context.Context, key string) (*provider.CompletionResponse, error) {
-	result := c.client.Get(ctx, c.prefix+key)
-	data, err := result.Bytes()
-	if err != nil {
-		return nil, nil // cache miss
+	res := c.client.Get(ctx, c.prefix+key)
+	data, err := res.Bytes()
+	if err != nil || len(data) == 0 {
+		return nil, nil //nolint:nilnil // miss is the empty case
 	}
-	_ = data // Would json.Unmarshal here
-	return nil, nil
+	var resp provider.CompletionResponse
+	if uerr := json.Unmarshal(data, &resp); uerr != nil {
+		return nil, uerr
+	}
+	return &resp, nil
 }
 
-func (c *RedisCache) Set(ctx context.Context, key string, _ *provider.CompletionResponse) error {
-	// Would json.Marshal resp here
-	_ = c.client.Set(ctx, c.prefix+key, []byte("{}"), c.ttl)
+// Set stores a completion response under key with the configured TTL.
+func (c *RedisCache) Set(ctx context.Context, key string, resp *provider.CompletionResponse) error {
+	if resp == nil {
+		return errors.New("redis: cannot cache nil response")
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return err
+	}
+	res := c.client.Set(ctx, c.prefix+key, data, c.ttl)
+	if res != nil {
+		return res.Err()
+	}
 	return nil
 }
 
+// Delete removes a cached entry.
 func (c *RedisCache) Delete(ctx context.Context, key string) error {
-	_ = c.client.Del(ctx, c.prefix+key)
+	res := c.client.Del(ctx, c.prefix+key)
+	if res != nil {
+		return res.Err()
+	}
 	return nil
 }
 
-func (c *RedisCache) Clear(_ context.Context) error {
-	// Redis SCAN + DEL with prefix — requires full client access
-	return nil
-}
+// Clear is a no-op — bulk-delete by prefix requires SCAN, which we don't
+// expose on the minimal RedisClient interface. Callers needing Clear can
+// flush the database out-of-band.
+func (c *RedisCache) Clear(_ context.Context) error { return nil }

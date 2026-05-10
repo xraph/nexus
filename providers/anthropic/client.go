@@ -144,7 +144,7 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 		return nil, fmt.Errorf("anthropic: API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
-	return newAnthropicStream(httpResp.Body, req.Model), nil
+	return newAnthropicStream(ctx, httpResp.Body, req.Model), nil
 }
 
 func (c *client) ping(ctx context.Context) error {

@@ -27,6 +27,8 @@ Nexus is a **library**, not a SaaS. Import it, compose your AI gateway, and own 
 
 **OpenAI-Compatible Proxy** — Drop-in replacement for the OpenAI API. Point any SDK at your gateway.
 
+**Versatile Streaming** — Reasoning deltas, tool-call streaming, multi-modal chunks, and four pluggable wire formats: SSE (OpenAI envelope), nexus-native SSE with named events, NDJSON, and a bidirectional WebSocket endpoint at `/v1/realtime`. Channel-based Go API, idempotent record-and-replay caching, and lifecycle hooks for stream observability.
+
 **Three Storage Backends** — PostgreSQL, SQLite, and in-memory.
 
 **Forge Integration** — Drop-in `forge.Extension` with auto-discovery and DI-registered Gateway.
@@ -89,7 +91,8 @@ func main() {
 | Example | Description |
 |---------|-------------|
 | [`_examples/standalone`](./_examples/standalone) | Standalone gateway — no framework, just Go |
-| [`_examples/proxy`](./_examples/proxy) | OpenAI-compatible proxy server |
+| [`_examples/proxy`](./_examples/proxy) | OpenAI-compatible proxy with SSE/NDJSON/WS + stream cache + metrics |
+| [`_examples/streaming`](./_examples/streaming) | Streaming completions via iterator, channel, and accumulator APIs |
 | [`_examples/multi-tenant`](./_examples/multi-tenant) | Multi-tenant with API keys and usage tracking |
 | [`_examples/forge`](./_examples/forge) | Integration with the Forge framework |
 
@@ -136,6 +139,7 @@ nexus.New(
 | Category | Hooks |
 |----------|-------|
 | **Request** | `OnRequestReceived`, `OnRequestCompleted`, `OnRequestFailed`, `OnRequestCached` |
+| **Stream** | `OnStreamStarted`, `OnChunkReceived`, `OnStreamCompleted`, `OnStreamFailed` |
 | **Provider** | `OnProviderFailed`, `OnCircuitOpened`, `OnFallbackTriggered` |
 | **Guardrail** | `OnGuardrailBlocked`, `OnGuardrailRedacted` |
 | **Tenant** | `OnTenantCreated`, `OnTenantDisabled` |

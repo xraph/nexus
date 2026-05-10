@@ -59,12 +59,20 @@ func TestStream_MessageStart_CapturesID(t *testing.T) {
 	}
 	defer func() { _ = stream.Close() }()
 
-	chunk, err := stream.Next(ctx)
-	if err != nil {
-		t.Fatalf("Next() error: %v", err)
+	// Drain until we see a chunk with a populated ID (message_start now
+	// emits a discrete EventMessageStart frame that also carries the ID).
+	var chunk *provider.StreamChunk
+	for {
+		c, nextErr := stream.Next(ctx)
+		if nextErr != nil {
+			t.Fatalf("Next() error: %v", nextErr)
+		}
+		if c.ID != "" {
+			chunk = c
+			break
+		}
 	}
 
-	// The message_start event should set the ID on subsequent chunks
 	if chunk.ID != "msg_abc123" {
 		t.Errorf("chunk.ID = %q, want %q", chunk.ID, "msg_abc123")
 	}
@@ -209,9 +217,18 @@ func TestStream_ContentBlockDelta_ProviderAndModel(t *testing.T) {
 	}
 	defer func() { _ = stream.Close() }()
 
-	chunk, err := stream.Next(ctx)
-	if err != nil {
-		t.Fatalf("Next() error: %v", err)
+	// Skip the discrete message_start frame and verify provider/model on
+	// the first content delta.
+	var chunk *provider.StreamChunk
+	for {
+		c, nextErr := stream.Next(ctx)
+		if nextErr != nil {
+			t.Fatalf("Next() error: %v", nextErr)
+		}
+		if c.Kind == provider.EventDelta && c.Delta.Content != "" {
+			chunk = c
+			break
+		}
 	}
 	if chunk.Provider != "anthropic" {
 		t.Errorf("chunk.Provider = %q, want %q", chunk.Provider, "anthropic")
@@ -579,7 +596,12 @@ func TestStream_EmptyContent(t *testing.T) {
 	}
 	defer func() { _ = stream.Close() }()
 
-	// Should immediately get EOF since there are no content_block_delta events
+	// First call now returns the discrete message_start frame. Drain past
+	// it and verify the next call hits io.EOF since no content was emitted.
+	_, err = stream.Next(ctx)
+	if err != nil {
+		t.Fatalf("Next() error on message_start frame: %v", err)
+	}
 	_, err = stream.Next(ctx)
 	if !errors.Is(err, io.EOF) {
 		t.Errorf("Next() = %v, want io.EOF for empty stream", err)
@@ -636,9 +658,17 @@ func TestStream_IgnoresSSEComments(t *testing.T) {
 	}
 	defer func() { _ = stream.Close() }()
 
-	chunk, err := stream.Next(ctx)
-	if err != nil {
-		t.Fatalf("Next() error: %v", err)
+	// Drain past the discrete message_start frame to find the text delta.
+	var chunk *provider.StreamChunk
+	for {
+		c, nextErr := stream.Next(ctx)
+		if nextErr != nil {
+			t.Fatalf("Next() error: %v", nextErr)
+		}
+		if c.Kind == provider.EventDelta && c.Delta.Content != "" {
+			chunk = c
+			break
+		}
 	}
 	if chunk.Delta.Content != "OK" {
 		t.Errorf("chunk.Delta.Content = %q, want %q", chunk.Delta.Content, "OK")
@@ -703,10 +733,16 @@ func TestStream_UsageNilBeforeMessageDelta(t *testing.T) {
 	}
 	defer func() { _ = stream.Close() }()
 
-	// Read one content chunk - usage should still be nil at this point
-	_, err = stream.Next(ctx)
-	if err != nil {
-		t.Fatalf("Next() error: %v", err)
+	// Drain frames before message_delta — Usage() should still be nil
+	// while we're reading message_start + the content delta.
+	for {
+		c, nextErr := stream.Next(ctx)
+		if nextErr != nil {
+			t.Fatalf("Next() error: %v", nextErr)
+		}
+		if c.Kind == provider.EventDelta && c.Delta.Content != "" {
+			break
+		}
 	}
 	if stream.Usage() != nil {
 		t.Error("Usage() should be nil before message_delta is received")

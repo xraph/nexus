@@ -2,7 +2,11 @@ go 1.25.7
 
 use (
 	.
+	./_examples/grpc
+	./_examples/live
+	./_examples/realtime
 	./config
+	./grpcsrv
 	./providers/ai21
 	./providers/anthropic
 	./providers/anyscale
@@ -14,6 +18,7 @@ use (
 	./providers/deepseek
 	./providers/fireworks
 	./providers/gemini
+	./providers/geminilive
 	./providers/groq
 	./providers/hyperbolic
 	./providers/jinaai
@@ -25,6 +30,7 @@ use (
 	./providers/nvidia
 	./providers/ollama
 	./providers/openai
+	./providers/openairealtime
 	./providers/opencompat
 	./providers/openrouter
 	./providers/perplexity

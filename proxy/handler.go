@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/xraph/nexus/httpstream"
+	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/provider"
 )
 
@@ -57,15 +59,24 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 // handleStreamingCompletion handles streaming chat completions.
 func (p *Proxy) handleStreamingCompletion(w http.ResponseWriter, r *http.Request, req *provider.CompletionRequest) {
-	ctx := r.Context()
+	ctx, cancel := p.streamContext(r.Context())
+	defer cancel()
 	stream, err := p.engine.CompleteStream(ctx, req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	defer func() { _ = stream.Close() }()
 
-	streamSSE(ctx, w, stream, req.Model)
+	encoder := httpstream.Negotiate(r, p.encoders)
+	if encoder == nil {
+		_ = stream.Close()
+		writeError(w, http.StatusInternalServerError, "internal_error", "no stream encoder available")
+		return
+	}
+
+	httpstream.Run(ctx, w, stream, encoder, httpstream.RunOptions{
+		RequestID: pipeline.RequestID(ctx),
+	})
 }
 
 // handleEmbeddings handles POST /v1/embeddings

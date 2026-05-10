@@ -7,6 +7,7 @@ import (
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/nexus/id"
+	"github.com/xraph/nexus/provider"
 )
 
 // Named entry types pair a hook implementation with the extension name
@@ -31,6 +32,26 @@ type requestFailedEntry struct {
 type requestCachedEntry struct {
 	name string
 	hook RequestCached
+}
+
+type streamStartedEntry struct {
+	name string
+	hook StreamStarted
+}
+
+type chunkReceivedEntry struct {
+	name string
+	hook ChunkReceived
+}
+
+type streamCompletedEntry struct {
+	name string
+	hook StreamCompleted
+}
+
+type streamFailedEntry struct {
+	name string
+	hook StreamFailed
 }
 
 type providerFailedEntry struct {
@@ -100,6 +121,10 @@ type Registry struct {
 	requestCompleted  []requestCompletedEntry
 	requestFailed     []requestFailedEntry
 	requestCached     []requestCachedEntry
+	streamStarted     []streamStartedEntry
+	chunkReceived     []chunkReceivedEntry
+	streamCompleted   []streamCompletedEntry
+	streamFailed      []streamFailedEntry
 	providerFailed    []providerFailedEntry
 	circuitOpened     []circuitOpenedEntry
 	fallbackTriggered []fallbackTriggeredEntry
@@ -140,6 +165,18 @@ func (r *Registry) Register(e Extension) {
 	}
 	if h, ok := e.(RequestCached); ok {
 		r.requestCached = append(r.requestCached, requestCachedEntry{name, h})
+	}
+	if h, ok := e.(StreamStarted); ok {
+		r.streamStarted = append(r.streamStarted, streamStartedEntry{name, h})
+	}
+	if h, ok := e.(ChunkReceived); ok {
+		r.chunkReceived = append(r.chunkReceived, chunkReceivedEntry{name, h})
+	}
+	if h, ok := e.(StreamCompleted); ok {
+		r.streamCompleted = append(r.streamCompleted, streamCompletedEntry{name, h})
+	}
+	if h, ok := e.(StreamFailed); ok {
+		r.streamFailed = append(r.streamFailed, streamFailedEntry{name, h})
 	}
 	if h, ok := e.(ProviderFailed); ok {
 		r.providerFailed = append(r.providerFailed, providerFailedEntry{name, h})
@@ -221,6 +258,55 @@ func (r *Registry) EmitRequestCached(ctx context.Context, requestID id.RequestID
 		}
 	}
 }
+
+// ──────────────────────────────────────────────────
+// Stream event emitters
+// ──────────────────────────────────────────────────
+
+// EmitStreamStarted notifies all extensions that implement StreamStarted.
+func (r *Registry) EmitStreamStarted(ctx context.Context, requestID id.RequestID, model, providerName string) {
+	for _, e := range r.streamStarted {
+		if err := e.hook.OnStreamStarted(ctx, requestID, model, providerName); err != nil {
+			r.logHookError("OnStreamStarted", e.name, err)
+		}
+	}
+}
+
+// EmitChunkReceived notifies all extensions that implement ChunkReceived.
+// Hot-path: skip the loop entirely if nobody is listening.
+func (r *Registry) EmitChunkReceived(ctx context.Context, requestID id.RequestID, kind provider.EventKind, byteSize int) {
+	if len(r.chunkReceived) == 0 {
+		return
+	}
+	for _, e := range r.chunkReceived {
+		if err := e.hook.OnChunkReceived(ctx, requestID, kind, byteSize); err != nil {
+			r.logHookError("OnChunkReceived", e.name, err)
+		}
+	}
+}
+
+// EmitStreamCompleted notifies all extensions that implement StreamCompleted.
+func (r *Registry) EmitStreamCompleted(ctx context.Context, requestID id.RequestID, model, providerName string, elapsed time.Duration, final *provider.CompletionResponse) {
+	for _, e := range r.streamCompleted {
+		if err := e.hook.OnStreamCompleted(ctx, requestID, model, providerName, elapsed, final); err != nil {
+			r.logHookError("OnStreamCompleted", e.name, err)
+		}
+	}
+}
+
+// EmitStreamFailed notifies all extensions that implement StreamFailed.
+func (r *Registry) EmitStreamFailed(ctx context.Context, requestID id.RequestID, model string, streamErr error) {
+	for _, e := range r.streamFailed {
+		if err := e.hook.OnStreamFailed(ctx, requestID, model, streamErr); err != nil {
+			r.logHookError("OnStreamFailed", e.name, err)
+		}
+	}
+}
+
+// HasChunkReceived reports whether at least one extension implements
+// ChunkReceived. Used by the stream lifecycle middleware to skip per-chunk
+// instrumentation when no one is listening.
+func (r *Registry) HasChunkReceived() bool { return len(r.chunkReceived) > 0 }
 
 // ──────────────────────────────────────────────────
 // Provider event emitters
