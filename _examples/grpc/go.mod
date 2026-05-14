@@ -13,6 +13,7 @@ require (
 	github.com/gofrs/uuid/v5 v5.3.2 // indirect
 	github.com/xraph/go-utils v1.1.1 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
+	go.opentelemetry.io/otel/sdk/metric v1.40.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.1 // indirect
 	golang.org/x/net v0.49.0 // indirect
