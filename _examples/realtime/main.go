@@ -25,9 +25,15 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
-		log.Fatal("OPENAI_API_KEY is required")
+		return fmt.Errorf("OPENAI_API_KEY is required")
 	}
 
 	p := openairealtime.New(apiKey, openairealtime.WithModel("gpt-4o-realtime-preview"))
@@ -42,7 +48,7 @@ func main() {
 		},
 	})
 	if err != nil {
-		log.Fatalf("CompleteStream: %v", err)
+		return fmt.Errorf("CompleteStream: %w", err)
 	}
 	defer func() { _ = stream.Close() }()
 
@@ -56,10 +62,10 @@ func main() {
 		c, err := stream.Next(ctx)
 		if errors.Is(err, io.EOF) {
 			fmt.Println()
-			return
+			return nil
 		}
 		if err != nil {
-			log.Fatalf("Next: %v", err)
+			return fmt.Errorf("stream.Next: %w", err)
 		}
 		switch c.Kind {
 		case provider.EventDelta:
@@ -69,7 +75,7 @@ func main() {
 				fmt.Printf("[transcript] %s\n", c.Delta.Audio.Transcript)
 			}
 		case provider.EventError:
-			log.Fatalf("upstream error: %s", c.Err)
+			return fmt.Errorf("upstream error: %s", c.Err)
 		}
 	}
 }

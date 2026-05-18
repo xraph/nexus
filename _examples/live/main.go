@@ -22,9 +22,15 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
-		log.Fatal("GEMINI_API_KEY is required")
+		return fmt.Errorf("GEMINI_API_KEY is required")
 	}
 
 	p := geminilive.New(apiKey,
@@ -44,7 +50,7 @@ func main() {
 		Messages: []provider.Message{{Role: "user", Content: "Hello, Live API!"}},
 	})
 	if err != nil {
-		log.Fatalf("CompleteStream: %v", err)
+		return fmt.Errorf("CompleteStream: %w", err)
 	}
 	defer func() { _ = stream.Close() }()
 
@@ -56,10 +62,10 @@ func main() {
 		c, err := stream.Next(ctx)
 		if errors.Is(err, io.EOF) {
 			fmt.Println()
-			return
+			return nil
 		}
 		if err != nil {
-			log.Fatalf("Next: %v", err)
+			return fmt.Errorf("stream.Next: %w", err)
 		}
 		switch c.Kind {
 		case provider.EventDelta:
@@ -71,7 +77,7 @@ func main() {
 		case provider.EventToolCallDelta:
 			fmt.Printf("\n[tool call] %s(%s)\n", c.Delta.ToolCalls[0].Function.Name, c.Delta.ToolCalls[0].Function.Arguments)
 		case provider.EventError:
-			log.Fatalf("upstream error: %s", c.Err)
+			return fmt.Errorf("upstream error: %s", c.Err)
 		}
 	}
 }
