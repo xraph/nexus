@@ -75,8 +75,17 @@ jobs:
           cache-dependency-path: "**/go.sum"
 
       - name: Install golangci-lint
+        env:
+          GOLANGCI_LINT_VERSION: v2.1.6
         run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
+          set -euo pipefail
+          version="${GOLANGCI_LINT_VERSION#v}"
+          tarball="golangci-lint-${version}-linux-amd64.tar.gz"
+          url="https://github.com/golangci/golangci-lint/releases/download/${GOLANGCI_LINT_VERSION}/${tarball}"
+          curl -sSfL -o "$tarball" "$url"
+          tar -xzf "$tarball"
+          install -m 0755 "golangci-lint-${version}-linux-amd64/golangci-lint" "$(go env GOPATH)/bin/golangci-lint"
+          golangci-lint --version
 
       - name: Lint all modules
         run: |
