@@ -76,15 +76,18 @@ jobs:
 
       - name: Install golangci-lint
         env:
-          GOLANGCI_LINT_VERSION: v2.1.6
+          GOLANGCI_LINT_VERSION: v2.12.1
         run: |
           set -euo pipefail
           version="${GOLANGCI_LINT_VERSION#v}"
-          tarball="golangci-lint-${version}-linux-amd64.tar.gz"
-          url="https://github.com/golangci/golangci-lint/releases/download/${GOLANGCI_LINT_VERSION}/${tarball}"
-          curl -sSfL -o "$tarball" "$url"
+          dir="golangci-lint-${version}-linux-amd64"
+          tarball="${dir}.tar.gz"
+          base="https://github.com/golangci/golangci-lint/releases/download/${GOLANGCI_LINT_VERSION}"
+          curl -sSfL -o "$tarball" "${base}/${tarball}"
+          curl -sSfL -o checksums.txt "${base}/golangci-lint-${version}-checksums.txt"
+          grep " ${tarball}$" checksums.txt | sha256sum -c -
           tar -xzf "$tarball"
-          install -m 0755 "golangci-lint-${version}-linux-amd64/golangci-lint" "$(go env GOPATH)/bin/golangci-lint"
+          install -m 0755 "${dir}/golangci-lint" "$(go env GOPATH)/bin/golangci-lint"
           golangci-lint --version
 
       - name: Lint all modules
