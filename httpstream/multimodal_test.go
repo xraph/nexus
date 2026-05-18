@@ -129,8 +129,9 @@ func TestNDJSON_AudioImageRoundTrip(t *testing.T) {
 func TestAccumulator_MultiModal(t *testing.T) {
 	t.Parallel()
 
-	audio1 := []byte{1, 2, 3, 4}
 	audio2 := []byte{5, 6, 7}
+	audio1 := make([]byte, 0, 4+len(audio2))
+	audio1 = append(audio1, 1, 2, 3, 4)
 	image := []byte{0x89, 0x50, 0x4E}
 
 	chunks := []*provider.StreamChunk{

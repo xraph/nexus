@@ -11,7 +11,7 @@ import (
 func TestNegotiate_DefaultsToOpenAISSE(t *testing.T) {
 	t.Parallel()
 	r := httpstream.DefaultRegistry()
-	req := httptest.NewRequest("POST", "/", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", nil)
 	enc := httpstream.Negotiate(req, r)
 	if enc == nil || enc.ContentType() != "text/event-stream" {
 		t.Fatalf("expected text/event-stream default, got %v", enc)
@@ -31,7 +31,7 @@ func TestNegotiate_AcceptHeader(t *testing.T) {
 		{"*/*", "text/event-stream"},
 	}
 	for _, c := range cases {
-		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", nil)
 		req.Header.Set("Accept", c.accept)
 		enc := httpstream.Negotiate(req, r)
 		if enc == nil || enc.ContentType() != c.want {
@@ -43,7 +43,7 @@ func TestNegotiate_AcceptHeader(t *testing.T) {
 func TestNegotiate_QueryParamWins(t *testing.T) {
 	t.Parallel()
 	r := httpstream.DefaultRegistry()
-	req := httptest.NewRequest(http.MethodPost, "/?stream_format=ndjson", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/?stream_format=ndjson", nil)
 	req.Header.Set("Accept", "text/event-stream")
 	enc := httpstream.Negotiate(req, r)
 	if enc.ContentType() != "application/x-ndjson" {
@@ -54,7 +54,7 @@ func TestNegotiate_QueryParamWins(t *testing.T) {
 func TestNegotiate_NexusHeaderOverridesAccept(t *testing.T) {
 	t.Parallel()
 	r := httpstream.DefaultRegistry()
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", nil)
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("X-Nexus-Stream-Format", "nexus-sse")
 	enc := httpstream.Negotiate(req, r)
