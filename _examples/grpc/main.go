@@ -29,31 +29,39 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
-		log.Fatal("OPENAI_API_KEY is required")
+		return fmt.Errorf("OPENAI_API_KEY is required")
 	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	engine := nexus.NewEngine(nexus.WithProvider(openai.New(apiKey)))
 
-	lis, err := net.Listen("tcp", ":50051")
+	var lc net.ListenConfig
+	lis, err := lc.Listen(ctx, "tcp", ":50051")
 	if err != nil {
-		log.Fatalf("listen: %v", err)
+		return fmt.Errorf("listen: %w", err)
 	}
 	srv := grpc.NewServer()
 	grpcsrv.Register(srv, engine)
 
 	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-		<-sigCh
+		<-ctx.Done()
 		fmt.Println("shutting down")
 		srv.GracefulStop()
 	}()
 
 	fmt.Println("nexus.v1.Completions/CompleteStream listening on :50051")
 	if err := srv.Serve(lis); err != nil {
-		log.Fatalf("serve: %v", err)
+		return fmt.Errorf("serve: %w", err)
 	}
-	_ = context.Background()
+	return nil
 }
