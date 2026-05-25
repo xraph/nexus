@@ -18,6 +18,14 @@ type openAIStream struct {
 	usage   *provider.Usage
 	done    bool
 
+	// nextDataIsError tracks an `event: error` SSE prefix so the next
+	// data line is decoded as an error envelope rather than a chunk.
+	// Local providers (LM Studio in particular) emit upstream model
+	// runtime errors this way; without this flag the client silently
+	// dropped them (no choices → continue) and the caller saw a
+	// successful empty completion.
+	nextDataIsError bool
+
 	// stopAfterFunc is the runtime hook registered with the request context;
 	// firing it tears the upstream TCP connection so a canceled ctx aborts
 	// the stream without waiting for the next SSE line.
@@ -59,6 +67,13 @@ func (s *openAIStream) Next(ctx context.Context) (*provider.StreamChunk, error) 
 		}
 
 		if !strings.HasPrefix(line, "data: ") {
+			// SSE event prefix like `event: error` flags the next data line
+			// as an error payload rather than a chunk. Set a flag so the
+			// `data:` parse below treats it as such instead of dropping it
+			// for not having `choices`.
+			if strings.HasPrefix(line, "event: error") {
+				s.nextDataIsError = true
+			}
 			continue
 		}
 
@@ -67,6 +82,35 @@ func (s *openAIStream) Next(ctx context.Context) (*provider.StreamChunk, error) 
 		if data == "[DONE]" {
 			s.done = true
 			return nil, io.EOF
+		}
+
+		// If the preceding event line flagged this as an error payload, or
+		// the JSON itself carries an `error` field, surface it as a stream
+		// error rather than dropping it. LM Studio is the common source of
+		// these — its model runtime can fail mid-prediction with messages
+		// like "NameError: name 'tree_reduce' is not defined", and the only
+		// signal upstream gets is this SSE error envelope.
+		if s.nextDataIsError || strings.Contains(data, `"error"`) {
+			var errEnv struct {
+				Error struct {
+					Message string `json:"message"`
+					Type    string `json:"type"`
+					Code    any    `json:"code"`
+				} `json:"error"`
+				Message string `json:"message"`
+			}
+			if err := json.Unmarshal([]byte(data), &errEnv); err == nil {
+				msg := errEnv.Error.Message
+				if msg == "" {
+					msg = errEnv.Message
+				}
+				if msg != "" {
+					s.done = true
+					s.nextDataIsError = false
+					return nil, fmt.Errorf("upstream model error: %s", msg)
+				}
+			}
+			s.nextDataIsError = false
 		}
 
 		var chunk struct {

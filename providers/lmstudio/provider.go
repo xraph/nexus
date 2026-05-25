@@ -14,9 +14,10 @@ const defaultBaseURL = "http://localhost:1234/v1"
 
 // Provider implements the Nexus provider interface for LM Studio.
 type Provider struct {
-	inner   *openai.Provider
-	baseURL string
-	models  []provider.Model
+	inner             *openai.Provider
+	baseURL           string
+	models            []provider.Model
+	extractToolCalls  bool
 }
 
 // New creates a new LM Studio provider.
@@ -66,9 +67,23 @@ func (p *Provider) Complete(ctx context.Context, req *provider.CompletionRequest
 	return resp, nil
 }
 
-// CompleteStream sends a streaming chat completion request.
+// CompleteStream sends a streaming chat completion request. When
+// [WithToolCallExtraction] is enabled, the returned stream is wrapped
+// with an extractor that synthesises EventToolCallDelta chunks from
+// text-form tool-call markers in the model's content output — see
+// [ExtractTextFormToolCalls] for the marker grammar. This lets local
+// models that emit `<tool_call>{...}</tool_call>` (instead of using
+// the OpenAI `tool_calls` delta field) still drive the standard
+// agentic loop.
 func (p *Provider) CompleteStream(ctx context.Context, req *provider.CompletionRequest) (provider.Stream, error) {
-	return p.inner.CompleteStream(ctx, req)
+	stream, err := p.inner.CompleteStream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if p.extractToolCalls {
+		return &extractingStream{inner: stream}, nil
+	}
+	return stream, nil
 }
 
 // Embed sends an embedding request.
@@ -96,3 +111,22 @@ func WithBaseURL(url string) Option {
 
 // Compile-time check.
 var _ provider.Provider = (*Provider)(nil)
+
+// WithToolCallExtraction enables a post-stream text-form tool-call
+// extractor on CompleteStream. Many local models served via the LM
+// Studio OpenAI-compatible endpoint do not populate delta.tool_calls
+// even when the request lists tools; they instead emit invocations as
+// plain content using wrapper markers (<tool_call>{...}</tool_call>,
+// <function_call>{...}</function_call>, or <|tool_call|>...|/...|>).
+// With this option set the provider's stream wrapper buffers content,
+// scans it on EOF, and emits synthesised EventToolCallDelta chunks for
+// every successfully-parsed marker before signalling EOF — so the
+// nexus Accumulator finalises with real Message.ToolCalls and the
+// caller's agentic loop dispatches the tool normally.
+//
+// The option is opt-in and stateless. Callers who prefer to scan the
+// accumulator's final content themselves can use the public
+// ExtractTextFormToolCalls helper instead.
+func WithToolCallExtraction() Option {
+	return func(p *Provider) { p.extractToolCalls = true }
+}

@@ -85,9 +85,30 @@ type ToolCallFunc struct {
 }
 
 // ResponseFormat specifies the desired output format.
+//
+// For OpenAI-compatible structured outputs (Type = "json_schema"), populate
+// JSONSchema with the schema wrapped in a JSONSchemaDef — that is the only
+// shape OpenAI, LM Studio, and other OAI-compatible servers accept. The
+// legacy Schema field is preserved for providers that take a bare schema
+// (most do not) and for backward compatibility.
 type ResponseFormat struct {
-	Type   string `json:"type"` // text, json_object, json_schema
-	Schema any    `json:"schema,omitempty"`
+	Type       string         `json:"type"` // text, json_object, json_schema
+	Schema     any            `json:"schema,omitempty"`
+	JSONSchema *JSONSchemaDef `json:"json_schema,omitempty"`
+}
+
+// JSONSchemaDef wraps a JSON schema for OpenAI-style structured outputs.
+// The wire format is `{"name": ..., "strict": true, "schema": {...}}`
+// nested under `response_format.json_schema`.
+type JSONSchemaDef struct {
+	// Name is a free-form identifier OpenAI requires (any non-empty string).
+	Name string `json:"name"`
+	// Description is optional human-readable hint for the model.
+	Description string `json:"description,omitempty"`
+	// Schema is the JSON Schema document (object with type/properties/required).
+	Schema any `json:"schema"`
+	// Strict enables strict mode — model output must validate against Schema.
+	Strict bool `json:"strict,omitempty"`
 }
 
 // EmbeddingRequest for text embeddings.

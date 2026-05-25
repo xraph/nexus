@@ -50,11 +50,14 @@ type openAIStreamOptions struct {
 }
 
 type openAIMessage struct {
-	Role       string              `json:"role"`
-	Content    any                 `json:"content"`
-	Name       string              `json:"name,omitempty"`
-	ToolCalls  []provider.ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string              `json:"tool_call_id,omitempty"`
+	Role             string              `json:"role"`
+	Content          any                 `json:"content"`
+	Name             string              `json:"name,omitempty"`
+	ToolCalls        []provider.ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string              `json:"tool_call_id,omitempty"`
+	Reasoning        string              `json:"reasoning,omitempty"`
+	ReasoningContent string              `json:"reasoning_content,omitempty"`
+	Refusal          string              `json:"refusal,omitempty"`
 }
 
 type openAIResponse struct {
@@ -263,11 +266,30 @@ func (c *client) toOpenAIRequest(req *provider.CompletionRequest) *openAIRequest
 func (c *client) fromOpenAIResponse(resp *openAIResponse, elapsed time.Duration) *provider.CompletionResponse {
 	choices := make([]provider.Choice, len(resp.Choices))
 	for i, ch := range resp.Choices {
+		// Some reasoning-style models (e.g. nvidia/nemotron-3-nano-omni,
+		// magistral) emit their visible output in `reasoning_content`
+		// instead of `content` — often the case for json_schema strict
+		// mode where the model's only output is the schema-conformant
+		// JSON wrapped in its thinking trace. Fall back to those fields
+		// so CompleteJSON (and any other downstream parser that reads
+		// Choice.Message.Content) sees the actual model output instead
+		// of an empty string while completion_tokens > 0.
+		content := ch.Message.Content
+		if isEmptyContent(content) {
+			switch {
+			case ch.Message.ReasoningContent != "":
+				content = ch.Message.ReasoningContent
+			case ch.Message.Reasoning != "":
+				content = ch.Message.Reasoning
+			case ch.Message.Refusal != "":
+				content = ch.Message.Refusal
+			}
+		}
 		choices[i] = provider.Choice{
 			Index: ch.Index,
 			Message: provider.Message{
 				Role:      ch.Message.Role,
-				Content:   ch.Message.Content,
+				Content:   content,
 				ToolCalls: ch.Message.ToolCalls,
 			},
 			FinishReason: ch.FinishReason,
@@ -287,4 +309,20 @@ func (c *client) fromOpenAIResponse(resp *openAIResponse, elapsed time.Duration)
 		},
 		Latency: elapsed,
 	}
+}
+
+// isEmptyContent reports whether the parsed content value is effectively
+// empty — either nil, the empty string, or an empty multimodal parts
+// slice. Used by fromOpenAIResponse to decide whether to substitute a
+// reasoning-style field as a fallback.
+func isEmptyContent(v any) bool {
+	switch c := v.(type) {
+	case nil:
+		return true
+	case string:
+		return c == ""
+	case []any:
+		return len(c) == 0
+	}
+	return false
 }
