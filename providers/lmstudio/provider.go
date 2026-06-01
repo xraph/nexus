@@ -14,10 +14,10 @@ const defaultBaseURL = "http://localhost:1234/v1"
 
 // Provider implements the Nexus provider interface for LM Studio.
 type Provider struct {
-	inner             *openai.Provider
-	baseURL           string
-	models            []provider.Model
-	extractToolCalls  bool
+	inner            *openai.Provider
+	baseURL          string
+	models           []provider.Model
+	extractToolCalls bool
 }
 
 // New creates a new LM Studio provider.

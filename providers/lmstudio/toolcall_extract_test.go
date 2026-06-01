@@ -115,8 +115,8 @@ func (f *fakeStream) Next(_ context.Context) (*provider.StreamChunk, error) {
 	f.idx++
 	return c, nil
 }
-func (f *fakeStream) Close() error             { return nil }
-func (f *fakeStream) Usage() *provider.Usage   { return f.usage }
+func (f *fakeStream) Close() error           { return nil }
+func (f *fakeStream) Usage() *provider.Usage { return f.usage }
 
 func TestExtractingStream_EmitsSyntheticToolCallChunk(t *testing.T) {
 	// Model dribbles content with a complete marker.
