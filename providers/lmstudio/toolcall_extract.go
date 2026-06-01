@@ -3,6 +3,7 @@ package lmstudio
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"regexp"
 	"strings"
@@ -38,13 +39,12 @@ import (
 // LM Studio provider uses it under the [WithToolCallExtraction] option;
 // other consumers can call it directly on the accumulator's final
 // content if they prefer post-stream extraction.
-func ExtractTextFormToolCalls(text string) ([]provider.ToolCall, string) {
+func ExtractTextFormToolCalls(text string) (calls []provider.ToolCall, cleaned string) {
 	if text == "" {
 		return nil, text
 	}
 
-	var calls []provider.ToolCall
-	cleaned := text
+	cleaned = text
 
 	// Pass 1: closed-form markers, draining all occurrences per regex.
 	for _, re := range closedPatterns {
@@ -258,7 +258,7 @@ func (s *extractingStream) Next(ctx context.Context) (*provider.StreamChunk, err
 		return nil, io.EOF
 	}
 	chunk, err := s.inner.Next(ctx)
-	if err == io.EOF {
+	if errors.Is(err, io.EOF) {
 		calls, _ := ExtractTextFormToolCalls(s.contentBuf.String())
 		s.pendingNext = true
 		for i := range calls {
