@@ -91,6 +91,27 @@ func TestProviderComplete(t *testing.T, p provider.Provider) {
 	}
 }
 
+// TestProviderRejectsMissingAPIKey verifies that a provider constructed without
+// a credential fails fast on Complete with provider.ErrMissingAPIKey, rather
+// than dispatching a request with an empty auth header and surfacing a cryptic
+// upstream 401. Pass a provider built with an empty API key — ideally pointed
+// at a mock server so a leaked network call is observable in the test.
+func TestProviderRejectsMissingAPIKey(t *testing.T, p provider.Provider) {
+	t.Helper()
+
+	ctx := context.Background()
+	_, err := p.Complete(ctx, &provider.CompletionRequest{
+		Model: "test-model",
+		Messages: []provider.Message{
+			{Role: "user", Content: "Hello"},
+		},
+		MaxTokens: 100,
+	})
+	if !errors.Is(err, provider.ErrMissingAPIKey) {
+		t.Fatalf("Complete() without an API key must return provider.ErrMissingAPIKey, got: %v", err)
+	}
+}
+
 // TestProviderEmbed runs a basic embedding test using a mock.
 func TestProviderEmbed(t *testing.T, p provider.Provider) {
 	t.Helper()

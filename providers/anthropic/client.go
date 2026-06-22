@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/xraph/nexus/provider"
@@ -49,6 +50,25 @@ type anthropicMessage struct {
 	Content any    `json:"content"`
 }
 
+// anthropicRequestBlock is a content block in an outbound message. Anthropic
+// has no "tool" role: a tool call is a tool_use block on an assistant message,
+// and a tool result is a tool_result block on a user message.
+type anthropicRequestBlock struct {
+	Type string `json:"type"` // text, tool_use, tool_result
+
+	// text
+	Text string `json:"text,omitempty"`
+
+	// tool_use
+	ID    string `json:"id,omitempty"`
+	Name  string `json:"name,omitempty"`
+	Input any    `json:"input,omitempty"`
+
+	// tool_result
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Content   any    `json:"content,omitempty"`
+}
+
 type anthropicTool struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
@@ -83,6 +103,10 @@ type anthropicContentBlock struct {
 }
 
 func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
+	if err := c.requireAPIKey(); err != nil {
+		return nil, err
+	}
+
 	antReq := c.toAnthropicRequest(req)
 	antReq.Stream = false
 
@@ -119,6 +143,10 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 }
 
 func (c *client) completeStream(ctx context.Context, req *provider.CompletionRequest) (provider.Stream, error) {
+	if err := c.requireAPIKey(); err != nil {
+		return nil, err
+	}
+
 	antReq := c.toAnthropicRequest(req)
 	antReq.Stream = true
 
@@ -174,6 +202,17 @@ func (c *client) ping(ctx context.Context) error {
 	return fmt.Errorf("anthropic: health check failed with status %d", httpResp.StatusCode)
 }
 
+// requireAPIKey fails fast when no credential is configured. Anthropic
+// authenticates with the x-api-key header; sending it empty yields a confusing
+// upstream 401 ("x-api-key header is required"), so we surface a clear local
+// error before any network round-trip instead.
+func (c *client) requireAPIKey() error {
+	if c.apiKey == "" {
+		return fmt.Errorf("anthropic: %w", provider.ErrMissingAPIKey)
+	}
+	return nil
+}
+
 func (c *client) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", c.apiKey)
@@ -183,10 +222,14 @@ func (c *client) setHeaders(req *http.Request) {
 func (c *client) toAnthropicRequest(req *provider.CompletionRequest) *anthropicRequest {
 	messages := make([]anthropicMessage, 0, len(req.Messages))
 
-	// Extract system message
+	// Extract system message, and translate OpenAI-style roles to the
+	// Anthropic shape. Anthropic only accepts "user" and "assistant": a
+	// "tool" result message becomes a user message with a tool_result block,
+	// and an assistant tool call becomes a tool_use block.
 	system := req.System
 	for _, m := range req.Messages {
-		if m.Role == "system" {
+		switch m.Role {
+		case "system":
 			if s, ok := m.Content.(string); ok {
 				if system == "" {
 					system = s
@@ -194,12 +237,45 @@ func (c *client) toAnthropicRequest(req *provider.CompletionRequest) *anthropicR
 					system += "\n\n" + s
 				}
 			}
-			continue
+
+		case "tool":
+			// OpenAI sends tool output as its own message keyed by
+			// tool_call_id; Anthropic carries it as a tool_result block on a
+			// user turn referencing the originating tool_use.
+			messages = append(messages, anthropicMessage{
+				Role: "user",
+				Content: []anthropicRequestBlock{{
+					Type:      "tool_result",
+					ToolUseID: m.ToolCallID,
+					Content:   messageText(m.Content),
+				}},
+			})
+
+		case "assistant":
+			if len(m.ToolCalls) == 0 {
+				messages = append(messages, anthropicMessage{Role: "assistant", Content: m.Content})
+				break
+			}
+			// An assistant turn that calls tools must serialize each call as a
+			// tool_use block (with the arguments as a JSON object, not a
+			// string), preceded by any accompanying text.
+			blocks := make([]anthropicRequestBlock, 0, len(m.ToolCalls)+1)
+			if text := messageText(m.Content); text != "" {
+				blocks = append(blocks, anthropicRequestBlock{Type: "text", Text: text})
+			}
+			for _, tc := range m.ToolCalls {
+				blocks = append(blocks, anthropicRequestBlock{
+					Type:  "tool_use",
+					ID:    tc.ID,
+					Name:  tc.Function.Name,
+					Input: toolInput(tc.Function.Arguments),
+				})
+			}
+			messages = append(messages, anthropicMessage{Role: "assistant", Content: blocks})
+
+		default: // "user" and anything else
+			messages = append(messages, anthropicMessage{Role: m.Role, Content: m.Content})
 		}
-		messages = append(messages, anthropicMessage{
-			Role:    m.Role,
-			Content: m.Content,
-		})
 	}
 
 	maxTokens := req.MaxTokens
@@ -235,6 +311,46 @@ func (c *client) toAnthropicRequest(req *provider.CompletionRequest) *anthropicR
 	}
 
 	return antReq
+}
+
+// messageText flattens a message's Content to a plain string for use inside a
+// tool_result block or as text content. Strings pass through; multimodal parts
+// contribute their text; anything else falls back to its JSON encoding.
+func messageText(content any) string {
+	switch v := content.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case []provider.ContentPart:
+		var b strings.Builder
+		for _, p := range v {
+			b.WriteString(p.Text)
+		}
+		return b.String()
+	default:
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return string(raw)
+	}
+}
+
+// toolInput converts an OpenAI tool-call arguments string (always JSON) into
+// the JSON object Anthropic expects for a tool_use block's `input`. Empty
+// arguments become an empty object; malformed JSON is passed through as a
+// string so the request still marshals (Anthropic then reports the schema
+// error) rather than failing to build the body at all.
+func toolInput(arguments string) any {
+	s := strings.TrimSpace(arguments)
+	if s == "" {
+		return json.RawMessage("{}")
+	}
+	if json.Valid([]byte(s)) {
+		return json.RawMessage(s)
+	}
+	return s
 }
 
 func (c *client) fromAnthropicResponse(resp *anthropicResponse, elapsed time.Duration) *provider.CompletionResponse {

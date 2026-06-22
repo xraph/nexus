@@ -580,6 +580,15 @@ func TestConformance_Complete(t *testing.T) {
 	providertest.TestProviderComplete(t, p)
 }
 
+func TestConformance_RejectsMissingAPIKey(t *testing.T) {
+	// Point at a mock server so a regression (a network call slipping through)
+	// is observable rather than reaching out to the real API.
+	mock := testutil.NewMockServer(t)
+	p := anthropic.New("", anthropic.WithBaseURL(mock.Server.URL))
+
+	providertest.TestProviderRejectsMissingAPIKey(t, p)
+}
+
 // --------------------------------------------------------------------
 // Compile-time interface check
 // --------------------------------------------------------------------
