@@ -70,6 +70,9 @@ func (s *service) Create(_ context.Context, input *CreateInput) (*Job, error) {
 	s.mu.Unlock()
 
 	// Start processing in background.
+	// #nosec G118 -- deliberate: a submitted batch job must outlive the request
+	// that created it, and callers poll it via Get(jobID). Inheriting the request
+	// context would cancel the job the moment the caller's HTTP request returned.
 	go s.process(context.Background(), job, concurrency)
 
 	return job, nil

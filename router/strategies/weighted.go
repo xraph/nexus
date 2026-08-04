@@ -49,7 +49,7 @@ func (s *WeightedStrategy) Select(_ context.Context, _ *provider.CompletionReque
 	}
 
 	// Weighted random selection
-	r := rand.Float64() * totalWeight //nolint:gosec // G404 -- weighted selection, not security-sensitive
+	r := rand.Float64() * totalWeight // #nosec G404 -- weighted selection, not security-sensitive
 	for _, item := range items {
 		r -= item.weight
 		if r <= 0 {
