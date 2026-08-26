@@ -3,7 +3,7 @@ module github.com/xraph/nexus/grpcsrv
 go 1.26.0
 
 require (
-	github.com/xraph/nexus v0.0.0
+	github.com/xraph/nexus v1.6.2
 	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
 )
