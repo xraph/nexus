@@ -6,8 +6,8 @@ github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRI
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-github.com/xraph/go-utils v1.1.6 h1:eFN4dnTnC4+dzbD+6/4Bhlx7fGawi3flsLEVx9YFakQ=
-github.com/xraph/go-utils v1.1.6/go.mod h1:Mckdi+nR0bI4bUESKSYajJq4tNSPsvZiuLRYJ0+qDQw=
+github.com/xraph/go-utils v1.1.8 h1:O8+Vie/u/ntn2cEbvh47jJLzQ6S7qwxhYwgRm2SL1sw=
+github.com/xraph/go-utils v1.1.8/go.mod h1:Mckdi+nR0bI4bUESKSYajJq4tNSPsvZiuLRYJ0+qDQw=
 go.jetify.com/typeid/v2 v2.0.0-alpha.3 h1:T6RPx6bNl10lp0JN2Xz/XcgLZWSlVmL58Xqy9cgTCcc=
 go.jetify.com/typeid/v2 v2.0.0-alpha.3/go.mod h1:zfD1ZDHDJNgXZANsO9jDOD81XRRQ0zAOnDBEHmIV/Gw=
 go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
