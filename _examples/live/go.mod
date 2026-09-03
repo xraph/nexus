@@ -3,7 +3,7 @@ module github.com/xraph/nexus/_examples/live
 go 1.26.0
 
 require (
-	github.com/xraph/nexus v0.0.0
+	github.com/xraph/nexus v1.6.2
 	github.com/xraph/nexus/providers/geminilive v0.0.0
 )
 
