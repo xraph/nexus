@@ -14,13 +14,10 @@ import (
 	"fmt"
 
 	"github.com/xraph/forge"
-	dashboard "github.com/xraph/forge/extensions/dashboard"
-	"github.com/xraph/forge/extensions/dashboard/contributor"
 	"github.com/xraph/grove"
 	"github.com/xraph/vessel"
 
 	nexus "github.com/xraph/nexus"
-	nexusdash "github.com/xraph/nexus/dashboard"
 	"github.com/xraph/nexus/store"
 	mongostore "github.com/xraph/nexus/store/mongo"
 	pgstore "github.com/xraph/nexus/store/postgres"
@@ -36,11 +33,8 @@ const ExtensionDescription = "Composable AI gateway — route, cache, guard, and
 // ExtensionVersion is the semantic version.
 const ExtensionVersion = "0.1.0"
 
-// Ensure Extension implements forge.Extension and dashboard.DashboardAware at compile time.
-var (
-	_ forge.Extension          = (*Extension)(nil)
-	_ dashboard.DashboardAware = (*Extension)(nil)
-)
+// Ensure Extension implements forge.Extension at compile time.
+var _ forge.Extension = (*Extension)(nil)
 
 // Extension adapts Nexus as a Forge extension.
 type Extension struct {
@@ -327,25 +321,6 @@ func (e *Extension) resolveGroveDB(fapp forge.App) (*grove.DB, error) {
 		return nil, fmt.Errorf("default grove database not found in container: %w", err)
 	}
 	return db, nil
-}
-
-// DashboardContributor implements dashboard.DashboardAware. It returns a
-// LocalContributor that renders nexus pages, widgets, and settings in the
-// Forge dashboard using templ + ForgeUI.
-func (e *Extension) DashboardContributor() contributor.LocalContributor {
-	return nexusdash.New(
-		nexusdash.NewManifest(),
-		e.gateway,
-		nexusdash.GatewayConfig{
-			BasePath:          e.config.BasePath,
-			DefaultTimeout:    e.config.DefaultTimeout,
-			DefaultMaxRetries: e.config.DefaultMaxRetries,
-			GlobalRateLimit:   e.config.GlobalRateLimit,
-			LogLevel:          e.config.LogLevel,
-			EnableUsage:       e.config.EnableUsage,
-			EnableCache:       e.config.EnableCache,
-		},
-	)
 }
 
 // buildStoreFromGroveDB constructs the appropriate store backend
