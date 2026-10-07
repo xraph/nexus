@@ -90,6 +90,9 @@ func init() {
 					{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}},
 					{Keys: bson.D{{Key: "provider", Value: 1}}},
 					{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "provider", Value: 1}, {Key: "model", Value: 1}}},
+					// Operator-wide queries (no tenant) sort by time and filter by key.
+					{Keys: bson.D{{Key: "created_at", Value: -1}}},
+					{Keys: bson.D{{Key: "key_id", Value: 1}}},
 				})
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
@@ -122,6 +125,8 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "provider", Value: 1}}},
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "provider", Value: 1}, {Key: "model", Value: 1}}},
+			{Keys: bson.D{{Key: "created_at", Value: -1}}},
+			{Keys: bson.D{{Key: "key_id", Value: 1}}},
 		},
 	}
 }

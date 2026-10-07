@@ -98,3 +98,30 @@ func TestDocumentFromAnOldBinaryReadsAsUnpriced(t *testing.T) {
 		t.Fatalf("old binary $0.25 document = cost %v, status %s; want 0.25 and priced", got.CostUSD, got.PricingStatus)
 	}
 }
+
+func TestUsageIndexesCoverOperatorWideQueries(t *testing.T) {
+	ctx := context.Background()
+	db, name := storetest.OpenMongoDB(t)
+	if err := mongostore.New(db).Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	cur, err := storetest.MongoClient(t).Database(name).Collection("nexus_usage_records").Indexes().List(ctx)
+	if err != nil {
+		t.Fatalf("list indexes: %v", err)
+	}
+	var specs []struct {
+		Name string `bson:"name"`
+	}
+	if err := cur.All(ctx, &specs); err != nil {
+		t.Fatalf("read indexes: %v", err)
+	}
+	have := map[string]bool{}
+	for _, sp := range specs {
+		have[sp.Name] = true
+	}
+	for _, want := range []string{"created_at_-1", "key_id_1"} {
+		if !have[want] {
+			t.Errorf("usage collection has no %s index; have %v", want, have)
+		}
+	}
+}

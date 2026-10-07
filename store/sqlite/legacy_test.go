@@ -149,3 +149,54 @@ func TestRowFromAnOldBinaryReadsAsUnpriced(t *testing.T) {
 		t.Fatalf("old binary row = cost %v, status %s; want unknown and unpriced_model", got.CostUSD, got.PricingStatus)
 	}
 }
+
+// A run that died after creating usage_records_next must not stop the next
+// run, and a run that fails must leave the old table as it was.
+func TestRebuildMigrationIsRerunnableAndAtomic(t *testing.T) {
+	ctx := context.Background()
+	db := storetest.OpenSQLiteDB(t)
+	raw := sqlitedriver.Unwrap(db)
+	if _, err := raw.Exec(ctx, legacyUsageSchema); err != nil {
+		t.Fatalf("legacy schema: %v", err)
+	}
+	if _, err := raw.Exec(ctx, `CREATE TABLE usage_records_next (junk TEXT)`); err != nil {
+		t.Fatalf("leftover table: %v", err)
+	}
+	rowID := id.NewUsageID().String()
+	insertLegacyRow(t, db, rowID, "2026-10-01 10:00:00", 0.5)
+
+	s := sqlitestore.New(db)
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("migrate with a leftover usage_records_next: %v", err)
+	}
+	got := storetest.FindRecord(t, s, id.MustParseUsageID(rowID))
+	if got.CostUSD == nil || got.CostUSD.String() != "0.5" || got.PricingStatus != usage.PricingPriced {
+		t.Fatalf("migrated row = cost %v, status %s", got.CostUSD, got.PricingStatus)
+	}
+}
+
+func TestFailedRebuildLeavesNoPartialTable(t *testing.T) {
+	ctx := context.Background()
+	db := storetest.OpenSQLiteDB(t)
+	raw := sqlitedriver.Unwrap(db)
+	// No cached column: the copy fails after usage_records_next was created.
+	if _, err := raw.Exec(ctx, `CREATE TABLE usage_records (id TEXT PRIMARY KEY, tenant_id TEXT, key_id TEXT,
+        request_id TEXT, provider TEXT, model TEXT, prompt_tokens INTEGER, completion_tokens INTEGER,
+        total_tokens INTEGER, cost_usd REAL, latency_ns INTEGER, status_code INTEGER, created_at TEXT)`); err != nil {
+		t.Fatalf("broken legacy schema: %v", err)
+	}
+	if err := sqlitestore.New(db).Migrate(); err == nil {
+		t.Fatalf("migrate over a table with no cached column should fail")
+	}
+	var n int
+	if err := raw.QueryRow(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name = 'usage_records_next'`).Scan(&n); err != nil {
+		t.Fatalf("look for the partial table: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("a failed rebuild left usage_records_next behind")
+	}
+	// The connection must not be left inside the failed transaction.
+	if _, err := raw.Exec(ctx, `BEGIN; COMMIT;`); err != nil {
+		t.Fatalf("connection is stuck in a transaction: %v", err)
+	}
+}

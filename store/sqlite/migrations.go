@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 
 	"github.com/xraph/grove/migrate"
 )
@@ -105,7 +106,15 @@ CREATE INDEX IF NOT EXISTS idx_usage_created ON usage_records(created_at);
 			Version: "20261007000001",
 			Comment: "Rebuild usage_records with TEXT cost, outcome fields, nullable attribution and sortable times",
 			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// One Exec runs on one connection, so BEGIN and COMMIT bracket
+				// the whole rebuild. A leftover usage_records_next from an
+				// earlier failed run is dropped first. If a statement fails the
+				// transaction is still open on that connection, so roll it back.
 				_, err := exec.Exec(ctx, `
+DROP TABLE IF EXISTS usage_records_next;
+
+BEGIN;
+
 CREATE TABLE usage_records_next (
     id                TEXT PRIMARY KEY,
     tenant_id         TEXT,
@@ -156,7 +165,14 @@ ALTER TABLE usage_records_next RENAME TO usage_records;
 CREATE INDEX IF NOT EXISTS idx_usage_tenant ON usage_records(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_usage_created ON usage_records(created_at);
 CREATE INDEX IF NOT EXISTS idx_usage_key ON usage_records(key_id);
+
+COMMIT;
 `)
+				if err != nil {
+					if _, rbErr := exec.Exec(ctx, `ROLLBACK`); rbErr != nil {
+						return errors.Join(err, rbErr)
+					}
+				}
 				return err
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {

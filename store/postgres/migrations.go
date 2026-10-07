@@ -144,11 +144,20 @@ UPDATE nexus_usage_records SET key_id = NULL WHERE key_id = '';
 UPDATE nexus_usage_records SET request_id = NULL WHERE request_id = '';
 
 CREATE INDEX IF NOT EXISTS idx_nexus_usage_key ON nexus_usage_records(key_id);
+
+-- Lists page by id in byte order (the cursor compares ids as bytes), which
+-- the default collation cannot use an index for.
+CREATE INDEX IF NOT EXISTS idx_nexus_usage_id_c ON nexus_usage_records (id COLLATE "C");
+CREATE INDEX IF NOT EXISTS idx_nexus_tenants_id_c ON nexus_tenants (id COLLATE "C");
+CREATE INDEX IF NOT EXISTS idx_nexus_api_keys_id_c ON nexus_api_keys (id COLLATE "C");
 `)
 				return err
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
 				_, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_nexus_api_keys_id_c;
+DROP INDEX IF EXISTS idx_nexus_tenants_id_c;
+DROP INDEX IF EXISTS idx_nexus_usage_id_c;
 DROP INDEX IF EXISTS idx_nexus_usage_key;
 ALTER TABLE nexus_usage_records
     DROP COLUMN IF EXISTS refusal_code,
