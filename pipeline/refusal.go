@@ -53,6 +53,8 @@ func (e *RefusalError) Unwrap() error       { return e.Cause }
 func (e *RefusalError) RefusalCode() string { return e.Code }
 func (e *RefusalError) StatusCode() int     { return e.Status }
 
+var _ Refusal = &RefusalError{}
+
 // HTTPStatus maps err to the status and code an HTTP edge should answer
 // with: a refusal's own, or 500 internal_error for anything else.
 func HTTPStatus(err error) (status int, code string) {

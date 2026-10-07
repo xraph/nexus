@@ -46,7 +46,10 @@ func (m *RetryMiddleware) Process(ctx context.Context, _ *pipeline.Request, next
 			return resp, nil
 		}
 		lastErr = err
-		if !retryable(err) {
+		// Only the request's own context knows it has no time left. A
+		// provider client's timeout also satisfies errors.Is(err,
+		// context.DeadlineExceeded), and that one is worth another try.
+		if !retryable(err) || ctx.Err() != nil {
 			return nil, err
 		}
 	}
@@ -55,14 +58,10 @@ func (m *RetryMiddleware) Process(ctx context.Context, _ *pipeline.Request, next
 }
 
 // retryable reports whether another attempt could succeed. A refusal or a
-// guard block will refuse again, a permanent error will fail again, and a
-// canceled or expired context has no time left.
+// guard block will refuse again, and a permanent error will fail again.
+// Whether the request has run out of time is the caller's check, on its
+// context.
 func retryable(err error) bool {
 	var refused pipeline.Refusal
-	switch {
-	case errors.As(err, &refused), pipeline.IsPermanent(err),
-		errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return false
-	}
-	return true
+	return !errors.As(err, &refused) && !pipeline.IsPermanent(err)
 }
