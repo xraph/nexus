@@ -39,8 +39,8 @@ type Quota struct {
 	MonthlyBudgetUSD money.USD `json:"monthly_budget_usd"` // max spend per month, exact; zero means no budget
 	MaxTokensPerReq  int       `json:"max_tokens_per_req"` // max tokens per single request
 
-	// Streaming-specific limits. Enforced by middlewares.NewStreamLifecycle
-	// when wired with a QuotaResolver.
+	// Streaming-specific limits. The gateway enforces them by default,
+	// through the stream lifecycle stage reading the tenant's quota.
 	MaxStreamDuration time.Duration `json:"max_stream_duration,omitempty"` // wall-clock cap per stream (0 = unlimited)
 	MaxStreamTokens   int           `json:"max_stream_tokens,omitempty"`   // output-token cap per stream (0 = unlimited)
 }

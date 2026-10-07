@@ -33,6 +33,7 @@ import (
 	"github.com/xraph/nexus/pipeline/middlewares"
 	"github.com/xraph/nexus/plugin"
 	"github.com/xraph/nexus/provider"
+	"github.com/xraph/nexus/ratelimit"
 	"github.com/xraph/nexus/router"
 	"github.com/xraph/nexus/router/strategies"
 	"github.com/xraph/nexus/store"
@@ -69,6 +70,12 @@ type Gateway struct {
 
 	// usageMW is the usage stage, kept so Shutdown can flush it.
 	usageMW *middlewares.UsageMiddleware
+
+	// limiter counts requests and tokens per minute for the quota stage.
+	limiter ratelimit.Limiter
+
+	// quotaMW is the quota stage, kept so the gateway can report limiter failures.
+	quotaMW *middlewares.QuotaMiddleware
 
 	// Model alias registry
 	aliasRegistry model.AliasRegistry
@@ -163,6 +170,10 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 	// Initialize engine
 	gw.engine = newEngine(gw)
 
+	if gw.limiter == nil {
+		gw.limiter = ratelimit.NewMemory()
+	}
+
 	// Build default pipeline if not set
 	if gw.pipeline == nil {
 		p, err := gw.buildDefaultPipeline()
@@ -209,11 +220,32 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 	// Priority 30: Identity (tenant isolation for the cache depends on it)
 	b.Use(middlewares.NewIdentity())
 
+	// Priority 40: tenant status and key scopes
+	b.Use(middlewares.NewAccess(gw.tenant, gw.key))
+
+	// Priority 50: token cap, daily requests, budget, RPM and TPM. The stage
+	// reads usage from the store, so it needs the usage service.
+	if gw.usage != nil {
+		var budgetEvents middlewares.BudgetEvents
+		if gw.extensions != nil {
+			budgetEvents = gw.extensions
+		}
+		gw.quotaMW = middlewares.NewQuota(middlewares.QuotaConfig{
+			Usage: gw.usage, Limiter: gw.limiter, Events: budgetEvents,
+			GlobalRPM: gw.config.GlobalRateLimit, Log: gw.logger,
+		})
+		b.Use(gw.quotaMW)
+	}
+
 	// Priority 60: Stream lifecycle hooks (only meaningful when extensions
 	// are registered; the middleware short-circuits when the registry is
 	// empty or the request isn't a stream).
 	if gw.extensions != nil {
-		b.Use(middlewares.NewStreamLifecycle(gw.extensions, gw.streamLifecycleCfg))
+		cfg := gw.streamLifecycleCfg
+		if cfg.QuotaResolver == nil {
+			cfg.QuotaResolver = middlewares.TenantStreamQuota
+		}
+		b.Use(middlewares.NewStreamLifecycle(gw.extensions, cfg))
 	}
 
 	// Priority 150: Input guardrails (if configured)
@@ -342,6 +374,26 @@ func (gw *Gateway) UsageInsertErrors() int64 {
 
 // PriceBook returns the price book the usage stage prices requests with.
 func (gw *Gateway) PriceBook() *model.PriceBook { return gw.priceBook }
+
+// Limiter is the RPM and TPM limiter in use.
+func (gw *Gateway) Limiter() ratelimit.Limiter { return gw.limiter }
+
+// LimiterErrors counts limiter failures that let a request through.
+func (gw *Gateway) LimiterErrors() int64 {
+	if gw.quotaMW == nil {
+		return 0
+	}
+	return gw.quotaMW.LimiterErrors()
+}
+
+// FlushUsage waits until every usage record taken so far is stored, without
+// closing the stage. Shutdown flushes on its own.
+func (gw *Gateway) FlushUsage(ctx context.Context) error {
+	if gw.usageMW == nil {
+		return nil
+	}
+	return gw.usageMW.Flush(ctx)
+}
 
 // Health checks the health of the Gateway.
 func (gw *Gateway) Health(_ context.Context) error {

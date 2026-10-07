@@ -175,6 +175,9 @@ func (e *Extension) applyConfigToGatewayOpts() {
 	if e.config.EnableUsage != nil {
 		opts = append(opts, nexus.WithUsageEnabled(*e.config.EnableUsage))
 	}
+	if e.config.RequireAPIKey != nil {
+		opts = append(opts, nexus.WithRequireAPIKey(*e.config.RequireAPIKey))
+	}
 	if e.config.EnableCache {
 		opts = append(opts, nexus.WithCacheEnabled(true))
 	}
@@ -276,6 +279,9 @@ func (e *Extension) mergeWithDefaults(cfg Config) Config {
 	if cfg.EnableUsage == nil {
 		cfg.EnableUsage = defaults.EnableUsage
 	}
+	if cfg.RequireAPIKey == nil {
+		cfg.RequireAPIKey = defaults.RequireAPIKey
+	}
 
 	return cfg
 }
@@ -319,6 +325,9 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 	// Pointer fields: YAML takes precedence.
 	if yamlConfig.EnableUsage == nil && programmaticConfig.EnableUsage != nil {
 		yamlConfig.EnableUsage = programmaticConfig.EnableUsage
+	}
+	if yamlConfig.RequireAPIKey == nil && programmaticConfig.RequireAPIKey != nil {
+		yamlConfig.RequireAPIKey = programmaticConfig.RequireAPIKey
 	}
 
 	// Fill remaining zeros with defaults.

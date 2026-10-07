@@ -71,3 +71,30 @@ func TestExplicitGatewayOptionsBeatConfig(t *testing.T) {
 		t.Fatalf("timeout = %v, the explicit option must win", gw.Config().DefaultTimeout)
 	}
 }
+
+func TestRequireAPIKeyReachesTheGatewayAndAnExplicitOptionWins(t *testing.T) {
+	off := false
+	build := func(cfgValue *bool, opts ...Option) *nexus.Gateway {
+		e := New(opts...)
+		e.SetLogger(forge.NewNoopLogger())
+		e.config = Config{RequireAPIKey: cfgValue, LogLevel: "info"}
+		e.applyConfigToGatewayOpts()
+		gw := nexus.New(e.gatewayOpts...)
+		if err := gw.Initialize(context.Background()); err != nil {
+			t.Fatalf("initialize: %v", err)
+		}
+		return gw
+	}
+	if build(&off).Config().RequireAPIKey {
+		t.Fatalf("require_api_key=false in the config must reach the gateway")
+	}
+	if !build(nil).Config().RequireAPIKey {
+		t.Fatalf("an unset require_api_key must leave the gateway default, true")
+	}
+	if !build(&off, WithGatewayOption(nexus.WithRequireAPIKey(true))).Config().RequireAPIKey {
+		t.Fatalf("WithGatewayOption(WithRequireAPIKey(true)) was overridden by config false")
+	}
+	if d := DefaultConfig().RequireAPIKey; d == nil || !*d {
+		t.Fatalf("the default config must require a key")
+	}
+}

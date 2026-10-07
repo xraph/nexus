@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/nexus/pipeline/middlewares"
 	"github.com/xraph/nexus/plugin"
 	"github.com/xraph/nexus/provider"
+	"github.com/xraph/nexus/ratelimit"
 	"github.com/xraph/nexus/router"
 	"github.com/xraph/nexus/store"
 	"github.com/xraph/nexus/tenant"
@@ -221,6 +222,13 @@ func WithUsageService(s usage.Service) Option { return func(gw *Gateway) { gw.us
 // WithUsageEnabled turns usage recording on or off (default on). Off is the
 // one way to stop recording; the usage service is still built for reads.
 func WithUsageEnabled(on bool) Option { return func(gw *Gateway) { gw.config.EnableUsage = on } }
+
+// WithRequireAPIKey turns key enforcement at the HTTP edges on or off.
+func WithRequireAPIKey(on bool) Option { return func(gw *Gateway) { gw.config.RequireAPIKey = on } }
+
+// WithLimiter sets the RPM and TPM limiter. The default is in-process
+// (ratelimit.NewMemory), which applies per replica.
+func WithLimiter(l ratelimit.Limiter) Option { return func(gw *Gateway) { gw.limiter = l } }
 
 // WithCacheEnabled turns the response cache on. Without WithCache it is an
 // in-memory cache with the default size and TTL.

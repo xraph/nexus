@@ -30,6 +30,10 @@ type Config struct {
 	// EnableUsage enables usage tracking (default: true).
 	EnableUsage *bool `json:"enable_usage" mapstructure:"enable_usage" yaml:"enable_usage"`
 
+	// RequireAPIKey makes the HTTP edges refuse a request without a valid
+	// nxs_ key (default: true).
+	RequireAPIKey *bool `json:"require_api_key" mapstructure:"require_api_key" yaml:"require_api_key"`
+
 	// EnableCache enables response caching (default: false).
 	EnableCache bool `json:"enable_cache" mapstructure:"enable_cache" yaml:"enable_cache"`
 
@@ -47,6 +51,7 @@ type Config struct {
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() Config {
 	enableUsage := true
+	requireAPIKey := true
 	return Config{
 		BasePath:          "/nexus",
 		DefaultTimeout:    30 * time.Second,
@@ -54,6 +59,7 @@ func DefaultConfig() Config {
 		GlobalRateLimit:   0,
 		LogLevel:          "info",
 		EnableUsage:       &enableUsage,
+		RequireAPIKey:     &requireAPIKey,
 		EnableCache:       false,
 	}
 }

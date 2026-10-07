@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,12 +15,14 @@ import (
 	"github.com/xraph/nexus/cache/stores"
 	"github.com/xraph/nexus/guard"
 	"github.com/xraph/nexus/id"
+	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/pipeline/middlewares"
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/router/strategies"
 	"github.com/xraph/nexus/store"
+	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/usage"
 )
 
@@ -100,9 +103,25 @@ func gatewayOn(t *testing.T, s store.Store, fn func(ctx context.Context, gw *nex
 	return res.Items
 }
 
+// tenantAndKey creates a real tenant and a key for it, because the access
+// stage refuses a tenant or key the store does not know.
+func tenantAndKey(t *testing.T, gw *nexus.Gateway) (tenantID, keyID string) {
+	t.Helper()
+	tn, err := gw.Tenants().Create(context.Background(), &tenant.CreateInput{Name: "Acme", Slug: "acme-" + strings.ToLower(id.NewTenantID().String())})
+	if err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	k, _, err := gw.Keys().Create(context.Background(), &key.CreateInput{TenantID: tn.ID.String(), Name: "k"})
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	return tn.ID.String(), k.ID.String()
+}
+
 func TestACompletionIsRecordedPricedAndAttributed(t *testing.T) {
-	tenant, key := id.NewTenantID().String(), id.NewKeyID().String()
+	var tenant, key string
 	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		tenant, key = tenantAndKey(t, gw)
 		_, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "gpt-4o", TenantID: tenant, KeyID: key,
 			Messages: []provider.Message{{Role: "user", Content: "hi"}}})
 		if err != nil {
@@ -142,9 +161,11 @@ func TestTheSameModelIsPricedAtTheProviderThatServedIt(t *testing.T) {
 }
 
 func TestACacheHitIsRecordedAndTenantsDoNotShare(t *testing.T) {
-	a, b := id.NewTenantID().String(), id.NewTenantID().String()
+	var a, b string
 	p := &fakeProvider{name: "openai", price: listPrice}
 	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		a, _ = tenantAndKey(t, gw)
+		b, _ = tenantAndKey(t, gw)
 		for _, tenant := range []string{a, a, b} {
 			_, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "gpt-4o", TenantID: tenant, Messages: []provider.Message{{Role: "user", Content: "same"}}})
 			if err != nil {
@@ -241,8 +262,8 @@ func TestConcurrentRequestsAreChargedOncePerProviderCall(t *testing.T) {
 	// request is still carrying, and must never read as a charge.
 	const requests = 20
 	p := &slowProvider{fakeProvider: &fakeProvider{name: "openai", price: listPrice}, delay: 5 * time.Millisecond}
-	tenant := id.NewTenantID().String()
 	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		tenant, _ := tenantAndKey(t, gw)
 		var wg sync.WaitGroup
 		for i := range requests {
 			wg.Add(1)
@@ -489,9 +510,10 @@ func TestShutdownReturnsTheFlushErrorWhenAnInsertIsStuck(t *testing.T) {
 }
 
 func TestAMismatchedIdentityIsRefusedAndChargedToNeitherTenant(t *testing.T) {
-	a, b := id.NewTenantID().String(), id.NewTenantID().String()
 	p := &fakeProvider{name: "openai", price: listPrice}
 	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		a, _ := tenantAndKey(t, gw)
+		b, _ := tenantAndKey(t, gw)
 		ctx = pipeline.WithTenantID(ctx, a)
 		_, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "gpt-4o", TenantID: b, Messages: []provider.Message{{Role: "user", Content: "hi"}}})
 		var refused pipeline.Refusal
@@ -553,9 +575,11 @@ func TestAStreamCacheReplayIsRecordedAsCached(t *testing.T) {
 }
 
 func TestATenantNamedOnlyInTheContextIsRecordedAndCachedApart(t *testing.T) {
-	a, b := id.NewTenantID().String(), id.NewTenantID().String()
+	var a, b string
 	p := &fakeProvider{name: "openai", price: listPrice}
 	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		a, _ = tenantAndKey(t, gw)
+		b, _ = tenantAndKey(t, gw)
 		for _, tenant := range []string{a, a, b} {
 			tctx := pipeline.WithTenantID(ctx, tenant)
 			if _, err := gw.Engine().Complete(tctx, &provider.CompletionRequest{Model: "gpt-4o", Messages: []provider.Message{{Role: "user", Content: "same"}}}); err != nil {
