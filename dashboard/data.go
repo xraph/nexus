@@ -19,7 +19,11 @@ func fetchTenants(ctx context.Context, gw *nexus.Gateway, opts *tenant.ListOptio
 	if gw == nil || gw.Tenants() == nil {
 		return nil, 0, nil
 	}
-	return gw.Tenants().List(ctx, opts)
+	res, err := gw.Tenants().List(ctx, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	return res.Items, len(res.Items), nil
 }
 
 func fetchTenant(ctx context.Context, gw *nexus.Gateway, id string) (*tenant.Tenant, error) {
@@ -33,11 +37,11 @@ func fetchTenantCount(ctx context.Context, gw *nexus.Gateway) int {
 	if gw == nil || gw.Tenants() == nil {
 		return 0
 	}
-	_, total, err := gw.Tenants().List(ctx, &tenant.ListOptions{Limit: 1})
+	res, err := gw.Tenants().List(ctx, &tenant.ListOptions{Limit: 1})
 	if err != nil {
 		return 0
 	}
-	return total
+	return len(res.Items)
 }
 
 // --- Key fetchers ---
@@ -53,12 +57,12 @@ func fetchAllKeys(ctx context.Context, gw *nexus.Gateway) []*key.APIKey {
 	if gw == nil || gw.Tenants() == nil || gw.Keys() == nil {
 		return nil
 	}
-	tenants, _, err := gw.Tenants().List(ctx, &tenant.ListOptions{Limit: 1000})
+	res, err := gw.Tenants().List(ctx, &tenant.ListOptions{Limit: 1000})
 	if err != nil {
 		return nil
 	}
 	var all []*key.APIKey
-	for _, t := range tenants {
+	for _, t := range res.Items {
 		keys, err := gw.Keys().List(ctx, t.ID.String())
 		if err == nil {
 			all = append(all, keys...)
@@ -120,15 +124,22 @@ func fetchUsageRecords(ctx context.Context, gw *nexus.Gateway, opts *usage.Query
 	if gw == nil || gw.Usage() == nil {
 		return nil, 0, nil
 	}
-	return gw.Usage().Query(ctx, opts)
+	res, err := gw.Usage().Query(ctx, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	return res.Items, len(res.Items), nil
 }
 
 func fetchRecentUsage(ctx context.Context, gw *nexus.Gateway, limit int) ([]*usage.Record, error) {
 	if gw == nil || gw.Usage() == nil {
 		return nil, nil
 	}
-	records, _, err := gw.Usage().Query(ctx, &usage.QueryOptions{Limit: limit})
-	return records, err
+	res, err := gw.Usage().Query(ctx, &usage.QueryOptions{Limit: limit})
+	if err != nil {
+		return nil, err
+	}
+	return res.Items, nil
 }
 
 // --- Model/Provider fetchers ---

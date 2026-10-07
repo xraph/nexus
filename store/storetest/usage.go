@@ -80,15 +80,20 @@ func SameRecord(t *testing.T, got, want *usage.Record) {
 // FindRecord returns the record with the given id from an unfiltered query.
 func FindRecord(t *testing.T, s store.Store, rid id.UsageID) *usage.Record {
 	t.Helper()
-	records, _, err := s.Usage().Query(context.Background(), &usage.QueryOptions{Limit: 500})
-	if err != nil {
-		t.Fatalf("query: %v", err)
-	}
-	for _, r := range records {
-		if r.ID.String() == rid.String() {
-			return r
+	cursor := ""
+	for {
+		res, err := s.Usage().Query(context.Background(), &usage.QueryOptions{Limit: 500, Cursor: cursor})
+		if err != nil {
+			t.Fatalf("query: %v", err)
 		}
+		for _, r := range res.Items {
+			if r.ID.String() == rid.String() {
+				return r
+			}
+		}
+		if res.NextCursor == "" {
+			t.Fatalf("record %s not found", rid)
+		}
+		cursor = res.NextCursor
 	}
-	t.Fatalf("record %s not found", rid)
-	return nil
 }

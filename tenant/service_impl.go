@@ -89,12 +89,9 @@ func (s *service) Delete(ctx context.Context, tenantID string) error {
 	return s.store.Delete(ctx, tenantID)
 }
 
-func (s *service) List(ctx context.Context, opts *ListOptions) ([]*Tenant, int, error) {
+func (s *service) List(ctx context.Context, opts *ListOptions) (*ListResult, error) {
 	if opts == nil {
-		opts = &ListOptions{Limit: 50}
-	}
-	if opts.Limit <= 0 {
-		opts.Limit = 50
+		opts = &ListOptions{}
 	}
 	return s.store.List(ctx, opts)
 }

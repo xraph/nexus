@@ -73,11 +73,19 @@ type UpdateInput struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
-// ListOptions configures tenant listing.
+// ListOptions configures tenant listing. Search matches name or slug,
+// anywhere, ignoring case. Lists are newest first and cursor paged.
 type ListOptions struct {
 	Status string `json:"status,omitempty"`
+	Search string `json:"search,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
-	Offset int    `json:"offset,omitempty"`
+	Cursor string `json:"cursor,omitempty"`
+}
+
+// ListResult is one page of tenants. NextCursor is "" on the last page.
+type ListResult struct {
+	Items      []*Tenant `json:"items"`
+	NextCursor string    `json:"next_cursor"`
 }
 
 // Service manages tenant lifecycle.
@@ -87,7 +95,7 @@ type Service interface {
 	GetBySlug(ctx context.Context, slug string) (*Tenant, error)
 	Update(ctx context.Context, id string, input *UpdateInput) (*Tenant, error)
 	Delete(ctx context.Context, id string) error
-	List(ctx context.Context, opts *ListOptions) ([]*Tenant, int, error)
+	List(ctx context.Context, opts *ListOptions) (*ListResult, error)
 	UpdateQuota(ctx context.Context, id string, quota *Quota) error
 	SetStatus(ctx context.Context, id string, status Status) error
 }
@@ -100,5 +108,5 @@ type Store interface {
 	FindBySlug(ctx context.Context, slug string) (*Tenant, error)
 	Update(ctx context.Context, t *Tenant) error
 	Delete(ctx context.Context, id string) error
-	List(ctx context.Context, opts *ListOptions) ([]*Tenant, int, error)
+	List(ctx context.Context, opts *ListOptions) (*ListResult, error)
 }

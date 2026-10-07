@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/xraph/nexus/paging"
 	"github.com/xraph/nexus/tenant"
 )
 
@@ -43,15 +44,23 @@ func (a *API) handleListTenants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenants, total, err := a.gw.Tenants().List(r.Context(), nil)
+	res, err := a.gw.Tenants().List(r.Context(), &tenant.ListOptions{
+		Status: r.URL.Query().Get("status"),
+		Search: r.URL.Query().Get("search"),
+		Cursor: r.URL.Query().Get("cursor"),
+	})
+	if errors.Is(err, paging.ErrInvalidCursor) {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"data":  tenants,
-		"total": total,
+		"data":        res.Items,
+		"next_cursor": res.NextCursor,
 	})
 }
 

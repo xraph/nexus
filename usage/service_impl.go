@@ -31,6 +31,6 @@ func (s *service) Summary(ctx context.Context, tenantID, period string) (*Summar
 	return s.store.Summary(ctx, tenantID, period)
 }
 
-func (s *service) Query(ctx context.Context, opts *QueryOptions) ([]*Record, int, error) {
+func (s *service) Query(ctx context.Context, opts *QueryOptions) (*QueryResult, error) {
 	return s.store.Query(ctx, opts)
 }

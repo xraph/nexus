@@ -70,15 +70,25 @@ type ModelUsage struct {
 	Unpriced int       `json:"unpriced"`
 }
 
-// QueryOptions configures usage queries.
+// QueryOptions filters the request log. Every filter is applied by the
+// store, never after reading a window, so an empty page means nothing
+// matched. An empty TenantID means every tenant. EndTime is exclusive.
 type QueryOptions struct {
 	TenantID  string    `json:"tenant_id,omitempty"`
+	KeyID     string    `json:"key_id,omitempty"`
 	Provider  string    `json:"provider,omitempty"`
 	Model     string    `json:"model,omitempty"`
-	StartTime time.Time `json:"start_time,omitempty"`
-	EndTime   time.Time `json:"end_time,omitempty"`
+	Outcome   Outcome   `json:"outcome,omitempty"`
+	StartTime time.Time `json:"start_time,omitzero"`
+	EndTime   time.Time `json:"end_time,omitzero"`
 	Limit     int       `json:"limit,omitempty"`
-	Offset    int       `json:"offset,omitempty"`
+	Cursor    string    `json:"cursor,omitempty"`
+}
+
+// QueryResult is one page of records. NextCursor is "" on the last page.
+type QueryResult struct {
+	Items      []*Record `json:"items"`
+	NextCursor string    `json:"next_cursor"`
 }
 
 // Service tracks and queries usage data. Wherever a method takes a tenant
@@ -88,7 +98,7 @@ type Service interface {
 	MonthlySpend(ctx context.Context, tenantID string) (money.USD, error)
 	DailyRequests(ctx context.Context, tenantID string) (int, error)
 	Summary(ctx context.Context, tenantID string, period string) (*Summary, error)
-	Query(ctx context.Context, opts *QueryOptions) ([]*Record, int, error)
+	Query(ctx context.Context, opts *QueryOptions) (*QueryResult, error)
 }
 
 // Store is the persistence interface for usage records. Wherever a method
@@ -100,5 +110,5 @@ type Store interface {
 	MonthlySpend(ctx context.Context, tenantID string) (money.USD, error)
 	DailyRequests(ctx context.Context, tenantID string) (int, error)
 	Summary(ctx context.Context, tenantID string, period string) (*Summary, error)
-	Query(ctx context.Context, opts *QueryOptions) ([]*Record, int, error)
+	Query(ctx context.Context, opts *QueryOptions) (*QueryResult, error)
 }

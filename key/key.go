@@ -58,6 +58,21 @@ type Service interface {
 	Rotate(ctx context.Context, oldKeyID string) (*APIKey, string, error)
 }
 
+// ListOptions configures key listing. An empty TenantID lists every
+// tenant's keys. Lists are newest first and cursor paged.
+type ListOptions struct {
+	TenantID string `json:"tenant_id,omitempty"`
+	Status   Status `json:"status,omitempty"`
+	Limit    int    `json:"limit,omitempty"`
+	Cursor   string `json:"cursor,omitempty"`
+}
+
+// ListResult is one page of keys. NextCursor is "" on the last page.
+type ListResult struct {
+	Items      []*APIKey `json:"items"`
+	NextCursor string    `json:"next_cursor"`
+}
+
 // Store is the persistence interface for API keys.
 // Finders and Update return ErrNotFound when no key matches; Delete of an unknown id is a no-op.
 type Store interface {
@@ -67,4 +82,5 @@ type Store interface {
 	Update(ctx context.Context, k *APIKey) error
 	Delete(ctx context.Context, id string) error
 	ListByTenant(ctx context.Context, tenantID string) ([]*APIKey, error)
+	List(ctx context.Context, opts *ListOptions) (*ListResult, error)
 }

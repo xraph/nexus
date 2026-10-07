@@ -2,9 +2,13 @@ package store
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"sync"
 
+	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/key"
+	"github.com/xraph/nexus/paging"
 )
 
 type memoryKeyStore struct {
@@ -19,10 +23,10 @@ func (s *memoryKeyStore) Insert(_ context.Context, k *key.APIKey) error {
 	return nil
 }
 
-func (s *memoryKeyStore) FindByID(_ context.Context, id string) (*key.APIKey, error) {
+func (s *memoryKeyStore) FindByID(_ context.Context, keyID string) (*key.APIKey, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	k, ok := s.data[id]
+	k, ok := s.data[keyID]
 	if !ok {
 		return nil, key.ErrNotFound
 	}
@@ -50,10 +54,10 @@ func (s *memoryKeyStore) Update(_ context.Context, k *key.APIKey) error {
 	return nil
 }
 
-func (s *memoryKeyStore) Delete(_ context.Context, id string) error {
+func (s *memoryKeyStore) Delete(_ context.Context, keyID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.data, id)
+	delete(s.data, keyID)
 	return nil
 }
 
@@ -67,4 +71,32 @@ func (s *memoryKeyStore) ListByTenant(_ context.Context, tenantID string) ([]*ke
 		}
 	}
 	return result, nil
+}
+
+func (s *memoryKeyStore) List(_ context.Context, opts *key.ListOptions) (*key.ListResult, error) {
+	if opts == nil {
+		opts = &key.ListOptions{}
+	}
+	if err := paging.CheckCursor(opts.Cursor, id.PrefixKey); err != nil {
+		return nil, err
+	}
+	limit := paging.Limit(opts.Limit)
+	s.mu.RLock()
+	var rows []*key.APIKey
+	for _, k := range s.data {
+		switch {
+		case opts.TenantID != "" && k.TenantID.String() != opts.TenantID:
+		case opts.Status != "" && k.Status != opts.Status:
+		case opts.Cursor != "" && k.ID.String() >= opts.Cursor:
+		default:
+			rows = append(rows, cloneKey(k))
+		}
+	}
+	s.mu.RUnlock()
+	slices.SortFunc(rows, func(a, b *key.APIKey) int { return strings.Compare(b.ID.String(), a.ID.String()) })
+	if len(rows) > limit+1 {
+		rows = rows[:limit+1]
+	}
+	page, next := paging.Trim(rows, limit, func(k *key.APIKey) string { return k.ID.String() })
+	return &key.ListResult{Items: page, NextCursor: next}, nil
 }

@@ -2,10 +2,14 @@ package store
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/money"
+	"github.com/xraph/nexus/paging"
 	"github.com/xraph/nexus/usage"
 )
 
@@ -89,12 +93,35 @@ func rowOf(r *usage.Record) usage.SummaryRow {
 	return row
 }
 
-func (s *memoryUsageStore) Query(_ context.Context, _ *usage.QueryOptions) ([]*usage.Record, int, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]*usage.Record, len(s.records))
-	for i, r := range s.records {
-		out[i] = cloneRecord(r)
+func (s *memoryUsageStore) Query(_ context.Context, opts *usage.QueryOptions) (*usage.QueryResult, error) {
+	if opts == nil {
+		opts = &usage.QueryOptions{}
 	}
-	return out, len(out), nil
+	if err := paging.CheckCursor(opts.Cursor, id.PrefixUsage); err != nil {
+		return nil, err
+	}
+	limit := paging.Limit(opts.Limit)
+	s.mu.RLock()
+	var rows []*usage.Record
+	for _, r := range s.records {
+		switch {
+		case opts.TenantID != "" && r.TenantID.String() != opts.TenantID:
+		case opts.KeyID != "" && r.KeyID.String() != opts.KeyID:
+		case opts.Provider != "" && r.Provider != opts.Provider:
+		case opts.Model != "" && r.Model != opts.Model:
+		case opts.Outcome != "" && r.Outcome != opts.Outcome:
+		case !opts.StartTime.IsZero() && r.CreatedAt.Before(opts.StartTime):
+		case !opts.EndTime.IsZero() && !r.CreatedAt.Before(opts.EndTime):
+		case opts.Cursor != "" && r.ID.String() >= opts.Cursor:
+		default:
+			rows = append(rows, cloneRecord(r))
+		}
+	}
+	s.mu.RUnlock()
+	slices.SortFunc(rows, func(a, b *usage.Record) int { return strings.Compare(b.ID.String(), a.ID.String()) })
+	if len(rows) > limit+1 {
+		rows = rows[:limit+1]
+	}
+	page, next := paging.Trim(rows, limit, func(r *usage.Record) string { return r.ID.String() })
+	return &usage.QueryResult{Items: page, NextCursor: next}, nil
 }

@@ -13,9 +13,12 @@ import (
 	"github.com/xraph/grove/drivers/pgdriver"
 	"github.com/xraph/grove/migrate"
 
+	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/money"
+	"github.com/xraph/nexus/paging"
 	"github.com/xraph/nexus/store"
+	"github.com/xraph/nexus/store/internal/conv"
 	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/usage"
 )
@@ -119,35 +122,39 @@ func (s *tenantStore) Delete(ctx context.Context, tid string) error {
 	return nil
 }
 
-func (s *tenantStore) List(ctx context.Context, opts *tenant.ListOptions) ([]*tenant.Tenant, int, error) {
+func (s *tenantStore) List(ctx context.Context, opts *tenant.ListOptions) (*tenant.ListResult, error) {
+	if opts == nil {
+		opts = &tenant.ListOptions{}
+	}
+	if err := paging.CheckCursor(opts.Cursor, id.PrefixTenant); err != nil {
+		return nil, err
+	}
+	limit := paging.Limit(opts.Limit)
 	var models []tenantModel
-	q := s.pgdb.NewSelect(&models).OrderExpr("created_at DESC")
-
-	if opts != nil {
-		if opts.Status != "" {
-			q = q.Where("status = ?", opts.Status)
-		}
-		if opts.Limit > 0 {
-			q = q.Limit(opts.Limit)
-		}
-		if opts.Offset > 0 {
-			q = q.Offset(opts.Offset)
-		}
+	q := s.pgdb.NewSelect(&models).OrderExpr(`id COLLATE "C" DESC`).Limit(limit + 1)
+	if opts.Status != "" {
+		q = q.Where("status = ?", opts.Status)
 	}
-
+	if opts.Search != "" {
+		p := conv.LikePattern(opts.Search)
+		q = q.Where("(name ILIKE ? OR slug ILIKE ?)", p, p)
+	}
+	if opts.Cursor != "" {
+		q = q.Where(`id COLLATE "C" < ?`, opts.Cursor)
+	}
 	if err := q.Scan(ctx); err != nil {
-		return nil, 0, fmt.Errorf("nexus/postgres: list tenants: %w", err)
+		return nil, fmt.Errorf("nexus/postgres: list tenants: %w", err)
 	}
-
-	tenants := make([]*tenant.Tenant, 0, len(models))
+	rows := make([]*tenant.Tenant, 0, len(models))
 	for i := range models {
 		t, err := tenantFromModel(&models[i])
 		if err != nil {
-			return nil, 0, fmt.Errorf("nexus/postgres: convert tenant model: %w", err)
+			return nil, fmt.Errorf("nexus/postgres: convert tenant model: %w", err)
 		}
-		tenants = append(tenants, t)
+		rows = append(rows, t)
 	}
-	return tenants, len(tenants), nil
+	page, next := paging.Trim(rows, limit, func(t *tenant.Tenant) string { return t.ID.String() })
+	return &tenant.ListResult{Items: page, NextCursor: next}, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -235,6 +242,40 @@ func (s *keyStore) ListByTenant(ctx context.Context, tenantID string) ([]*key.AP
 		keys = append(keys, k)
 	}
 	return keys, nil
+}
+
+func (s *keyStore) List(ctx context.Context, opts *key.ListOptions) (*key.ListResult, error) {
+	if opts == nil {
+		opts = &key.ListOptions{}
+	}
+	if err := paging.CheckCursor(opts.Cursor, id.PrefixKey); err != nil {
+		return nil, err
+	}
+	limit := paging.Limit(opts.Limit)
+	var models []apiKeyModel
+	q := s.pgdb.NewSelect(&models).OrderExpr(`id COLLATE "C" DESC`).Limit(limit + 1)
+	if opts.TenantID != "" {
+		q = q.Where("tenant_id = ?", opts.TenantID)
+	}
+	if opts.Status != "" {
+		q = q.Where("status = ?", string(opts.Status))
+	}
+	if opts.Cursor != "" {
+		q = q.Where(`id COLLATE "C" < ?`, opts.Cursor)
+	}
+	if err := q.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("nexus/postgres: list keys: %w", err)
+	}
+	rows := make([]*key.APIKey, 0, len(models))
+	for i := range models {
+		k, err := apiKeyFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("nexus/postgres: convert key model: %w", err)
+		}
+		rows = append(rows, k)
+	}
+	page, next := paging.Trim(rows, limit, func(k *key.APIKey) string { return k.ID.String() })
+	return &key.ListResult{Items: page, NextCursor: next}, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -333,45 +374,44 @@ func (s *usageStore) Summary(ctx context.Context, tenantID, period string) (*usa
 	return usage.BuildSummary(tenantID, period, out), nil
 }
 
-func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) ([]*usage.Record, int, error) {
+func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) (*usage.QueryResult, error) {
+	if opts == nil {
+		opts = &usage.QueryOptions{}
+	}
+	if err := paging.CheckCursor(opts.Cursor, id.PrefixUsage); err != nil {
+		return nil, err
+	}
+	limit := paging.Limit(opts.Limit)
 	var models []usageModel
-	q := s.pgdb.NewSelect(&models).OrderExpr("created_at DESC")
-
-	if opts != nil {
-		if opts.TenantID != "" {
-			q = q.Where("tenant_id = ?", opts.TenantID)
-		}
-		if opts.Provider != "" {
-			q = q.Where("provider = ?", opts.Provider)
-		}
-		if opts.Model != "" {
-			q = q.Where("model = ?", opts.Model)
-		}
-		if !opts.StartTime.IsZero() {
-			q = q.Where("created_at >= ?", opts.StartTime)
-		}
-		if !opts.EndTime.IsZero() {
-			q = q.Where("created_at <= ?", opts.EndTime)
-		}
-		if opts.Limit > 0 {
-			q = q.Limit(opts.Limit)
-		}
-		if opts.Offset > 0 {
-			q = q.Offset(opts.Offset)
+	q := s.pgdb.NewSelect(&models).OrderExpr(`id COLLATE "C" DESC`).Limit(limit + 1)
+	for col, v := range map[string]string{
+		"tenant_id": opts.TenantID, "key_id": opts.KeyID, "provider": opts.Provider,
+		"model": opts.Model, "outcome": string(opts.Outcome),
+	} {
+		if v != "" {
+			q = q.Where(col+" = ?", v)
 		}
 	}
-
+	if !opts.StartTime.IsZero() {
+		q = q.Where("created_at >= ?", opts.StartTime.UTC())
+	}
+	if !opts.EndTime.IsZero() {
+		q = q.Where("created_at < ?", opts.EndTime.UTC())
+	}
+	if opts.Cursor != "" {
+		q = q.Where(`id COLLATE "C" < ?`, opts.Cursor)
+	}
 	if err := q.Scan(ctx); err != nil {
-		return nil, 0, fmt.Errorf("nexus/postgres: query usage: %w", err)
+		return nil, fmt.Errorf("nexus/postgres: query usage: %w", err)
 	}
-
-	records := make([]*usage.Record, 0, len(models))
+	rows := make([]*usage.Record, 0, len(models))
 	for i := range models {
 		rec, err := usageFromModel(&models[i])
 		if err != nil {
-			return nil, 0, fmt.Errorf("nexus/postgres: convert usage model: %w", err)
+			return nil, fmt.Errorf("nexus/postgres: convert usage model: %w", err)
 		}
-		records = append(records, rec)
+		rows = append(rows, rec)
 	}
-	return records, len(records), nil
+	page, next := paging.Trim(rows, limit, func(r *usage.Record) string { return r.ID.String() })
+	return &usage.QueryResult{Items: page, NextCursor: next}, nil
 }

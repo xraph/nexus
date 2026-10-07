@@ -40,8 +40,8 @@ func (r *recordingUsage) DailyRequests(_ context.Context, _ string) (int, error)
 func (r *recordingUsage) Summary(_ context.Context, _, _ string) (*usage.Summary, error) {
 	return nil, nil //nolint:nilnil // unused
 }
-func (r *recordingUsage) Query(_ context.Context, _ *usage.QueryOptions) ([]*usage.Record, int, error) {
-	return nil, 0, nil
+func (r *recordingUsage) Query(_ context.Context, _ *usage.QueryOptions) (*usage.QueryResult, error) {
+	return &usage.QueryResult{}, nil
 }
 
 func TestUsageMiddleware_RecordsForStreams(t *testing.T) {

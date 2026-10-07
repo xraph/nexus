@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -14,8 +15,10 @@ import (
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/mongodriver"
 
+	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/money"
+	"github.com/xraph/nexus/paging"
 	"github.com/xraph/nexus/store"
 	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/usage"
@@ -157,39 +160,40 @@ func (s *tenantStore) Delete(ctx context.Context, tid string) error {
 	return nil
 }
 
-func (s *tenantStore) List(ctx context.Context, opts *tenant.ListOptions) ([]*tenant.Tenant, int, error) {
-	var models []tenantModel
+func (s *tenantStore) List(ctx context.Context, opts *tenant.ListOptions) (*tenant.ListResult, error) {
+	if opts == nil {
+		opts = &tenant.ListOptions{}
+	}
+	if err := paging.CheckCursor(opts.Cursor, id.PrefixTenant); err != nil {
+		return nil, err
+	}
+	limit := paging.Limit(opts.Limit)
 	filter := bson.M{}
-	if opts != nil && opts.Status != "" {
+	if opts.Status != "" {
 		filter["status"] = opts.Status
 	}
-
-	q := s.mdb.NewFind(&models).
-		Filter(filter).
-		Sort(bson.D{{Key: "created_at", Value: -1}})
-
-	if opts != nil {
-		if opts.Limit > 0 {
-			q = q.Limit(int64(opts.Limit))
-		}
-		if opts.Offset > 0 {
-			q = q.Skip(int64(opts.Offset))
-		}
+	if opts.Search != "" {
+		re := bson.M{"$regex": regexp.QuoteMeta(opts.Search), "$options": "i"}
+		filter["$or"] = bson.A{bson.M{"name": re}, bson.M{"slug": re}}
 	}
-
-	if err := q.Scan(ctx); err != nil {
-		return nil, 0, fmt.Errorf("nexus/mongo: list tenants: %w", err)
+	if opts.Cursor != "" {
+		filter["_id"] = bson.M{"$lt": opts.Cursor}
 	}
-
-	tenants := make([]*tenant.Tenant, 0, len(models))
+	var models []tenantModel
+	err := s.mdb.NewFind(&models).Filter(filter).Sort(bson.D{{Key: "_id", Value: -1}}).Limit(int64(limit + 1)).Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("nexus/mongo: list tenants: %w", err)
+	}
+	rows := make([]*tenant.Tenant, 0, len(models))
 	for i := range models {
 		t, err := tenantFromModel(&models[i])
 		if err != nil {
-			return nil, 0, fmt.Errorf("nexus/mongo: convert tenant model: %w", err)
+			return nil, fmt.Errorf("nexus/mongo: convert tenant model: %w", err)
 		}
-		tenants = append(tenants, t)
+		rows = append(rows, t)
 	}
-	return tenants, len(tenants), nil
+	page, next := paging.Trim(rows, limit, func(t *tenant.Tenant) string { return t.ID.String() })
+	return &tenant.ListResult{Items: page, NextCursor: next}, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -274,6 +278,41 @@ func (s *keyStore) ListByTenant(ctx context.Context, tenantID string) ([]*key.AP
 		keys = append(keys, k)
 	}
 	return keys, nil
+}
+
+func (s *keyStore) List(ctx context.Context, opts *key.ListOptions) (*key.ListResult, error) {
+	if opts == nil {
+		opts = &key.ListOptions{}
+	}
+	if err := paging.CheckCursor(opts.Cursor, id.PrefixKey); err != nil {
+		return nil, err
+	}
+	limit := paging.Limit(opts.Limit)
+	filter := bson.M{}
+	if opts.TenantID != "" {
+		filter["tenant_id"] = opts.TenantID
+	}
+	if opts.Status != "" {
+		filter["status"] = string(opts.Status)
+	}
+	if opts.Cursor != "" {
+		filter["_id"] = bson.M{"$lt": opts.Cursor}
+	}
+	var models []apiKeyModel
+	err := s.mdb.NewFind(&models).Filter(filter).Sort(bson.D{{Key: "_id", Value: -1}}).Limit(int64(limit + 1)).Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("nexus/mongo: list keys: %w", err)
+	}
+	rows := make([]*key.APIKey, 0, len(models))
+	for i := range models {
+		k, err := apiKeyFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("nexus/mongo: convert key model: %w", err)
+		}
+		rows = append(rows, k)
+	}
+	page, next := paging.Trim(rows, limit, func(k *key.APIKey) string { return k.ID.String() })
+	return &key.ListResult{Items: page, NextCursor: next}, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -403,56 +442,49 @@ func (s *usageStore) Summary(ctx context.Context, tenantID, period string) (*usa
 	return usage.BuildSummary(tenantID, period, out), nil
 }
 
-func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) ([]*usage.Record, int, error) {
-	var models []usageModel
+func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) (*usage.QueryResult, error) {
+	if opts == nil {
+		opts = &usage.QueryOptions{}
+	}
+	if err := paging.CheckCursor(opts.Cursor, id.PrefixUsage); err != nil {
+		return nil, err
+	}
+	limit := paging.Limit(opts.Limit)
 	filter := bson.M{}
-
-	if opts != nil {
-		if opts.TenantID != "" {
-			filter["tenant_id"] = opts.TenantID
-		}
-		if opts.Provider != "" {
-			filter["provider"] = opts.Provider
-		}
-		if opts.Model != "" {
-			filter["model"] = opts.Model
-		}
-		if !opts.StartTime.IsZero() || !opts.EndTime.IsZero() {
-			ts := bson.M{}
-			if !opts.StartTime.IsZero() {
-				ts["$gte"] = opts.StartTime
-			}
-			if !opts.EndTime.IsZero() {
-				ts["$lte"] = opts.EndTime
-			}
-			filter["created_at"] = ts
+	for field, v := range map[string]string{
+		"tenant_id": opts.TenantID, "key_id": opts.KeyID, "provider": opts.Provider,
+		"model": opts.Model, "outcome": string(opts.Outcome),
+	} {
+		if v != "" {
+			filter[field] = v
 		}
 	}
-
-	q := s.mdb.NewFind(&models).
-		Filter(filter).
-		Sort(bson.D{{Key: "created_at", Value: -1}})
-
-	if opts != nil {
-		if opts.Limit > 0 {
-			q = q.Limit(int64(opts.Limit))
+	if !opts.StartTime.IsZero() || !opts.EndTime.IsZero() {
+		window := bson.M{}
+		if !opts.StartTime.IsZero() {
+			window["$gte"] = opts.StartTime.UTC()
 		}
-		if opts.Offset > 0 {
-			q = q.Skip(int64(opts.Offset))
+		if !opts.EndTime.IsZero() {
+			window["$lt"] = opts.EndTime.UTC()
 		}
+		filter["created_at"] = window
 	}
-
-	if err := q.Scan(ctx); err != nil {
-		return nil, 0, fmt.Errorf("nexus/mongo: query usage: %w", err)
+	if opts.Cursor != "" {
+		filter["_id"] = bson.M{"$lt": opts.Cursor}
 	}
-
-	records := make([]*usage.Record, 0, len(models))
+	var models []usageModel
+	err := s.mdb.NewFind(&models).Filter(filter).Sort(bson.D{{Key: "_id", Value: -1}}).Limit(int64(limit + 1)).Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("nexus/mongo: query usage: %w", err)
+	}
+	rows := make([]*usage.Record, 0, len(models))
 	for i := range models {
 		rec, err := usageFromModel(&models[i])
 		if err != nil {
-			return nil, 0, fmt.Errorf("nexus/mongo: convert usage model: %w", err)
+			return nil, fmt.Errorf("nexus/mongo: convert usage model: %w", err)
 		}
-		records = append(records, rec)
+		rows = append(rows, rec)
 	}
-	return records, len(records), nil
+	page, next := paging.Trim(rows, limit, func(r *usage.Record) string { return r.ID.String() })
+	return &usage.QueryResult{Items: page, NextCursor: next}, nil
 }
