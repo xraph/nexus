@@ -14,15 +14,15 @@ import (
 // provider is called, and the usage stage records it unattributed at $0,
 // because neither identity it named can be trusted. The identity stage wraps
 // it with the detail, so match it with errors.Is.
-var ErrInvalidIdentity error = invalidIdentity{}
+var ErrInvalidIdentity error = invalidIdentityError{}
 
-type invalidIdentity struct{}
+type invalidIdentityError struct{}
 
-func (invalidIdentity) Error() string       { return "nexus: invalid tenant or key id" }
-func (invalidIdentity) RefusalCode() string { return "invalid_request" }
-func (invalidIdentity) StatusCode() int     { return 400 }
+func (invalidIdentityError) Error() string       { return "nexus: invalid tenant or key id" }
+func (invalidIdentityError) RefusalCode() string { return "invalid_request" }
+func (invalidIdentityError) StatusCode() int     { return 400 }
 
-var _ pipeline.Refusal = invalidIdentity{}
+var _ pipeline.Refusal = invalidIdentityError{}
 
 // IdentityMiddleware makes the tenant and key a request is attributed to
 // agree in both places later stages read them: the pipeline context (set by
