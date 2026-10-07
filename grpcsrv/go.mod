@@ -9,7 +9,10 @@ require (
 )
 
 require (
+	github.com/coder/websocket v1.8.14 // indirect
+	github.com/gofrs/uuid/v5 v5.3.2 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
+	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
