@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/xraph/nexus/pipeline"
 )
 
 // StreamEncoder writes StreamEvents to an HTTP response in a wire format.
@@ -111,9 +113,10 @@ func (r *Registry) Lookup(name string) StreamEncoder {
 }
 
 // SanitizeError converts an in-process error into a wire-safe envelope.
-// Mapping rules: known nexus error types get their typed Code; everything
-// else is bucketed as "internal" with a generic message so we don't leak
-// stack/system details.
+// Mapping rules: a pipeline.Refusal says so (Type "refused", its own code and
+// its own text, retryable when it is a 429); a cancel or timeout keeps its
+// type; everything else gets a fixed message so no stack, URL or system
+// detail leaks. Only the refusal's own text is used, never a wrapper's.
 func SanitizeError(err error, requestID string) *WireError {
 	if err == nil {
 		return nil
@@ -121,6 +124,7 @@ func SanitizeError(err error, requestID string) *WireError {
 	we := &WireError{
 		RequestID: requestID,
 	}
+	var refused pipeline.Refusal
 	switch {
 	case errors.Is(err, context.Canceled):
 		we.Type = "canceled"
@@ -130,9 +134,14 @@ func SanitizeError(err error, requestID string) *WireError {
 		we.Type = "timeout"
 		we.Message = "request timed out"
 		we.Retryable = true
+	case errors.As(err, &refused):
+		we.Type = "refused"
+		we.Code = refused.RefusalCode()
+		we.Message = refused.Error()
+		we.Retryable = refused.StatusCode() == http.StatusTooManyRequests
 	default:
 		we.Type = "upstream"
-		we.Message = err.Error()
+		we.Message = "upstream error"
 		we.Retryable = false
 	}
 	return we

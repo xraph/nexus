@@ -70,7 +70,7 @@ func TestProxy_ShutdownCancelsInFlightStreams(t *testing.T) {
 	t.Parallel()
 
 	bp := &blockingProvider{}
-	engine := nexus.NewEngine(nexus.WithProvider(bp))
+	engine := nexus.NewEngine(nexus.WithProvider(bp), nexus.WithRequireAPIKey(false)) // these tests are about shutdown, not auth
 	p := proxy.New(engine, proxy.WithoutWebSocket())
 
 	srv := httptest.NewServer(p)

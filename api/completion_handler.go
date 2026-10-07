@@ -40,7 +40,7 @@ func (a *API) handleCreateCompletion(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.gw.Engine().Complete(ctx, &req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writePipelineError(w, r, err)
 		return
 	}
 
@@ -52,7 +52,7 @@ func (a *API) handleStreamCompletion(_ context.Context, w http.ResponseWriter, r
 	defer cancel()
 	stream, err := a.gw.Engine().CompleteStream(ctx, req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writePipelineError(w, r, err)
 		return
 	}
 

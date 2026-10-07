@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	nexus "github.com/xraph/nexus"
+	"github.com/xraph/nexus/auth"
 	"github.com/xraph/nexus/httpstream"
 )
 
@@ -56,8 +57,13 @@ func WithoutWebSocket() Option {
 	return func(a *API) { a.wsDisabled = true }
 }
 
-// New creates a new API handler set.
+// New creates a new API handler set. It panics when gw has no key service,
+// which means Initialize has not run: the routes cannot be protected, and
+// serving them open would be worse than not serving them.
 func New(gw *nexus.Gateway, opts ...Option) *API {
+	if gw.Keys() == nil {
+		panic("api: New needs an initialized gateway (call Initialize first): the gateway has no key service")
+	}
 	baseCtx, baseCancel := context.WithCancel(context.Background())
 	a := &API{
 		gw:         gw,
@@ -106,40 +112,61 @@ func (a *API) streamContext(reqCtx context.Context) (context.Context, context.Ca
 }
 
 func (a *API) registerRoutes() {
-	// Completion routes
-	a.mux.HandleFunc("POST /v1/chat/completions", a.handleCreateCompletion)
+	keys := a.gw.Keys()
+	required := a.gw.Config().RequireAPIKey
+	// /v1 routes: a key is required unless the gateway is configured open,
+	// and a key that is presented is always checked.
+	v1 := auth.KeyAuth(auth.KeyAuthOptions{Keys: keys, Required: required, OnError: a.onAuthError})
+	// /admin routes always need a key, whatever RequireAPIKey says: it opens
+	// the /v1 routes only.
+	adminAuth := auth.KeyAuth(auth.KeyAuthOptions{Keys: keys, Required: true, OnError: a.onAuthError})
+	admin := auth.RequireScope("admin", a.onAuthError)
+	models := func(h http.Handler) http.Handler { return h }
+	if required {
+		// RequireScope fails closed (an anonymous request is a 401), so it
+		// is added only when keys are required: an open gateway lists its
+		// models to anyone.
+		models = auth.RequireScope("models", a.onAuthError)
+	}
 
-	// Embedding routes
-	a.mux.HandleFunc("POST /v1/embeddings", a.handleCreateEmbedding)
+	// Completion and embedding routes: the pipeline checks the scope.
+	a.mux.Handle("POST /v1/chat/completions", v1(http.HandlerFunc(a.handleCreateCompletion)))
+	a.mux.Handle("POST /v1/embeddings", v1(http.HandlerFunc(a.handleCreateEmbedding)))
 
 	// Model routes
-	a.mux.HandleFunc("GET /v1/models", a.handleListModels)
-	a.mux.HandleFunc("GET /v1/models/{model}", a.handleGetModel)
+	a.mux.Handle("GET /v1/models", v1(models(http.HandlerFunc(a.handleListModels))))
+	a.mux.Handle("GET /v1/models/{model}", v1(models(http.HandlerFunc(a.handleGetModel))))
+
+	adminRoute := func(pattern string, h http.HandlerFunc) {
+		a.mux.Handle(pattern, adminAuth(admin(h)))
+	}
 
 	// Admin: Tenant routes
-	a.mux.HandleFunc("POST /admin/tenants", a.handleCreateTenant)
-	a.mux.HandleFunc("GET /admin/tenants", a.handleListTenants)
-	a.mux.HandleFunc("GET /admin/tenants/{id}", a.handleGetTenant)
-	a.mux.HandleFunc("PATCH /admin/tenants/{id}", a.handleUpdateTenant)
-	a.mux.HandleFunc("DELETE /admin/tenants/{id}", a.handleDeleteTenant)
+	adminRoute("POST /admin/tenants", a.handleCreateTenant)
+	adminRoute("GET /admin/tenants", a.handleListTenants)
+	adminRoute("GET /admin/tenants/{id}", a.handleGetTenant)
+	adminRoute("PATCH /admin/tenants/{id}", a.handleUpdateTenant)
+	adminRoute("DELETE /admin/tenants/{id}", a.handleDeleteTenant)
 
 	// Admin: Key routes
-	a.mux.HandleFunc("POST /admin/keys", a.handleCreateKey)
-	a.mux.HandleFunc("GET /admin/keys", a.handleListKeys)
-	a.mux.HandleFunc("DELETE /admin/keys/{id}", a.handleRevokeKey)
+	adminRoute("POST /admin/keys", a.handleCreateKey)
+	adminRoute("GET /admin/keys", a.handleListKeys)
+	adminRoute("DELETE /admin/keys/{id}", a.handleRevokeKey)
 
 	// Admin: Usage routes
-	a.mux.HandleFunc("GET /admin/usage", a.handleGetUsage)
+	adminRoute("GET /admin/usage", a.handleGetUsage)
 
 	// Admin: Provider routes
-	a.mux.HandleFunc("GET /admin/providers", a.handleListProviders)
+	adminRoute("GET /admin/providers", a.handleListProviders)
 
-	// Health
+	// Health stays open.
 	a.mux.HandleFunc("GET /health", a.handleHealth)
 
-	// Bidirectional WebSocket — opt-out via WithoutWebSocket.
+	// Bidirectional WebSocket, opt-out via WithoutWebSocket. The upgrade is
+	// authenticated like any /v1 route; the pipeline checks scopes per
+	// request.
 	if !a.wsDisabled {
 		ws := httpstream.NewWSHandler(a.gw.Engine(), a.wsOptions)
-		a.mux.Handle("/v1/realtime", ws)
+		a.mux.Handle("/v1/realtime", v1(ws))
 	}
 }

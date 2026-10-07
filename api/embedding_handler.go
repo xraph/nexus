@@ -44,7 +44,7 @@ func (a *API) handleCreateEmbedding(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.gw.Engine().Embed(r.Context(), &req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writePipelineError(w, r, err)
 		return
 	}
 

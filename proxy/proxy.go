@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	nexus "github.com/xraph/nexus"
+	"github.com/xraph/nexus/auth"
 	"github.com/xraph/nexus/httpstream"
 )
 
@@ -79,8 +80,14 @@ func WithoutWebSocket() Option {
 	return func(p *Proxy) { p.wsDisabled = true }
 }
 
-// New creates a new OpenAI-compatible proxy.
+// New creates a new OpenAI-compatible proxy. It panics when the engine's
+// gateway has no key service, which means Initialize has not run: the routes
+// cannot be protected, and serving them open would be worse than not serving
+// them.
 func New(engine *nexus.Engine, opts ...Option) *Proxy {
+	if engine.Gateway().Keys() == nil {
+		panic("proxy: New needs an initialized gateway (call Initialize first): the gateway has no key service")
+	}
 	baseCtx, baseCancel := context.WithCancel(context.Background())
 	p := &Proxy{
 		engine:     engine,
@@ -132,7 +139,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Add CORS headers for browser-based clients
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key")
 
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
@@ -143,13 +150,32 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Proxy) registerRoutes() {
-	p.mux.HandleFunc("POST /v1/chat/completions", p.handleChatCompletions)
-	p.mux.HandleFunc("POST /v1/embeddings", p.handleEmbeddings)
-	p.mux.HandleFunc("GET /v1/models", p.handleListModels)
-	p.mux.HandleFunc("GET /v1/models/{model}", p.handleGetModel)
+	gw := p.engine.Gateway()
+	required := gw.Config().RequireAPIKey
+	// A key is required unless the gateway is configured open, and a key that
+	// is presented is always checked. The default OnError writes the OpenAI
+	// error shape, with Retry-After and WWW-Authenticate.
+	ka := auth.KeyAuth(auth.KeyAuthOptions{Keys: gw.Keys(), Required: required, OnError: p.onAuthError})
+	models := func(h http.Handler) http.Handler { return h }
+	if required {
+		// RequireScope fails closed (an anonymous request is a 401), so it
+		// is added only when keys are required: an open gateway lists its
+		// models to anyone.
+		models = auth.RequireScope("models", p.onAuthError)
+	}
+
+	// Completions and embeddings: the pipeline checks the scope.
+	p.mux.Handle("POST /v1/chat/completions", ka(http.HandlerFunc(p.handleChatCompletions)))
+	p.mux.Handle("POST /v1/embeddings", ka(http.HandlerFunc(p.handleEmbeddings)))
+	p.mux.Handle("GET /v1/models", ka(models(http.HandlerFunc(p.handleListModels))))
+	p.mux.Handle("GET /v1/models/{model}", ka(models(http.HandlerFunc(p.handleGetModel))))
 	p.mux.HandleFunc("GET /health", p.handleHealth)
 	if !p.wsDisabled {
 		ws := httpstream.NewWSHandler(p.engine, p.wsOptions)
-		p.mux.Handle("/v1/realtime", ws)
+		p.mux.Handle("/v1/realtime", ka(ws))
 	}
+}
+
+func (p *Proxy) onAuthError(w http.ResponseWriter, r *http.Request, err error) {
+	p.writePipelineError(w, r, err)
 }

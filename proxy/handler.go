@@ -2,11 +2,13 @@ package proxy
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 
+	"github.com/xraph/nexus/auth"
 	"github.com/xraph/nexus/httpstream"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/provider"
@@ -48,7 +50,7 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Non-streaming response
 	resp, err := p.engine.Complete(ctx, &req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		p.writePipelineError(w, r, err)
 		return
 	}
 
@@ -63,7 +65,7 @@ func (p *Proxy) handleStreamingCompletion(w http.ResponseWriter, r *http.Request
 	defer cancel()
 	stream, err := p.engine.CompleteStream(ctx, req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		p.writePipelineError(w, r, err)
 		return
 	}
 
@@ -122,7 +124,7 @@ func (p *Proxy) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := p.engine.Embed(r.Context(), &req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		p.writePipelineError(w, r, err)
 		return
 	}
 
@@ -322,10 +324,32 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, errType, message string) {
+	code := errType
+	if status == http.StatusBadRequest {
+		code = pipeline.CodeInvalidRequest
+	}
 	writeJSON(w, status, openAIError{
 		Error: openAIErrorBody{
 			Message: message,
 			Type:    errType,
+			Code:    code,
 		},
 	})
+}
+
+// writePipelineError answers an error from the engine with the refusal's
+// status and code, or a fixed 500, and Retry-After when the refusal says how
+// long to wait. auth.WriteError writes the OpenAI error shape this proxy
+// uses everywhere else. The cause of a server-side failure never reaches the
+// client; it goes to the gateway log.
+func (p *Proxy) writePipelineError(w http.ResponseWriter, r *http.Request, err error) {
+	if status, _ := pipeline.HTTPStatus(err); status >= http.StatusInternalServerError {
+		args := []any{"request_id", pipeline.RequestID(r.Context()), "path", r.URL.Path, "error", err.Error()}
+		var ref *pipeline.RefusalError
+		if errors.As(err, &ref) && ref.Cause != nil {
+			args = append(args, "cause", ref.Cause.Error())
+		}
+		p.engine.Gateway().Logger().Error("request failed", args...)
+	}
+	auth.WriteError(w, err)
 }
