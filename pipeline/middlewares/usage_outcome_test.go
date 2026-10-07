@@ -3,6 +3,8 @@ package middlewares_test
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,6 +58,9 @@ func TestUsageClassifiesEveryOutcome(t *testing.T) {
 		{"input block", false, false, nil, &guard.BlockedError{Guard: "pii", Phase: guard.PhaseInput, Reason: "ssn"}, "gpt-4o", usage.OutcomeBlocked, usage.PricingNotCharged, "0", "pii", ""},
 		{"output block", true, false, nil, &guard.BlockedError{Guard: "leak", Phase: guard.PhaseOutput, Usage: &served.Usage, Model: "gpt-4o", Provider: "openai"}, "gpt-4o", usage.OutcomeBlocked, usage.PricingPriced, "0.008755", "leak", ""},
 		{"output block without usage", true, false, nil, &guard.BlockedError{Guard: "leak", Phase: guard.PhaseOutput}, "gpt-4o", usage.OutcomeBlocked, usage.PricingUnknown, "", "leak", ""},
+		{"block with no phase", true, false, nil, &guard.BlockedError{Guard: "odd"}, "gpt-4o", usage.OutcomeBlocked, usage.PricingUnknown, "", "odd", ""},
+		{"block with no phase, with usage", true, false, nil, &guard.BlockedError{Guard: "odd", Usage: &served.Usage, Model: "gpt-4o", Provider: "openai"}, "gpt-4o", usage.OutcomeBlocked, usage.PricingPriced, "0.008755", "odd", ""},
+		{"served, no tokens reported", true, false, &pipeline.Response{Completion: &provider.CompletionResponse{Model: "gpt-4o"}}, nil, "gpt-4o", usage.OutcomeOK, usage.PricingUnknown, "", "", ""},
 		{"refused", false, false, nil, refusal{}, "gpt-4o", usage.OutcomeRefused, usage.PricingNotCharged, "0", "", "budget_exceeded"},
 		{"failed before a provider", false, false, nil, errors.New("no providers registered"), "gpt-4o", usage.OutcomeError, usage.PricingNotCharged, "0", "", ""},
 		{"provider failed", true, false, nil, errors.New("upstream 502"), "gpt-4o", usage.OutcomeError, usage.PricingUnknown, "", "", ""},
@@ -131,3 +136,127 @@ func TestUsageCountsFailedInserts(t *testing.T) {
 type errLog struct{ n int }
 
 func (l *errLog) Error(string, ...any) { l.n++ }
+
+func TestUsageZeroTokensOnAFreeModelCostExactlyZero(t *testing.T) {
+	rec := newRecordingUsage()
+	free := prices{"local/llama": {Free: true}}
+	mw := middlewares.NewUsage(rec, free, nil)
+	req := &pipeline.Request{Type: pipeline.RequestCompletion, Completion: &provider.CompletionRequest{Model: "llama"}, State: map[string]any{}}
+	_, _ = mw.Process(context.Background(), req, func(context.Context) (*pipeline.Response, error) {
+		req.State[pipeline.StateProviderName] = "local"
+		return &pipeline.Response{Completion: &provider.CompletionResponse{Model: "llama"}}, nil
+	})
+	_ = mw.Flush(context.Background())
+	got := rec.only(t)
+	if got.Outcome != usage.OutcomeOK || got.PricingStatus != usage.PricingPriced || got.CostUSD == nil || !got.CostUSD.IsZero() {
+		t.Fatalf("free model, no tokens = %s/%s cost %v; want ok/priced/0", got.Outcome, got.PricingStatus, got.CostUSD)
+	}
+}
+
+func TestUsageZeroTokenEmbeddingIsUnknown(t *testing.T) {
+	rec := newRecordingUsage()
+	mw := middlewares.NewUsage(rec, prices{"openai/text-embedding-3-small": {EmbeddingPerMillion: money.MustParse("0.02")}}, nil)
+	req := &pipeline.Request{Type: pipeline.RequestEmbedding, Embedding: &provider.EmbeddingRequest{Model: "text-embedding-3-small"}, State: map[string]any{}}
+	_, _ = mw.Process(context.Background(), req, func(context.Context) (*pipeline.Response, error) {
+		req.State[pipeline.StateProviderName] = "openai"
+		return &pipeline.Response{Embedding: &provider.EmbeddingResponse{Model: "text-embedding-3-small"}}, nil
+	})
+	_ = mw.Flush(context.Background())
+	got := rec.only(t)
+	if got.Outcome != usage.OutcomeOK || got.PricingStatus != usage.PricingUnknown || got.CostUSD != nil {
+		t.Fatalf("embedding, no tokens = %s/%s cost %v; want ok/unknown/nil", got.Outcome, got.PricingStatus, got.CostUSD)
+	}
+}
+
+// slowUsage stores records slowly and counts the ones that reached it, so a
+// test can tell whether Flush returned before they all had.
+type slowUsage struct {
+	*recordingUsage
+	stored atomic.Int64
+}
+
+func (s *slowUsage) Record(ctx context.Context, rec *usage.Record) error {
+	time.Sleep(time.Duration(1+s.stored.Load()%3) * time.Millisecond)
+	s.stored.Add(1)
+	return s.recordingUsage.Record(ctx, rec)
+}
+
+func TestUsageFlushWaitsForConcurrentRecords(t *testing.T) {
+	const requests = 50
+	rec := &slowUsage{recordingUsage: newRecordingUsage()}
+	rec.done = make(chan struct{}, requests) // never read here
+	mw := middlewares.NewUsage(rec, gpt4o, nil)
+
+	var returned atomic.Int64 // Process calls that have returned
+	var wg sync.WaitGroup
+	for range requests {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := &pipeline.Request{Type: pipeline.RequestCompletion, Completion: &provider.CompletionRequest{Model: "gpt-4o"}, State: map[string]any{}}
+			_, _ = mw.Process(context.Background(), req, func(context.Context) (*pipeline.Response, error) {
+				req.State[pipeline.StateProviderName] = "openai"
+				return &pipeline.Response{Completion: &provider.CompletionResponse{Model: "gpt-4o", Usage: provider.Usage{PromptTokens: 1, TotalTokens: 1}}}, nil
+			})
+			returned.Add(1)
+		}()
+	}
+
+	// Flushes that start while requests are still arriving must not return
+	// before the records of every request that had already returned.
+	var flushers sync.WaitGroup
+	for range 10 {
+		flushers.Add(1)
+		go func() {
+			defer flushers.Done()
+			for returned.Load() < requests {
+				before := returned.Load()
+				if err := mw.Flush(context.Background()); err != nil {
+					t.Errorf("flush: %v", err)
+					return
+				}
+				if got := rec.stored.Load(); got < before {
+					t.Errorf("flush returned with %d records stored, but %d requests had already finished", got, before)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	flushers.Wait()
+	if err := mw.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got := rec.stored.Load(); got != requests {
+		t.Fatalf("flush returned with %d of %d records stored", got, requests)
+	}
+}
+
+func TestUsageFlushHonoursItsContext(t *testing.T) {
+	block := make(chan struct{})
+	rec := &blockedUsage{recordingUsage: newRecordingUsage(), block: block}
+	mw := middlewares.NewUsage(rec, gpt4o, nil)
+	req := &pipeline.Request{Type: pipeline.RequestCompletion, Completion: &provider.CompletionRequest{Model: "gpt-4o"}, State: map[string]any{}}
+	_, _ = mw.Process(context.Background(), req, func(context.Context) (*pipeline.Response, error) {
+		return &pipeline.Response{Completion: &provider.CompletionResponse{}}, nil
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := mw.Flush(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("flush = %v, want deadline exceeded", err)
+	}
+	close(block)
+	if err := mw.Flush(context.Background()); err != nil {
+		t.Fatalf("flush after release: %v", err)
+	}
+}
+
+type blockedUsage struct {
+	*recordingUsage
+	block chan struct{}
+}
+
+func (b *blockedUsage) Record(ctx context.Context, rec *usage.Record) error {
+	<-b.block
+	return b.recordingUsage.Record(ctx, rec)
+}

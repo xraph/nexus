@@ -248,3 +248,20 @@ func TestUsageRecordsAStreamGuardBlock(t *testing.T) {
 		}
 	})
 }
+
+func TestUsageRecordsAStreamThatEndsWithoutUsage(t *testing.T) {
+	t.Parallel()
+	st := testutil.NewFakeStream([]*provider.StreamChunk{{Delta: provider.Delta{Content: "hi"}}}, nil)
+	got := drainStream(t, st, false)
+	wantRecord(t, got, usage.OutcomeOK, usage.PricingUnknown, "")
+}
+
+func TestUsageRecordsAGuardBlockedCacheReplay(t *testing.T) {
+	t.Parallel()
+	blocked := &guard.BlockedError{Guard: "stream-pii", Phase: guard.PhaseOutput, Reason: "ssn"}
+	got := drainStream(t, &erroringStream{chunks: []*provider.StreamChunk{usageChunk(100, 20)}, err: blocked}, true)
+	wantRecord(t, got, usage.OutcomeBlocked, usage.PricingCached, "0")
+	if got.BlockedBy != "stream-pii" || !got.Cached {
+		t.Fatalf("blocked by %q, cached %v", got.BlockedBy, got.Cached)
+	}
+}

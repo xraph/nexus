@@ -41,14 +41,18 @@ type UsageMiddleware struct {
 	prices PriceLookup
 	log    UsageLogger
 
-	inflight     sync.WaitGroup
+	mu           sync.Mutex
+	idle         *sync.Cond // signalled when pending reaches zero
+	pending      int        // inserts in flight, guarded by mu
 	insertErrors atomic.Int64
 }
 
 // NewUsage creates the usage middleware. prices and log may be nil: without
 // prices every request is unpriced; without log failures are only counted.
 func NewUsage(u usage.Service, prices PriceLookup, log UsageLogger) *UsageMiddleware {
-	return &UsageMiddleware{usage: u, prices: prices, log: log}
+	m := &UsageMiddleware{usage: u, prices: prices, log: log}
+	m.idle = sync.NewCond(&m.mu)
+	return m
 }
 
 func (m *UsageMiddleware) Name() string  { return "usage" }
@@ -61,7 +65,11 @@ func (m *UsageMiddleware) InsertErrors() int64 { return m.insertErrors.Load() }
 func (m *UsageMiddleware) Flush(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
-		m.inflight.Wait()
+		m.mu.Lock()
+		for m.pending > 0 {
+			m.idle.Wait()
+		}
+		m.mu.Unlock()
 		close(done)
 	}()
 	select {
@@ -175,13 +183,30 @@ func (m *UsageMiddleware) price(ctx context.Context, rec *usage.Record, u provid
 		rec.CostUSD, rec.PricingStatus = nil, usage.PricingUnpricedModel
 		return
 	}
+	// A request that reports no tokens at all (a client that left before the
+	// usage chunk, a stream that ended without one) was served, but what it
+	// consumed is unknown. That is not $0. A free model costs $0 whatever it
+	// consumed.
+	if !p.Free && u.PromptTokens == 0 && u.CompletionTokens == 0 && u.TotalTokens == 0 {
+		rec.CostUSD, rec.PricingStatus = nil, usage.PricingUnknown
+		return
+	}
 	rec.CostUSD, rec.PricingStatus = model.Cost(u, p, embedding)
 }
 
 func (m *UsageMiddleware) record(rec *usage.Record) {
-	m.inflight.Add(1)
+	m.mu.Lock()
+	m.pending++
+	m.mu.Unlock()
 	go func() {
-		defer m.inflight.Done()
+		defer func() {
+			m.mu.Lock()
+			m.pending--
+			if m.pending == 0 {
+				m.idle.Broadcast()
+			}
+			m.mu.Unlock()
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := m.usage.Record(ctx, rec); err != nil {
