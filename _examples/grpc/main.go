@@ -4,7 +4,11 @@
 //
 //	OPENAI_API_KEY=sk-... go run ./_examples/grpc
 //
-// Then point any nexus.v1 client at localhost:50051.
+// Then point any nexus.v1 client at localhost:50051, with the gateway key the
+// example prints at startup in the "x-api-key" metadata (or
+// "authorization: Bearer nxs_..."). The in-memory store forgets the key on
+// restart. Without the grpcsrv.KeyAuth interceptor the gRPC surface would be
+// anonymous: Register does not authenticate.
 //
 // Error contract: when the upstream provider fails mid-stream, the server
 // emits a typed StreamEvent{Type: ERROR, Error: {message,type,...}} frame
@@ -25,7 +29,9 @@ import (
 
 	nexus "github.com/xraph/nexus"
 	"github.com/xraph/nexus/grpcsrv"
+	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/providers/openai"
+	"github.com/xraph/nexus/tenant"
 )
 
 func main() {
@@ -44,13 +50,31 @@ func run() error {
 	defer stop()
 
 	engine := nexus.NewEngine(nexus.WithProvider(openai.New(apiKey)))
+	if engine == nil {
+		return fmt.Errorf("the gateway did not initialize")
+	}
+
+	// KeyAuth refuses a call without a gateway key, so make one. The tenant
+	// and key live in the gateway's in-memory store.
+	gw := engine.Gateway()
+	t, err := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Example", Slug: "example"})
+	if err != nil {
+		return fmt.Errorf("create tenant: %w", err)
+	}
+	_, rawKey, err := gw.Keys().Create(ctx, &key.CreateInput{TenantID: t.ID.String(), Name: "example"})
+	if err != nil {
+		return fmt.Errorf("create key: %w", err)
+	}
+	// Examples may print the key. It is shown once; never log a key in a real
+	// service.
+	fmt.Println("Gateway key (shown once):", rawKey)
 
 	var lc net.ListenConfig
 	lis, err := lc.Listen(ctx, "tcp", ":50051")
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
-	srv := grpc.NewServer()
+	srv := grpc.NewServer(grpc.StreamInterceptor(grpcsrv.KeyAuth(gw.Keys(), gw.Tenants())))
 	grpcsrv.Register(srv, engine)
 
 	go func() {

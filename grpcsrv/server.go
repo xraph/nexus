@@ -4,12 +4,18 @@
 //
 // Usage:
 //
-//	srv := grpc.NewServer()
-//	grpcsrv.Register(srv, engine)
+//	srv := grpc.NewServer(grpc.StreamInterceptor(grpcsrv.KeyAuth(gw.Keys(), gw.Tenants())))
+//	grpcsrv.Register(srv, gw.Engine())
 //	srv.Serve(lis)
 //
 // Clients invoke nexus.v1.Completions/CompleteStream and receive a stream
 // of StreamEvent messages until type=DONE.
+//
+// Warning: Register does not authenticate. Without the KeyAuth interceptor
+// the gRPC surface is anonymous, whatever Config.RequireAPIKey says (that
+// setting covers the HTTP api and proxy routes only). Every call is then
+// unattributed, so no tenant budget, RPM, TPM or scope applies, and only
+// GlobalRateLimit limits it.
 package grpcsrv
 
 import (
@@ -63,7 +69,9 @@ func NewServer(engine CompletionStreamer, opts ...Option) *Server {
 	return s
 }
 
-// Register installs the Server on a grpc.ServiceRegistrar.
+// Register installs the Server on a grpc.ServiceRegistrar. It does not
+// authenticate: install KeyAuth as the server's stream interceptor, or the
+// surface is anonymous and only GlobalRateLimit applies to it.
 func Register(reg grpc.ServiceRegistrar, engine CompletionStreamer, opts ...Option) {
 	nexusv1.RegisterCompletionsServer(reg, NewServer(engine, opts...))
 }
