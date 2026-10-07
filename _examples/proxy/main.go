@@ -13,10 +13,12 @@
 //
 //	OPENAI_API_KEY=sk-... go run ./_examples/proxy
 //
-// Then from Python:
+// The proxy requires a gateway key (nxs_...). The example creates a tenant and
+// a key at startup and prints the key once; the in-memory store forgets it on
+// restart. Then from Python:
 //
 //	from openai import OpenAI
-//	client = OpenAI(base_url="http://localhost:8080/v1", api_key="unused")
+//	client = OpenAI(base_url="http://localhost:8080/v1", api_key="nxs_...")
 //	resp = client.chat.completions.create(
 //	    model="gpt-4o-mini",
 //	    messages=[{"role": "user", "content": "Hello!"}],
@@ -39,10 +41,12 @@ import (
 	nexus "github.com/xraph/nexus"
 	"github.com/xraph/nexus/cache"
 	"github.com/xraph/nexus/cache/stores"
+	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/observability"
 	"github.com/xraph/nexus/providers/openai"
 	"github.com/xraph/nexus/proxy"
 	"github.com/xraph/nexus/router/strategies"
+	"github.com/xraph/nexus/tenant"
 )
 
 func main() {
@@ -66,6 +70,22 @@ func main() {
 			Mode: cache.ReplayBurst,
 		}),
 	)
+
+	// The proxy refuses a request without a gateway key, so give it one. The
+	// tenant and key live in the gateway's in-memory store.
+	ctx := context.Background()
+	gw := engine.Gateway()
+	t, err := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Example", Slug: "example"})
+	if err != nil {
+		log.Fatalf("create tenant: %v", err)
+	}
+	_, rawKey, err := gw.Keys().Create(ctx, &key.CreateInput{TenantID: t.ID.String(), Name: "example"})
+	if err != nil {
+		log.Fatalf("create key: %v", err)
+	}
+	// Examples may print the key. It is shown once; never log a key in a real
+	// service.
+	fmt.Println("Gateway key (shown once):", rawKey)
 
 	// Proxy: SSE / NDJSON / native-SSE / WebSocket all wired by default.
 	p := proxy.New(engine)
