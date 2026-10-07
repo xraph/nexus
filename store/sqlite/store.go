@@ -413,7 +413,7 @@ func (s *usageStore) Series(ctx context.Context, opts *usage.SeriesOptions) ([]u
 		if c != nil {
 			p.CostUSD = *c
 		}
-		if usage.PricingStatus(status) == usage.PricingUnpricedModel {
+		if usage.PricingStatus(status).CostUnknown() {
 			p.Unpriced = 1
 		}
 		points = append(points, p)

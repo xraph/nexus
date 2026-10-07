@@ -167,3 +167,27 @@ func TestSeriesChecksOptionsOnEveryBackend(t *testing.T) {
 		}
 	})
 }
+
+func TestSeriesCountsUnknownCostsAsUnpriced(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		tn := storetest.InsertTenant(t, s)
+		start := time.Date(2026, 3, 10, 8, 0, 0, 0, time.UTC)
+		for i, cost := range []string{"", "", "0.4"} {
+			rec := storetest.Record(tn.ID, cost)
+			rec.CreatedAt = start.Add(time.Duration(i+1) * time.Minute)
+			if cost == "" {
+				rec.PricingStatus, rec.Outcome = usage.PricingUnknown, usage.OutcomeError
+			}
+			storetest.InsertRecord(t, s, rec)
+		}
+		got, err := s.Usage().Series(context.Background(), &usage.SeriesOptions{
+			TenantID: tn.ID.String(), Start: start, End: start.Add(time.Hour), Bucket: usage.BucketHour,
+		})
+		if err != nil || len(got) != 1 {
+			t.Fatalf("series = %v, %v", got, err)
+		}
+		if got[0].Requests != 3 || got[0].Unpriced != 2 || got[0].CostUSD.String() != "0.4" {
+			t.Fatalf("bucket = %+v", got[0])
+		}
+	})
+}

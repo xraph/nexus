@@ -466,7 +466,7 @@ func (s *usageStore) Series(ctx context.Context, opts *usage.SeriesOptions) ([]u
 			"requests": bson.M{"$sum": 1},
 			"tokens":   bson.M{"$sum": "$total_tokens"},
 			"cost":     bson.M{"$sum": "$cost_usd"},
-			"unpriced": bson.M{"$sum": bson.M{"$cond": bson.A{bson.M{"$eq": bson.A{"$pricing_status", "unpriced_model"}}, 1, 0}}},
+			"unpriced": bson.M{"$sum": bson.M{"$cond": bson.A{bson.M{"$in": bson.A{"$pricing_status", bson.A{"unpriced_model", "unknown"}}}, 1, 0}}},
 		}},
 	})
 	if err != nil {

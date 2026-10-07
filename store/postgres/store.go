@@ -380,7 +380,7 @@ func (s *usageStore) Series(ctx context.Context, opts *usage.SeriesOptions) ([]u
 	}
 	rows, err := s.pgdb.Query(ctx,
 		`SELECT date_trunc($2, created_at, 'UTC'), COUNT(*), COALESCE(SUM(total_tokens), 0)::bigint,
-		        SUM(cost_usd), COUNT(*) FILTER (WHERE pricing_status = 'unpriced_model')
+		        SUM(cost_usd), COUNT(*) FILTER (WHERE pricing_status IN ('unpriced_model', 'unknown'))
 		   FROM nexus_usage_records
 		  WHERE ($1 = '' OR tenant_id = $1) AND created_at >= $3 AND created_at < $4
 		  GROUP BY 1`,

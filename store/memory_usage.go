@@ -118,7 +118,7 @@ func pointOf(r *usage.Record) usage.SeriesPoint {
 	if r.CostUSD != nil {
 		p.CostUSD = *r.CostUSD
 	}
-	if r.PricingStatus == usage.PricingUnpricedModel {
+	if r.PricingStatus.CostUnknown() {
 		p.Unpriced = 1
 	}
 	return p
