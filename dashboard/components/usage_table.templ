@@ -38,7 +38,7 @@ templ UsageRecordTable(records []*usage.Record) {
 							{ strconv.Itoa(r.TotalTokens) }
 						}
 						@table.Cell() {
-							{ formatCost(r.CostUSD) }
+							{ formatCostPtr(r.CostUSD) }
 						}
 						@table.Cell() {
 							{ formatDuration(r.Latency) }

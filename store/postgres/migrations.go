@@ -101,6 +101,57 @@ CREATE INDEX IF NOT EXISTS idx_nexus_usage_created ON nexus_usage_records(create
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "exact_money_and_outcomes",
+			Version: "20261007000001",
+			Comment: "Store usage cost as exact NUMERIC, add outcome fields, allow unattributed rows",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+ALTER TABLE nexus_usage_records
+    ALTER COLUMN cost_usd DROP DEFAULT,
+    ALTER COLUMN cost_usd DROP NOT NULL,
+    ALTER COLUMN cost_usd TYPE NUMERIC(38,18) USING cost_usd::numeric,
+    ALTER COLUMN tenant_id DROP NOT NULL,
+    ALTER COLUMN key_id DROP NOT NULL,
+    ALTER COLUMN request_id DROP NOT NULL,
+    ADD COLUMN IF NOT EXISTS pricing_status TEXT NOT NULL DEFAULT 'priced',
+    ADD COLUMN IF NOT EXISTS outcome TEXT NOT NULL DEFAULT 'ok',
+    ADD COLUMN IF NOT EXISTS blocked_by TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS refusal_code TEXT NOT NULL DEFAULT '';
+
+-- Nothing computed a cost before this migration, so a stored 0 meant
+-- "unknown", not "free".
+UPDATE nexus_usage_records
+   SET cost_usd = NULL, pricing_status = 'unpriced_model'
+ WHERE cost_usd = 0;
+
+UPDATE nexus_usage_records
+   SET outcome = CASE WHEN cached THEN 'cached'
+                      WHEN status_code >= 400 THEN 'error'
+                      ELSE 'ok' END;
+
+UPDATE nexus_usage_records SET key_id = NULL WHERE key_id = '';
+UPDATE nexus_usage_records SET request_id = NULL WHERE request_id = '';
+
+CREATE INDEX IF NOT EXISTS idx_nexus_usage_key ON nexus_usage_records(key_id);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_nexus_usage_key;
+ALTER TABLE nexus_usage_records
+    DROP COLUMN IF EXISTS refusal_code,
+    DROP COLUMN IF EXISTS blocked_by,
+    DROP COLUMN IF EXISTS outcome,
+    DROP COLUMN IF EXISTS pricing_status,
+    ALTER COLUMN cost_usd TYPE DOUBLE PRECISION USING COALESCE(cost_usd, 0)::double precision,
+    ALTER COLUMN cost_usd SET DEFAULT 0,
+    ALTER COLUMN cost_usd SET NOT NULL;
+`)
+				return err
+			},
+		},
 	)
 	return g
 }()

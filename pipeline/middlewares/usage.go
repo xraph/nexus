@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xraph/nexus/id"
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/usage"
@@ -57,6 +58,7 @@ func (m *UsageMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	switch {
 	case err != nil:
 		rec.StatusCode = 500
+		settle(rec, err)
 		m.recordAsync(rec)
 	case resp != nil && resp.Stream != nil:
 		// Streaming — defer recording until Close. Wrap the stream so token
@@ -77,13 +79,37 @@ func (m *UsageMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 		rec.TotalTokens = resp.Completion.Usage.TotalTokens
 		rec.Cached = resp.Completion.Cached
 		rec.CostUSD = resp.Completion.Cost
+		settle(rec, nil)
 		m.recordAsync(rec)
 	default:
 		rec.StatusCode = 200
+		settle(rec, nil)
 		m.recordAsync(rec)
 	}
 
 	return resp, err
+}
+
+// settle fills the fields every record needs before it is stored: what
+// happened, and whether its cost is known.
+func settle(rec *usage.Record, err error) {
+	switch {
+	case err != nil:
+		rec.Outcome = usage.OutcomeError
+	case rec.Cached:
+		rec.Outcome = usage.OutcomeCached
+	default:
+		rec.Outcome = usage.OutcomeOK
+	}
+	switch {
+	case rec.Cached:
+		zero := money.Zero
+		rec.CostUSD, rec.PricingStatus = &zero, usage.PricingCached
+	case rec.CostUSD == nil:
+		rec.PricingStatus = usage.PricingUnpricedModel
+	default:
+		rec.PricingStatus = usage.PricingPriced
+	}
 }
 
 func (m *UsageMiddleware) recordAsync(rec *usage.Record) {
@@ -154,7 +180,7 @@ func (s *usageRecordingStream) Close() error {
 				if s.rec.Provider == "" {
 					s.rec.Provider = final.Provider
 				}
-				if s.rec.CostUSD == 0 {
+				if s.rec.CostUSD == nil {
 					s.rec.CostUSD = final.Cost
 				}
 			}
@@ -177,6 +203,7 @@ func (s *usageRecordingStream) Close() error {
 		s.rec.TotalTokens = s.rec.PromptTokens + s.rec.CompletionTokens
 	}
 	s.rec.Latency = time.Since(s.start)
+	settle(s.rec, nil)
 	s.recordF(s.rec)
 	return closeErr
 }

@@ -87,6 +87,7 @@ func OpenPostgresDB(t *testing.T) *grove.DB {
 	if err := checkPostgresDSN(dsn); err != nil {
 		t.Fatalf("%s: %v", envPostgres, err)
 	}
+	serializePostgres(t, dsn)
 	schema := "nexus_test_" + randomHex(t)
 	quoted := pgx.Identifier{schema}.Sanitize()
 	pgExec(t, dsn, "CREATE SCHEMA "+quoted)
@@ -101,6 +102,29 @@ func OpenPostgresDB(t *testing.T) *grove.DB {
 		t.Fatalf("open postgres: %v", err)
 	}
 	return groveOpen(t, drv)
+}
+
+// postgresTestLockKey is the advisory lock that serialises Postgres tests
+// across packages. It must differ from key 1, which grove's migration
+// executor takes with pg_try_advisory_lock and does not wait for: two
+// packages migrating at once would fail with "migration lock is held".
+const postgresTestLockKey = 7632001
+
+// serializePostgres blocks until no other test, in any package, is using the
+// test server, and holds the lock until this test ends. The lock lives on a
+// connection of its own, so it is released if the process dies.
+func serializePostgres(t *testing.T, dsn string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect postgres for test lock: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close(context.Background()) })
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", int64(postgresTestLockKey)); err != nil {
+		t.Fatalf("take postgres test lock: %v", err)
+	}
 }
 
 // OpenMongoDB opens a database of this test's own on the server

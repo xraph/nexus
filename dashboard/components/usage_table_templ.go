@@ -446,9 +446,9 @@ func UsageRecordTable(records []*usage.Record) templ.Component {
 								}
 								ctx = templ.InitializeContext(ctx)
 								var templ_7745c5c3_Var22 string
-								templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(formatCost(r.CostUSD))
+								templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(formatCostPtr(r.CostUSD))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/usage_table.templ`, Line: 41, Col: 30}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/usage_table.templ`, Line: 41, Col: 33}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 								if templ_7745c5c3_Err != nil {

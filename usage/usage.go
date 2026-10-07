@@ -6,24 +6,33 @@ import (
 	"time"
 
 	"github.com/xraph/nexus/id"
+	"github.com/xraph/nexus/money"
 )
 
 // Record captures a single API call's usage.
 type Record struct {
-	ID               id.UsageID    `json:"id"`
-	TenantID         id.TenantID   `json:"tenant_id"`
-	KeyID            id.KeyID      `json:"key_id"`
-	RequestID        id.RequestID  `json:"request_id"`
-	Provider         string        `json:"provider"`
-	Model            string        `json:"model"`
-	PromptTokens     int           `json:"prompt_tokens"`
-	CompletionTokens int           `json:"completion_tokens"`
-	TotalTokens      int           `json:"total_tokens"`
-	CostUSD          float64       `json:"cost_usd"`
-	Latency          time.Duration `json:"latency"`
-	Cached           bool          `json:"cached"`
-	StatusCode       int           `json:"status_code"`
-	CreatedAt        time.Time     `json:"created_at"`
+	ID id.UsageID `json:"id"`
+	// TenantID, KeyID and RequestID are id.Nil when the request was not
+	// attributed to them.
+	TenantID         id.TenantID  `json:"tenant_id"`
+	KeyID            id.KeyID     `json:"key_id"`
+	RequestID        id.RequestID `json:"request_id"`
+	Provider         string       `json:"provider"`
+	Model            string       `json:"model"`
+	PromptTokens     int          `json:"prompt_tokens"`
+	CompletionTokens int          `json:"completion_tokens"`
+	TotalTokens      int          `json:"total_tokens"`
+	// CostUSD is nil when the request could not be priced. It is never $0
+	// standing in for "unknown"; PricingStatus says why it is missing.
+	CostUSD       *money.USD    `json:"cost_usd"`
+	PricingStatus PricingStatus `json:"pricing_status"`
+	Outcome       Outcome       `json:"outcome"`
+	BlockedBy     string        `json:"blocked_by,omitempty"`
+	RefusalCode   string        `json:"refusal_code,omitempty"`
+	Latency       time.Duration `json:"latency"`
+	Cached        bool          `json:"cached"`
+	StatusCode    int           `json:"status_code"`
+	CreatedAt     time.Time     `json:"created_at"`
 }
 
 // Summary aggregates usage over a period.

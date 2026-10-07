@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -61,6 +62,23 @@ func (s *Store) Migrate() error {
 		if err != nil {
 			return fmt.Errorf("nexus/mongo: migrate %s indexes: %w", col, err)
 		}
+	}
+
+	// Documents written before exact money have no pricing_status. Nothing
+	// computed a cost then, so their stored 0 means "unknown", not "free".
+	_, err := s.mdb.Collection(colUsage).UpdateMany(ctx,
+		bson.M{"pricing_status": bson.M{"$exists": false}},
+		bson.A{bson.M{"$set": bson.M{
+			"pricing_status": bson.M{"$cond": bson.A{bson.M{"$eq": bson.A{"$cost_usd", 0}}, "unpriced_model", "priced"}},
+			"cost_usd":       bson.M{"$cond": bson.A{bson.M{"$eq": bson.A{"$cost_usd", 0}}, nil, bson.M{"$toDecimal": "$cost_usd"}}},
+			"outcome": bson.M{"$cond": bson.A{"$cached", "cached",
+				bson.M{"$cond": bson.A{bson.M{"$gte": bson.A{"$status_code", 400}}, "error", "ok"}}}},
+			"blocked_by":   "",
+			"refusal_code": "",
+		}}},
+	)
+	if err != nil {
+		return fmt.Errorf("nexus/mongo: normalise legacy usage: %w", err)
 	}
 	return nil
 }
@@ -262,9 +280,11 @@ type usageStore struct {
 }
 
 func (s *usageStore) Insert(ctx context.Context, rec *usage.Record) error {
-	m := usageToModel(rec)
-	_, err := s.mdb.NewInsert(m).Exec(ctx)
+	m, err := usageToModel(rec)
 	if err != nil {
+		return err
+	}
+	if _, err := s.mdb.NewInsert(m).Exec(ctx); err != nil {
 		return fmt.Errorf("nexus/mongo: insert usage: %w", err)
 	}
 	return nil
@@ -292,14 +312,24 @@ func (s *usageStore) MonthlySpend(ctx context.Context, tenantID string) (float64
 	defer func() { _ = cursor.Close(ctx) }()
 
 	var result struct {
-		Total float64 `bson:"total"`
+		Total any `bson:"total"`
 	}
 	if cursor.Next(ctx) {
 		if err := cursor.Decode(&result); err != nil {
 			return 0, fmt.Errorf("nexus/mongo: monthly spend decode: %w", err)
 		}
 	}
-	return result.Total, nil
+	return floatOf(result.Total)
+}
+
+// floatOf converts an aggregated amount to a float. It is temporary: the
+// exact-money aggregates replace the float totals that need it. Nil is 0.
+func floatOf(v any) (float64, error) {
+	u, err := usdFromBSON(v)
+	if err != nil || u == nil {
+		return 0, err
+	}
+	return strconv.ParseFloat(u.String(), 64)
 }
 
 func (s *usageStore) DailyRequests(ctx context.Context, tenantID string) (int, error) {
@@ -375,12 +405,16 @@ func (s *usageStore) Summary(ctx context.Context, tenantID, period string) (*usa
 				Provider string `bson:"provider"`
 				Model    string `bson:"model"`
 			} `bson:"_id"`
-			Requests int     `bson:"requests"`
-			Tokens   int     `bson:"tokens"`
-			Cost     float64 `bson:"cost"`
+			Requests int `bson:"requests"`
+			Tokens   int `bson:"tokens"`
+			Cost     any `bson:"cost"`
 		}
 		if err := cursor.Decode(&row); err != nil {
 			return nil, fmt.Errorf("nexus/mongo: summary decode: %w", err)
+		}
+		cost, err := floatOf(row.Cost)
+		if err != nil {
+			return nil, fmt.Errorf("nexus/mongo: summary cost: %w", err)
 		}
 
 		prov := row.ID.Provider
@@ -388,21 +422,21 @@ func (s *usageStore) Summary(ctx context.Context, tenantID, period string) (*usa
 
 		summary.TotalRequests += row.Requests
 		summary.TotalTokens += row.Tokens
-		summary.TotalCostUSD += row.Cost
+		summary.TotalCostUSD += cost
 
 		if _, ok := summary.ByProvider[prov]; !ok {
 			summary.ByProvider[prov] = &usage.ProviderUsage{}
 		}
 		summary.ByProvider[prov].Requests += row.Requests
 		summary.ByProvider[prov].Tokens += row.Tokens
-		summary.ByProvider[prov].CostUSD += row.Cost
+		summary.ByProvider[prov].CostUSD += cost
 
 		if _, ok := summary.ByModel[mdl]; !ok {
 			summary.ByModel[mdl] = &usage.ModelUsage{}
 		}
 		summary.ByModel[mdl].Requests += row.Requests
 		summary.ByModel[mdl].Tokens += row.Tokens
-		summary.ByModel[mdl].CostUSD += row.Cost
+		summary.ByModel[mdl].CostUSD += cost
 	}
 
 	return summary, cursor.Err()

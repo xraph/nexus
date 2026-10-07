@@ -60,3 +60,12 @@ func cloneKey(k *key.APIKey) *key.APIKey {
 	}
 	return &c
 }
+
+func cloneRecord(r *usage.Record) *usage.Record {
+	c := *r
+	if r.CostUSD != nil {
+		v := *r.CostUSD
+		c.CostUSD = &v
+	}
+	return &c
+}

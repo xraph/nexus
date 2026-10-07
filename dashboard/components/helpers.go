@@ -3,6 +3,8 @@ package components
 import (
 	"fmt"
 	"time"
+
+	"github.com/xraph/nexus/money"
 )
 
 // formatTimeAgo returns a human-readable relative time string.
@@ -43,15 +45,15 @@ func formatBudget(v float64) string {
 	return fmt.Sprintf("$%.2f", v)
 }
 
-// formatCost formats a USD cost value.
-func formatCost(costUSD float64) string {
-	if costUSD == 0 {
-		return "$0.00"
+// formatCost formats an exact USD amount for the legacy dashboard.
+func formatCost(cost money.USD) string { return "$" + cost.String() }
+
+// formatCostPtr formats a cost that may be unknown.
+func formatCostPtr(cost *money.USD) string {
+	if cost == nil {
+		return "unpriced"
 	}
-	if costUSD < 0.01 {
-		return fmt.Sprintf("$%.4f", costUSD)
-	}
-	return fmt.Sprintf("$%.2f", costUSD)
+	return formatCost(*cost)
 }
 
 // formatDuration formats a duration for display.
