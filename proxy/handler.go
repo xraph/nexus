@@ -1,8 +1,8 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -78,6 +78,7 @@ func (p *Proxy) handleStreamingCompletion(w http.ResponseWriter, r *http.Request
 
 	httpstream.Run(ctx, w, stream, encoder, httpstream.RunOptions{
 		RequestID: pipeline.RequestID(ctx),
+		OnError:   func(err error) { p.onStreamError(ctx, err) },
 	})
 }
 
@@ -137,7 +138,7 @@ func (p *Proxy) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) handleListModels(w http.ResponseWriter, r *http.Request) {
 	models, err := p.engine.ListModels(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		p.writePipelineError(w, r, err)
 		return
 	}
 
@@ -167,7 +168,7 @@ func (p *Proxy) handleGetModel(w http.ResponseWriter, r *http.Request) {
 
 	models, err := p.engine.ListModels(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		p.writePipelineError(w, r, err)
 		return
 	}
 
@@ -339,17 +340,15 @@ func writeError(w http.ResponseWriter, status int, errType, message string) {
 
 // writePipelineError answers an error from the engine with the refusal's
 // status and code, or a fixed 500, and Retry-After when the refusal says how
-// long to wait. auth.WriteError writes the OpenAI error shape this proxy
+// long to wait. auth.WriteFailure writes the OpenAI error shape this proxy
 // uses everywhere else. The cause of a server-side failure never reaches the
-// client; it goes to the gateway log.
+// client; it goes to the gateway log, with the request id.
 func (p *Proxy) writePipelineError(w http.ResponseWriter, r *http.Request, err error) {
-	if status, _ := pipeline.HTTPStatus(err); status >= http.StatusInternalServerError {
-		args := []any{"request_id", pipeline.RequestID(r.Context()), "path", r.URL.Path, "error", err.Error()}
-		var ref *pipeline.RefusalError
-		if errors.As(err, &ref) && ref.Cause != nil {
-			args = append(args, "cause", ref.Cause.Error())
-		}
-		p.engine.Gateway().Logger().Error("request failed", args...)
-	}
-	auth.WriteError(w, err)
+	auth.WriteFailure(w, r, p.engine.Gateway().Logger(), err)
+}
+
+// onStreamError logs the cause of a stream that failed after the response
+// began, where the client was told only the sanitized envelope.
+func (p *Proxy) onStreamError(ctx context.Context, err error) {
+	auth.LogServerError(ctx, p.engine.Gateway().Logger(), "", err)
 }

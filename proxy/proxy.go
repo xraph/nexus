@@ -155,7 +155,11 @@ func (p *Proxy) registerRoutes() {
 	// A key is required unless the gateway is configured open, and a key that
 	// is presented is always checked. The default OnError writes the OpenAI
 	// error shape, with Retry-After and WWW-Authenticate.
-	ka := auth.KeyAuth(auth.KeyAuthOptions{Keys: gw.Keys(), Required: required, OnError: p.onAuthError})
+	keyAuth := auth.KeyAuth(auth.KeyAuthOptions{Keys: gw.Keys(), Required: required, OnError: p.onAuthError})
+	// Every route gets a request id ahead of the key check, so a refusal at
+	// the edge has one to log and to return in X-Request-Id.
+	rid := auth.RequestID()
+	ka := func(h http.Handler) http.Handler { return rid(keyAuth(h)) }
 	models := func(h http.Handler) http.Handler { return h }
 	if required {
 		// RequireScope fails closed (an anonymous request is a 401), so it
@@ -171,7 +175,9 @@ func (p *Proxy) registerRoutes() {
 	p.mux.Handle("GET /v1/models/{model}", ka(models(http.HandlerFunc(p.handleGetModel))))
 	p.mux.HandleFunc("GET /health", p.handleHealth)
 	if !p.wsDisabled {
-		ws := httpstream.NewWSHandler(p.engine, p.wsOptions)
+		wsOpts := p.wsOptions
+		wsOpts.OnError = p.onStreamError
+		ws := httpstream.NewWSHandler(p.engine, wsOpts)
 		p.mux.Handle("/v1/realtime", ka(ws))
 	}
 }

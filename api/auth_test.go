@@ -94,11 +94,21 @@ type reply struct {
 	status int
 	header http.Header
 	body   string
-	code   string
+	// shown is body with the request key redacted: failure messages print it.
+	shown string
+	code  string
 }
 
 // send makes a request. rawKey "" sends no key. A failure message names the
 // path and status only: it never carries the key.
+// redact hides the key wherever a failure message would print a body.
+func redact(body, rawKey string) string {
+	if rawKey == "" {
+		return body
+	}
+	return strings.ReplaceAll(body, rawKey, "<key>")
+}
+
 func send(t *testing.T, srv *httptest.Server, method, path, rawKey, body string) reply {
 	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), method, srv.URL+path, strings.NewReader(body))
@@ -115,7 +125,7 @@ func send(t *testing.T, srv *httptest.Server, method, path, rawKey, body string)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
-	r := reply{status: resp.StatusCode, header: resp.Header, body: string(b)}
+	r := reply{status: resp.StatusCode, header: resp.Header, body: string(b), shown: redact(string(b), rawKey)}
 	var env struct {
 		Error struct {
 			Message string `json:"message"`
@@ -132,7 +142,7 @@ func send(t *testing.T, srv *httptest.Server, method, path, rawKey, body string)
 func wantRefusal(t *testing.T, got reply, status int, code string) {
 	t.Helper()
 	if got.status != status || got.code != code {
-		t.Fatalf("status %d code %q, want %d %q; body %s", got.status, got.code, status, code, got.body)
+		t.Fatalf("status %d code %q, want %d %q; body %s", got.status, got.code, status, code, got.shown)
 	}
 }
 
@@ -207,7 +217,7 @@ func TestAdminNeedsTheAdminScope(t *testing.T) {
 	srv, _, user, admin := newAPI(t)
 	wantRefusal(t, send(t, srv, "GET", "/admin/providers", user, ""), 403, "forbidden")
 	if got := send(t, srv, "GET", "/admin/providers", admin, ""); got.status != 200 {
-		t.Fatalf("admin key: status %d, want 200; body %s", got.status, got.body)
+		t.Fatalf("admin key: status %d, want 200; body %s", got.status, got.shown)
 	}
 	wantRefusal(t, send(t, srv, "GET", "/admin/providers", "", ""), 401, "unauthenticated")
 }
@@ -228,7 +238,7 @@ func TestAdminNeedsAKeyEvenOnAnOpenGateway(t *testing.T) {
 func TestModelsNeedTheModelsScope(t *testing.T) {
 	srv, gw, user, _ := newAPI(t)
 	if got := send(t, srv, "GET", "/v1/models", user, ""); got.status != 200 {
-		t.Fatalf("default key: status %d, want 200; body %s", got.status, got.body)
+		t.Fatalf("default key: status %d, want 200; body %s", got.status, got.shown)
 	}
 	only, _ := newKey(t, gw, "only-completions", tenant.Quota{}, "completions")
 	wantRefusal(t, send(t, srv, "GET", "/v1/models", only, ""), 403, "forbidden")
@@ -240,7 +250,7 @@ func TestAnOpenGatewayListsModelsWithoutAKey(t *testing.T) {
 	srv, _, _, _ := newAPI(t, nexus.WithRequireAPIKey(false))
 	for _, path := range []string{"/v1/models", "/v1/models/gpt-4o"} {
 		if got := send(t, srv, "GET", path, "", ""); got.status != 200 {
-			t.Fatalf("%s: status %d, want 200; body %s", path, got.status, got.body)
+			t.Fatalf("%s: status %d, want 200; body %s", path, got.status, got.shown)
 		}
 	}
 }
@@ -256,7 +266,7 @@ func TestAnOpenGatewayStillChecksAKeyThatIsPresented(t *testing.T) {
 func TestRateLimitedIs429WithRetryAfter(t *testing.T) {
 	srv, _, user, _ := newAPI(t)
 	if got := send(t, srv, "POST", "/v1/chat/completions", user, chatBody); got.status != 200 {
-		t.Fatalf("first: status %d, want 200; body %s", got.status, got.body)
+		t.Fatalf("first: status %d, want 200; body %s", got.status, got.shown)
 	}
 	got := send(t, srv, "POST", "/v1/chat/completions", user, chatBody)
 	wantRefusal(t, got, 429, "rate_limited")
@@ -289,7 +299,7 @@ func TestAStreamRefusalIsAStatusNotAStream(t *testing.T) {
 func TestEmbeddingsAreRefusedWithTheirOwnStatus(t *testing.T) {
 	srv, gw, user, _ := newAPI(t)
 	if got := send(t, srv, "POST", "/v1/embeddings", user, `{"model":"gpt-4o","input":"x"}`); got.status != 200 {
-		t.Fatalf("status %d, want 200; body %s", got.status, got.body)
+		t.Fatalf("status %d, want 200; body %s", got.status, got.shown)
 	}
 	comp, _ := newKey(t, gw, "completions-only", tenant.Quota{}, "completions")
 	wantRefusal(t, send(t, srv, "POST", "/v1/embeddings", comp, `{"model":"gpt-4o","input":"x"}`), 403, "forbidden")
@@ -299,7 +309,7 @@ func TestEmbeddingsAreRefusedWithTheirOwnStatus(t *testing.T) {
 func TestAnOpenGatewayServesWithoutAKey(t *testing.T) {
 	srv, _, _, _ := newAPI(t, nexus.WithRequireAPIKey(false))
 	if got := send(t, srv, "POST", "/v1/chat/completions", "", chatBody); got.status != 200 {
-		t.Fatalf("status %d, want 200; body %s", got.status, got.body)
+		t.Fatalf("status %d, want 200; body %s", got.status, got.shown)
 	}
 }
 
@@ -352,7 +362,7 @@ func TestEveryPipelineRefusalMapsToItsStatus(t *testing.T) {
 			}
 			if row.warm {
 				if got := send(t, row.srv, "POST", "/v1/chat/completions", raw, row.body); got.status != 200 {
-					t.Fatalf("first request: status %d, want 200; body %s", got.status, got.body)
+					t.Fatalf("first request: status %d, want 200; body %s", got.status, got.shown)
 				}
 				if err := row.gw.FlushUsage(ctx); err != nil {
 					t.Fatal(err)
@@ -366,7 +376,7 @@ func TestEveryPipelineRefusalMapsToItsStatus(t *testing.T) {
 				}
 			}
 			if strings.Contains(got.body, "postgres://") || strings.Contains(got.body, "secret") {
-				t.Fatalf("the body leaks the cause: %s", got.body)
+				t.Fatalf("the body leaks the cause: %s", got.shown)
 			}
 		})
 	}
@@ -388,7 +398,7 @@ func TestAnInternalErrorIsAFixed500(t *testing.T) {
 	got := send(t, srv, "POST", "/v1/chat/completions", raw, chatBody)
 	wantRefusal(t, got, 500, "internal_error")
 	if strings.Contains(got.body, "secret") || strings.Contains(got.body, "https://") {
-		t.Fatalf("the body leaks the provider error: %s", got.body)
+		t.Fatalf("the body leaks the provider error: %s", got.shown)
 	}
 	if out := logs.text(); !strings.Contains(out, "boom") || strings.Contains(out, raw) {
 		t.Fatalf("the log must name the cause and never the key; logged: %s", strings.ReplaceAll(out, raw, "<key>"))
@@ -404,7 +414,12 @@ type recordingLogger struct {
 func (l *recordingLogger) add(msg string, args []any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.lines = append(l.lines, fmt.Sprint(append([]any{msg}, args...)...))
+	parts := make([]string, 1, 1+len(args))
+	parts[0] = msg
+	for _, a := range args {
+		parts = append(parts, fmt.Sprint(a))
+	}
+	l.lines = append(l.lines, strings.Join(parts, " "))
 }
 func (l *recordingLogger) text() string {
 	l.mu.Lock()
@@ -429,4 +444,112 @@ func TestNewPanicsOnAGatewayThatWasNotInitialized(t *testing.T) {
 		}
 	}()
 	api.New(nexus.New(nexus.WithProvider(okProvider{})))
+}
+
+// boomProvider streams one chunk, then fails with a message that carries a
+// URL and a secret.
+type boomProvider struct{ okProvider }
+
+func (boomProvider) CompleteStream(context.Context, *provider.CompletionRequest) (provider.Stream, error) {
+	return &boomStream{}, nil
+}
+
+type boomStream struct{ sent bool }
+
+func (s *boomStream) Next(context.Context) (*provider.StreamChunk, error) {
+	if !s.sent {
+		s.sent = true
+		return &provider.StreamChunk{Provider: "openai", Model: "gpt-4o", Delta: provider.Delta{Content: "he"}}, nil
+	}
+	return nil, errors.New("POST https://api.example.com/v1?key=secret: boom")
+}
+func (*boomStream) Close() error           { return nil }
+func (*boomStream) Usage() *provider.Usage { return nil }
+
+// serve builds a gateway over p with a recording logger, and a key for a
+// tenant with no limits.
+func serve(t *testing.T, p provider.Provider) (*httptest.Server, *nexus.Gateway, *recordingLogger, string, *tenant.Tenant) {
+	t.Helper()
+	logs := &recordingLogger{}
+	gw := nexus.New(nexus.WithDatabase(store.NewMemory()), nexus.WithProvider(p), nexus.WithLogger(logs))
+	if err := gw.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = gw.Shutdown(context.Background()) })
+	srv := httptest.NewServer(api.New(gw).Handler())
+	t.Cleanup(srv.Close)
+	raw, tn := newKey(t, gw, "serve", tenant.Quota{})
+	return srv, gw, logs, raw, tn
+}
+
+func TestAStreamThatFailsMidwayIsLoggedAndTheClientSeesAFixedMessage(t *testing.T) {
+	srv, _, logs, raw, _ := serve(t, boomProvider{})
+	got := send(t, srv, "POST", "/v1/chat/completions", raw, `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	if got.status != 200 {
+		t.Fatalf("status %d, want 200 (the stream had begun); body %s", got.status, got.shown)
+	}
+	if !strings.Contains(got.body, "upstream error") {
+		t.Fatalf("the error event must carry the fixed message; body %s", got.shown)
+	}
+	if strings.Contains(got.body, "secret") || strings.Contains(got.body, "https://") {
+		t.Fatalf("the stream leaks the provider error: %s", got.shown)
+	}
+	out := logs.text()
+	if !strings.Contains(out, "boom") || strings.Contains(out, raw) {
+		t.Fatalf("the log must name the cause and never the key; logged: %s", redact(out, raw))
+	}
+	if rid := got.header.Get("X-Request-Id"); rid == "" || !strings.Contains(out, rid) {
+		t.Fatalf("the log line must carry the request id %q; logged: %s", rid, redact(out, raw))
+	}
+}
+
+func TestTheRequestIdIsTheSameInTheHeaderTheLogAndTheUsageRecord(t *testing.T) {
+	srv, gw, logs, raw, tn := serve(t, leakyProvider{})
+	// A client-supplied id is ignored: the gateway sets its own.
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(chatBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+raw)
+	req.Header.Set("X-Request-Id", "req_client_supplied")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	rid := resp.Header.Get("X-Request-Id")
+	if resp.StatusCode != 500 || rid == "" || rid == "req_client_supplied" {
+		t.Fatalf("status %d, X-Request-Id %q: want a 500 with an id the gateway made", resp.StatusCode, rid)
+	}
+	if out := logs.text(); !strings.Contains(out, rid) || !strings.Contains(out, "boom") {
+		t.Fatalf("the 5xx log line must carry the id %q and the cause; logged: %s", rid, redact(out, raw))
+	}
+	recs := records(t, gw, &usage.QueryOptions{TenantID: tn.ID.String()})
+	if len(recs) != 1 || recs[0].RequestID.String() != rid {
+		t.Fatalf("%d usage records; want one whose RequestID is the header's %q", len(recs), rid)
+	}
+}
+
+func TestARefusalAtTheEdgeCarriesARequestId(t *testing.T) {
+	srv, _ := mustServe(t)
+	got := send(t, srv, "POST", "/v1/chat/completions", "", chatBody)
+	wantRefusal(t, got, 401, "unauthenticated")
+	if got.header.Get("X-Request-Id") == "" {
+		t.Fatal("a refusal at the edge must carry X-Request-Id")
+	}
+}
+
+func TestRealtimeNeedsAKeyBeforeTheUpgrade(t *testing.T) {
+	srv, _ := mustServe(t)
+	wantRefusal(t, send(t, srv, "GET", "/v1/realtime", "", ""), 401, "unauthenticated")
+	bad := "nxs_" + strings.Repeat("ef", 32)
+	got := send(t, srv, "GET", "/v1/realtime", bad, "")
+	wantRefusal(t, got, 401, "unauthenticated")
+	wantNoKeyIn(t, got, bad)
+}
+
+func mustServe(t *testing.T) (*httptest.Server, *nexus.Gateway) {
+	t.Helper()
+	srv, gw, _, _ := newAPI(t)
+	return srv, gw
 }

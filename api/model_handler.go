@@ -8,7 +8,7 @@ import (
 func (a *API) handleListModels(w http.ResponseWriter, r *http.Request) {
 	models, err := a.gw.Engine().ListModels(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writePipelineError(w, r, err)
 		return
 	}
 
@@ -44,7 +44,7 @@ func (a *API) handleGetModel(w http.ResponseWriter, r *http.Request) {
 
 	models, err := a.gw.Engine().ListModels(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writePipelineError(w, r, err)
 		return
 	}
 

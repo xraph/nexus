@@ -65,5 +65,6 @@ func (a *API) handleStreamCompletion(_ context.Context, w http.ResponseWriter, r
 
 	httpstream.Run(ctx, w, stream, encoder, httpstream.RunOptions{
 		RequestID: pipeline.RequestID(ctx),
+		OnError:   func(err error) { a.onStreamError(ctx, err) },
 	})
 }

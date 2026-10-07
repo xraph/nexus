@@ -1,8 +1,8 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	"github.com/xraph/nexus/auth"
@@ -68,29 +68,18 @@ func mapStatusToCode(status int) string {
 // writePipelineError answers an error from the engine with the refusal's
 // status and code, or a fixed 500, and Retry-After when the refusal says how
 // long to wait. The cause of a server-side failure never reaches the client;
-// it goes to the gateway log.
+// it goes to the gateway log, with the request id.
 func (a *API) writePipelineError(w http.ResponseWriter, r *http.Request, err error) {
-	a.logServerError(r, err)
-	auth.WriteError(w, err)
+	auth.WriteFailure(w, r, a.gw.Logger(), err)
 }
 
-// onAuthError is the OnError of the auth middleware: writePipelineError for
-// a request that has not reached the pipeline.
+// onAuthError is the OnError of the auth middleware.
 func (a *API) onAuthError(w http.ResponseWriter, r *http.Request, err error) {
 	a.writePipelineError(w, r, err)
 }
 
-// logServerError logs err when it answers as a 5xx, which is when the client
-// is told nothing about it. No error message here carries a gateway key:
-// every auth message is a fixed string.
-func (a *API) logServerError(r *http.Request, err error) {
-	if status, _ := pipeline.HTTPStatus(err); status < http.StatusInternalServerError {
-		return
-	}
-	args := []any{"request_id", pipeline.RequestID(r.Context()), "path", r.URL.Path, "error", err.Error()}
-	var ref *pipeline.RefusalError
-	if errors.As(err, &ref) && ref.Cause != nil {
-		args = append(args, "cause", ref.Cause.Error())
-	}
-	a.gw.Logger().Error("request failed", args...)
+// onStreamError logs the cause of a stream that failed after the response
+// began, where the client was told only the sanitized envelope.
+func (a *API) onStreamError(ctx context.Context, err error) {
+	auth.LogServerError(ctx, a.gw.Logger(), "", err)
 }

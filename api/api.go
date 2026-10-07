@@ -116,10 +116,15 @@ func (a *API) registerRoutes() {
 	required := a.gw.Config().RequireAPIKey
 	// /v1 routes: a key is required unless the gateway is configured open,
 	// and a key that is presented is always checked.
-	v1 := auth.KeyAuth(auth.KeyAuthOptions{Keys: keys, Required: required, OnError: a.onAuthError})
+	rid := auth.RequestID()
+	v1Auth := auth.KeyAuth(auth.KeyAuthOptions{Keys: keys, Required: required, OnError: a.onAuthError})
+	// Every route gets a request id ahead of the key check, so a refusal at
+	// the edge has one to log and to return in X-Request-Id.
+	v1 := func(h http.Handler) http.Handler { return rid(v1Auth(h)) }
 	// /admin routes always need a key, whatever RequireAPIKey says: it opens
 	// the /v1 routes only.
-	adminAuth := auth.KeyAuth(auth.KeyAuthOptions{Keys: keys, Required: true, OnError: a.onAuthError})
+	adminKeys := auth.KeyAuth(auth.KeyAuthOptions{Keys: keys, Required: true, OnError: a.onAuthError})
+	adminAuth := func(h http.Handler) http.Handler { return rid(adminKeys(h)) }
 	admin := auth.RequireScope("admin", a.onAuthError)
 	models := func(h http.Handler) http.Handler { return h }
 	if required {
@@ -166,7 +171,9 @@ func (a *API) registerRoutes() {
 	// authenticated like any /v1 route; the pipeline checks scopes per
 	// request.
 	if !a.wsDisabled {
-		ws := httpstream.NewWSHandler(a.gw.Engine(), a.wsOptions)
+		wsOpts := a.wsOptions
+		wsOpts.OnError = a.onStreamError
+		ws := httpstream.NewWSHandler(a.gw.Engine(), wsOpts)
 		a.mux.Handle("/v1/realtime", v1(ws))
 	}
 }
