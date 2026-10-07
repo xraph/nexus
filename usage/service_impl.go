@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/xraph/nexus/money"
 )
@@ -30,13 +31,16 @@ func (s *service) Record(ctx context.Context, rec *Record) error {
 // writer that leaves a field empty cannot store a priced $0 by accident:
 //
 //   - a cache hit costs exactly $0 and is PricingCached;
+//   - PricingNotCharged costs exactly $0 (no provider was called);
+//   - PricingUnknown keeps a nil cost (a provider was called and failed);
 //   - otherwise a nil cost is PricingUnpricedModel;
 //   - otherwise a cost with no status is PricingPriced;
 //   - an empty outcome is OutcomeCached for a cache hit and OutcomeOK
 //     otherwise.
 //
-// A record that says PricingUnpricedModel and also carries a cost
-// contradicts itself, so it is refused rather than guessed at.
+// A record that says its cost is unknown (PricingUnpricedModel or
+// PricingUnknown) and also carries a cost, or says PricingNotCharged with a
+// non-zero cost, contradicts itself, so it is refused rather than guessed at.
 func normalise(rec *Record) (*Record, error) {
 	if rec == nil {
 		return nil, errors.New("usage: record is nil")
@@ -46,10 +50,16 @@ func normalise(rec *Record) (*Record, error) {
 	case r.Cached:
 		zero := money.Zero
 		r.CostUSD, r.PricingStatus = &zero, PricingCached
-	case r.CostUSD == nil:
+	case r.PricingStatus == PricingNotCharged:
+		if r.CostUSD != nil && !r.CostUSD.IsZero() {
+			return nil, errors.New("usage: record is not_charged but carries a non-zero cost")
+		}
+		zero := money.Zero
+		r.CostUSD = &zero
+	case r.PricingStatus.CostUnknown() && r.CostUSD != nil:
+		return nil, fmt.Errorf("usage: record has a cost but its pricing status is %s", r.PricingStatus)
+	case r.CostUSD == nil && r.PricingStatus != PricingUnknown:
 		r.PricingStatus = PricingUnpricedModel
-	case r.PricingStatus == PricingUnpricedModel:
-		return nil, errors.New("usage: record has a cost but its pricing status is unpriced_model")
 	case r.PricingStatus == "":
 		r.PricingStatus = PricingPriced
 	}

@@ -300,7 +300,7 @@ func usageFromModel(m *usageModel) (*usage.Record, error) {
 		status, cost = usage.PricingUnpricedModel, nil
 	case status == "":
 		status = usage.PricingPriced
-	case status == usage.PricingUnpricedModel:
+	case status.CostUnknown():
 		cost = nil
 	}
 	return &usage.Record{

@@ -33,6 +33,10 @@ func TestNormaliseEnforcesTheRecordInvariant(t *testing.T) {
 		{"unpriced with a cost", usage.Record{CostUSD: cost("0.25"), PricingStatus: usage.PricingUnpricedModel}, true, nil, "", ""},
 		{"unpriced with a cost of 0", usage.Record{CostUSD: cost("0"), PricingStatus: usage.PricingUnpricedModel}, true, nil, "", ""},
 		{"blocked keeps its outcome", usage.Record{Outcome: usage.OutcomeBlocked}, false, nil, usage.PricingUnpricedModel, usage.OutcomeBlocked},
+		{"not charged, no cost", usage.Record{PricingStatus: usage.PricingNotCharged, Outcome: usage.OutcomeBlocked}, false, cost("0"), usage.PricingNotCharged, usage.OutcomeBlocked},
+		{"not charged with a cost", usage.Record{PricingStatus: usage.PricingNotCharged, CostUSD: cost("0.10")}, true, nil, "", ""},
+		{"unknown, no cost", usage.Record{PricingStatus: usage.PricingUnknown, Outcome: usage.OutcomeError}, false, nil, usage.PricingUnknown, usage.OutcomeError},
+		{"unknown with a cost", usage.Record{PricingStatus: usage.PricingUnknown, CostUSD: cost("0.10")}, true, nil, "", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

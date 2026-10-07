@@ -56,3 +56,14 @@ func TestBuildSummary(t *testing.T) {
 		t.Fatalf("an empty summary should have zero rates and non-nil maps, got %+v", empty)
 	}
 }
+
+func TestUnknownCostsAreCountedNotPriced(t *testing.T) {
+	s := usage.BuildSummary("", "day", []usage.SummaryRow{
+		{Provider: "openai", Model: "gpt-4o", Outcome: usage.OutcomeError, PricingStatus: usage.PricingUnknown, Requests: 2},
+		{Provider: "openai", Model: "gpt-4o", Outcome: usage.OutcomeBlocked, PricingStatus: usage.PricingNotCharged, Requests: 3},
+		{Provider: "openai", Model: "gpt-4o", Outcome: usage.OutcomeOK, PricingStatus: usage.PricingPriced, Requests: 1, Cost: money.MustParse("0.5")},
+	})
+	if s.UnpricedRequests != 2 || s.TotalCostUSD.String() != "0.5" || s.ByModel["gpt-4o"].Unpriced != 2 {
+		t.Fatalf("unpriced %d, total %s, model unpriced %d", s.UnpricedRequests, s.TotalCostUSD, s.ByModel["gpt-4o"].Unpriced)
+	}
+}

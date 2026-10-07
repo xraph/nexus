@@ -41,7 +41,7 @@ func BuildSummary(tenantID, period string, rows []SummaryRow) *Summary {
 		s.ByOutcome[r.Outcome] += r.Requests
 		latency += r.LatencyNs
 		unpriced := 0
-		if r.PricingStatus == PricingUnpricedModel {
+		if r.PricingStatus.CostUnknown() {
 			unpriced = r.Requests
 			s.UnpricedRequests += r.Requests
 		}

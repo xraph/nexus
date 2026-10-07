@@ -119,3 +119,21 @@ func TestComputedCostIsReadableEverywhere(t *testing.T) {
 		}
 	})
 }
+
+func TestUnknownAndNotChargedRoundTrip(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		tn := storetest.InsertTenant(t, s)
+		unknown := storetest.Record(tn.ID, "")
+		unknown.PricingStatus, unknown.Outcome, unknown.StatusCode = usage.PricingUnknown, usage.OutcomeError, 500
+		notCharged := storetest.Record(tn.ID, "0")
+		notCharged.PricingStatus, notCharged.Outcome, notCharged.BlockedBy = usage.PricingNotCharged, usage.OutcomeBlocked, "pii"
+		storetest.InsertRecord(t, s, unknown)
+		storetest.InsertRecord(t, s, notCharged)
+		storetest.SameRecord(t, storetest.FindRecord(t, s, unknown.ID), unknown)
+		storetest.SameRecord(t, storetest.FindRecord(t, s, notCharged.ID), notCharged)
+		sum, err := s.Usage().Summary(context.Background(), tn.ID.String(), "day")
+		if err != nil || sum.UnpricedRequests != 1 || !sum.TotalCostUSD.IsZero() {
+			t.Fatalf("summary = %+v, %v", sum, err)
+		}
+	})
+}
