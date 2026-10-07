@@ -12,11 +12,17 @@ import (
 
 	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/pipeline"
+	"github.com/xraph/nexus/tenant"
 )
 
 // KeyValidator checks a raw gateway key. key.Service satisfies it.
 type KeyValidator interface {
 	Validate(ctx context.Context, rawKey string) (*key.APIKey, error)
+}
+
+// TenantGetter reads a tenant by id. tenant.Service satisfies it.
+type TenantGetter interface {
+	Get(ctx context.Context, id string) (*tenant.Tenant, error)
 }
 
 // RawKey returns the key a request presents, from x-api-key or
@@ -45,9 +51,22 @@ func presented(r *http.Request) (raw string, present bool) {
 }
 
 // Authenticate validates rawKey and returns ctx carrying the key's tenant,
-// id and scopes for the pipeline. A gRPC interceptor can call it too. Every
-// error message is a fixed string: none carries the key.
+// id and scopes for the pipeline. It checks the key only, not its tenant:
+// use AuthenticateWithTenants at an edge, so a key whose tenant is not
+// active is refused there. Every error message is a fixed string: none
+// carries the key.
 func Authenticate(ctx context.Context, keys KeyValidator, rawKey string) (context.Context, error) {
+	return AuthenticateWithTenants(ctx, keys, nil, rawKey)
+}
+
+// AuthenticateWithTenants is Authenticate plus a check of the key's tenant.
+// When tenants is not nil, a key whose tenant is not active is refused 403
+// forbidden ("tenant is suspended", say), a tenant that no longer exists is
+// refused 403 "unknown tenant", and a lookup that fails is 503 unavailable
+// with the cause kept for the log. KeyAuth and the grpcsrv interceptor call
+// it, so suspending a tenant stops every one of its keys, admin keys too.
+// With tenants nil it is exactly Authenticate.
+func AuthenticateWithTenants(ctx context.Context, keys KeyValidator, tenants TenantGetter, rawKey string) (context.Context, error) {
 	rawKey = strings.TrimSpace(rawKey)
 	if rawKey == "" {
 		return ctx, unauthenticated("an API key is required")
@@ -63,9 +82,30 @@ func Authenticate(ctx context.Context, keys KeyValidator, rawKey string) (contex
 	case err != nil:
 		return ctx, &pipeline.RefusalError{Code: pipeline.CodeUnavailable, Status: 503, Message: "key check is unavailable", Cause: err}
 	}
+	if tenants != nil {
+		if r := activeTenant(ctx, tenants, k.TenantID.String()); r != nil {
+			return ctx, r
+		}
+	}
 	ctx = pipeline.WithTenantID(ctx, k.TenantID.String())
 	ctx = pipeline.WithKeyID(ctx, k.ID.String())
 	return pipeline.WithScopes(ctx, slices.Clone(k.Scopes)), nil
+}
+
+// activeTenant refuses unless the tenant exists and is active.
+func activeTenant(ctx context.Context, tenants TenantGetter, id string) *pipeline.RefusalError {
+	t, err := tenants.Get(ctx, id)
+	switch {
+	case errors.Is(err, tenant.ErrNotFound):
+		return &pipeline.RefusalError{Code: pipeline.CodeForbidden, Status: 403, Message: "unknown tenant"}
+	case err != nil:
+		return &pipeline.RefusalError{Code: pipeline.CodeUnavailable, Status: 503, Message: "tenant lookup failed", Cause: err}
+	case t == nil:
+		return &pipeline.RefusalError{Code: pipeline.CodeUnavailable, Status: 503, Message: "tenant lookup returned nothing"}
+	case t.Status != tenant.StatusActive:
+		return &pipeline.RefusalError{Code: pipeline.CodeForbidden, Status: 403, Message: "tenant is " + string(t.Status)}
+	}
+	return nil
 }
 
 func unauthenticated(msg string) *pipeline.RefusalError {
@@ -75,6 +115,12 @@ func unauthenticated(msg string) *pipeline.RefusalError {
 // KeyAuthOptions configures KeyAuth.
 type KeyAuthOptions struct {
 	Keys KeyValidator
+	// Tenants, when set, refuses a key whose tenant is not active (403) or
+	// cannot be read (503), at the edge. api and proxy pass gw.Tenants().
+	// Without it only the key's own status is checked here, and the
+	// pipeline's access stage checks the tenant later, which the admin
+	// routes never reach.
+	Tenants TenantGetter
 	// Required refuses a request without a key. When false, a request
 	// without one passes unauthenticated, and a key that is presented is
 	// still checked. Any non-empty Authorization header counts as presented,
@@ -109,7 +155,7 @@ func KeyAuth(o KeyAuthOptions) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), checkedKey{}, struct{}{})))
 				return
 			}
-			ctx, err := Authenticate(r.Context(), o.Keys, raw)
+			ctx, err := AuthenticateWithTenants(r.Context(), o.Keys, o.Tenants, raw)
 			if err != nil {
 				onError(w, r, err)
 				return

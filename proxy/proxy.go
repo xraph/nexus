@@ -155,7 +155,7 @@ func (p *Proxy) registerRoutes() {
 	// A key is required unless the gateway is configured open, and a key that
 	// is presented is always checked. The default OnError writes the OpenAI
 	// error shape, with Retry-After and WWW-Authenticate.
-	keyAuth := auth.KeyAuth(auth.KeyAuthOptions{Keys: gw.Keys(), Required: required, OnError: p.onAuthError})
+	keyAuth := auth.KeyAuth(auth.KeyAuthOptions{Keys: gw.Keys(), Tenants: gw.Tenants(), Required: required, OnError: p.onAuthError})
 	// Every route gets a request id ahead of the key check, so a refusal at
 	// the edge has one to log and to return in X-Request-Id.
 	rid := auth.RequestID()

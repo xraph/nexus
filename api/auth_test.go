@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	nexus "github.com/xraph/nexus"
@@ -552,4 +553,88 @@ func mustServe(t *testing.T) (*httptest.Server, *nexus.Gateway) {
 	t.Helper()
 	srv, gw, _, _ := newAPI(t)
 	return srv, gw
+}
+
+// setKeyTenant sets the status of rawKey's tenant.
+func setKeyTenant(t *testing.T, gw *nexus.Gateway, rawKey string, status tenant.Status) {
+	t.Helper()
+	k, err := gw.Keys().Validate(context.Background(), rawKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Tenants().SetStatus(context.Background(), k.TenantID.String(), status); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAnAdminKeyOfASuspendedTenantIsRefused(t *testing.T) {
+	srv, gw, _, admin := newAPI(t)
+	setKeyTenant(t, gw, admin, tenant.StatusSuspended)
+	got := send(t, srv, "GET", "/admin/providers", admin, "")
+	wantRefusal(t, got, 403, "forbidden")
+	wantNoKeyIn(t, got, admin)
+	if !strings.Contains(got.body, "tenant is suspended") {
+		t.Fatalf("body %s; want it to say the tenant is suspended", got.shown)
+	}
+}
+
+func TestAKeyOfADeletedTenantIsRefused(t *testing.T) {
+	srv, gw, _, admin := newAPI(t)
+	k, err := gw.Keys().Validate(context.Background(), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Tenants().Delete(context.Background(), k.TenantID.String()); err != nil {
+		t.Fatal(err)
+	}
+	got := send(t, srv, "GET", "/admin/tenants", admin, "")
+	wantRefusal(t, got, 403, "forbidden")
+	if !strings.Contains(got.body, "unknown tenant") {
+		t.Fatalf("body %s; want it to say the tenant is unknown", got.shown)
+	}
+}
+
+func TestAV1KeyOfADisabledTenantIsRefusedAtTheEdge(t *testing.T) {
+	srv, gw, _, _ := newAPI(t)
+	raw, tn := newKey(t, gw, "off", tenant.Quota{})
+	if err := gw.Tenants().SetStatus(context.Background(), tn.ID.String(), tenant.StatusDisabled); err != nil {
+		t.Fatal(err)
+	}
+	got := send(t, srv, "POST", "/v1/chat/completions", raw, chatBody)
+	wantRefusal(t, got, 403, "forbidden")
+	// The pipeline records the refusals it makes. None here: the edge
+	// refused it before the pipeline ran.
+	if n := len(records(t, gw, &usage.QueryOptions{})); n != 0 {
+		t.Fatalf("%d usage records; want none, the edge refuses before the pipeline", n)
+	}
+}
+
+// flakyTenants fails Get while fail is set.
+type flakyTenants struct {
+	tenant.Service
+	fail *atomic.Bool
+}
+
+func (f flakyTenants) Get(ctx context.Context, id string) (*tenant.Tenant, error) {
+	if f.fail.Load() {
+		return nil, errors.New("tenant store down at postgres://u:secret@db/x")
+	}
+	return f.Service.Get(ctx, id)
+}
+
+func TestATenantLookupFailureAtTheEdgeIs503(t *testing.T) {
+	s := store.NewMemory()
+	fail := &atomic.Bool{}
+	srv, _, user, admin := newAPI(t, nexus.WithDatabase(s), nexus.WithTenantService(flakyTenants{tenant.NewService(s.Tenants()), fail}))
+	fail.Store(true)
+	for _, c := range []struct{ method, path, key, body string }{
+		{"GET", "/admin/providers", admin, ""},
+		{"POST", "/v1/chat/completions", user, chatBody},
+	} {
+		got := send(t, srv, c.method, c.path, c.key, c.body)
+		wantRefusal(t, got, 503, "unavailable")
+		if strings.Contains(got.body, "postgres://") || strings.Contains(got.body, "secret") {
+			t.Fatalf("%s: the body leaks the cause: %s", c.path, got.shown)
+		}
+	}
 }

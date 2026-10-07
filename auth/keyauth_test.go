@@ -331,3 +331,60 @@ func TestWriteErrorClampsAnInvalidRefusalStatusTo500(t *testing.T) {
 		}
 	}
 }
+
+type stubTenants struct {
+	t   *tenant.Tenant
+	err error
+}
+
+func (s stubTenants) Get(context.Context, string) (*tenant.Tenant, error) { return s.t, s.err }
+
+func TestAKeyIsRefusedUnlessItsTenantIsActive(t *testing.T) {
+	ks, raw, _, k := keys(t)
+	cause := errors.New("tenant store down")
+	cases := []struct {
+		name    string
+		tenants auth.TenantGetter
+		status  int
+		code    string
+		msg     string
+	}{
+		{"suspended", stubTenants{t: &tenant.Tenant{ID: k.TenantID, Status: tenant.StatusSuspended}}, 403, pipeline.CodeForbidden, "tenant is suspended"},
+		{"disabled", stubTenants{t: &tenant.Tenant{ID: k.TenantID, Status: tenant.StatusDisabled}}, 403, pipeline.CodeForbidden, "tenant is disabled"},
+		{"deleted", stubTenants{err: tenant.ErrNotFound}, 403, pipeline.CodeForbidden, "unknown tenant"},
+		{"lookup failed", stubTenants{err: cause}, 503, pipeline.CodeUnavailable, "tenant lookup failed"},
+		{"nil tenant", stubTenants{}, 503, pipeline.CodeUnavailable, "tenant lookup returned nothing"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := auth.AuthenticateWithTenants(context.Background(), ks, c.tenants, raw)
+			status, code := pipeline.HTTPStatus(err)
+			if status != c.status || code != c.code || err == nil || err.Error() != "nexus: "+c.msg {
+				t.Fatalf("= %d %s %v; want %d %s %q", status, code, err, c.status, c.code, c.msg)
+			}
+			if c.name == "lookup failed" && !errors.Is(err, cause) {
+				t.Fatal("a failed lookup must keep its cause for the log")
+			}
+		})
+	}
+	active := stubTenants{t: &tenant.Tenant{ID: k.TenantID, Status: tenant.StatusActive}}
+	ctx, err := auth.AuthenticateWithTenants(context.Background(), ks, active, raw)
+	if err != nil || pipeline.TenantID(ctx) != k.TenantID.String() {
+		t.Fatalf("active tenant = %v (tenant %q)", err, pipeline.TenantID(ctx))
+	}
+	// Authenticate itself checks the key only, as before.
+	if _, err := auth.Authenticate(context.Background(), ks, raw); err != nil {
+		t.Fatalf("Authenticate = %v", err)
+	}
+}
+
+func TestKeyAuthChecksTheTenantWhenGivenOne(t *testing.T) {
+	ks, raw, _, k := keys(t)
+	reached := false
+	h := auth.KeyAuth(auth.KeyAuthOptions{Keys: ks, Required: true,
+		Tenants: stubTenants{t: &tenant.Tenant{ID: k.TenantID, Status: tenant.StatusSuspended}}})(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	if w := serve(h, "x-api-key", raw); w.Code != 403 || reached {
+		t.Fatalf("suspended tenant through KeyAuth = %d (handler reached %v); want 403 at the edge", w.Code, reached)
+	}
+}

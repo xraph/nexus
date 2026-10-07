@@ -117,13 +117,13 @@ func (a *API) registerRoutes() {
 	// /v1 routes: a key is required unless the gateway is configured open,
 	// and a key that is presented is always checked.
 	rid := auth.RequestID()
-	v1Auth := auth.KeyAuth(auth.KeyAuthOptions{Keys: keys, Required: required, OnError: a.onAuthError})
+	v1Auth := auth.KeyAuth(auth.KeyAuthOptions{Keys: keys, Tenants: a.gw.Tenants(), Required: required, OnError: a.onAuthError})
 	// Every route gets a request id ahead of the key check, so a refusal at
 	// the edge has one to log and to return in X-Request-Id.
 	v1 := func(h http.Handler) http.Handler { return rid(v1Auth(h)) }
 	// /admin routes always need a key, whatever RequireAPIKey says: it opens
 	// the /v1 routes only.
-	adminKeys := auth.KeyAuth(auth.KeyAuthOptions{Keys: keys, Required: true, OnError: a.onAuthError})
+	adminKeys := auth.KeyAuth(auth.KeyAuthOptions{Keys: keys, Tenants: a.gw.Tenants(), Required: true, OnError: a.onAuthError})
 	adminAuth := func(h http.Handler) http.Handler { return rid(adminKeys(h)) }
 	admin := auth.RequireScope("admin", a.onAuthError)
 	models := func(h http.Handler) http.Handler { return h }

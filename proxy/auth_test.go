@@ -531,3 +531,19 @@ func mustServe(t *testing.T) (*httptest.Server, *nexus.Gateway) {
 	srv, gw, _ := newProxy(t)
 	return srv, gw
 }
+
+func TestAKeyOfADisabledTenantIsRefusedAtTheEdge(t *testing.T) {
+	srv, gw, _ := newProxy(t)
+	raw, tn := newKey(t, gw, "off", tenant.Quota{})
+	if err := gw.Tenants().SetStatus(context.Background(), tn.ID.String(), tenant.StatusDisabled); err != nil {
+		t.Fatal(err)
+	}
+	got := send(t, srv, "POST", "/v1/chat/completions", raw, chatBody)
+	wantRefusal(t, got, 403, "forbidden")
+	wantNoKeyIn(t, got, raw)
+	// The pipeline records the refusals it makes. None here: the edge
+	// refused it before the pipeline ran.
+	if n := len(records(t, gw, &usage.QueryOptions{})); n != 0 {
+		t.Fatalf("%d usage records; want none, the edge refuses before the pipeline", n)
+	}
+}
