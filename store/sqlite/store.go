@@ -53,7 +53,7 @@ func (s *Store) Migrate() error {
 	if _, err := orch.Migrate(ctx); err != nil {
 		return fmt.Errorf("nexus/sqlite: migration failed: %w", err)
 	}
-	return nil
+	return s.normaliseUsageTimes(ctx)
 }
 
 // Close closes the database connection.
@@ -263,7 +263,7 @@ func (s *usageStore) Insert(ctx context.Context, rec *usage.Record) error {
 func (s *usageStore) MonthlySpend(ctx context.Context, tenantID string) (float64, error) {
 	var total float64
 	row := s.sdb.QueryRow(ctx,
-		"SELECT COALESCE(SUM(cost_usd), 0) FROM usage_records"+
+		"SELECT SUM(cost_usd) FROM usage_records"+
 			" WHERE tenant_id = ? AND created_at >= strftime('%Y-%m-01', 'now')",
 		tenantID)
 	err := row.Scan(&total)
@@ -299,7 +299,7 @@ func (s *usageStore) Summary(ctx context.Context, tenantID, period string) (*usa
 	}
 
 	rows, err := s.sdb.Query(ctx,
-		fmt.Sprintf("SELECT provider, model, COUNT(*), SUM(total_tokens), SUM(cost_usd), SUM(CASE WHEN cached = 1 THEN 1 ELSE 0 END)"+
+		fmt.Sprintf("SELECT provider, model, COUNT(*), SUM(total_tokens), COALESCE(SUM(cost_usd), 0), SUM(CASE WHEN cached = 1 THEN 1 ELSE 0 END)"+
 			" FROM usage_records WHERE tenant_id = ? AND created_at >= %s"+
 			" GROUP BY provider, model", interval), tenantID)
 	if err != nil {

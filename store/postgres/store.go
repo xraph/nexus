@@ -255,7 +255,7 @@ func (s *usageStore) Insert(ctx context.Context, rec *usage.Record) error {
 func (s *usageStore) MonthlySpend(ctx context.Context, tenantID string) (float64, error) {
 	var total float64
 	row := s.pgdb.QueryRow(ctx,
-		`SELECT COALESCE(SUM(cost_usd), 0) FROM nexus_usage_records
+		`SELECT SUM(cost_usd) FROM nexus_usage_records
 		 WHERE tenant_id = $1 AND created_at >= date_trunc('month', NOW())`,
 		tenantID)
 	err := row.Scan(&total)
@@ -291,7 +291,7 @@ func (s *usageStore) Summary(ctx context.Context, tenantID, period string) (*usa
 	}
 
 	rows, err := s.pgdb.Query(ctx,
-		fmt.Sprintf(`SELECT provider, model, COUNT(*), SUM(total_tokens), SUM(cost_usd), SUM(CASE WHEN cached THEN 1 ELSE 0 END)
+		fmt.Sprintf(`SELECT provider, model, COUNT(*), SUM(total_tokens), COALESCE(SUM(cost_usd), 0), SUM(CASE WHEN cached THEN 1 ELSE 0 END)
 		 FROM nexus_usage_records WHERE tenant_id = $1 AND created_at >= %s
 		 GROUP BY provider, model`, interval), tenantID)
 	if err != nil {

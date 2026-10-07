@@ -128,7 +128,9 @@ CREATE TABLE usage_records_next (
 );
 
 -- Nothing computed a cost before this migration, so a stored 0 meant
--- "unknown", not "free". Times move to fixed-width UTC text.
+-- "unknown", not "free". created_at is copied as is; Store.Migrate rewrites
+-- it to fixed-width UTC text in Go, because SQLite cannot parse the formats
+-- the old store wrote.
 INSERT INTO usage_records_next
     (id, tenant_id, key_id, request_id, provider, model, prompt_tokens,
      completion_tokens, total_tokens, cost_usd, pricing_status, outcome,
@@ -139,7 +141,7 @@ SELECT id, NULLIF(tenant_id, ''), NULLIF(key_id, ''), NULLIF(request_id, ''),
        CASE WHEN cost_usd = 0 THEN 'unpriced_model' ELSE 'priced' END,
        CASE WHEN cached = 1 THEN 'cached' WHEN status_code >= 400 THEN 'error' ELSE 'ok' END,
        latency_ns, cached, status_code,
-       COALESCE(strftime('%Y-%m-%dT%H:%M:%S', created_at) || '.000000000Z', created_at)
+       created_at
   FROM usage_records;
 
 DROP TABLE usage_records;

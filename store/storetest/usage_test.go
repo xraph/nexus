@@ -1,6 +1,7 @@
 package storetest_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/xraph/nexus/id"
@@ -46,5 +47,20 @@ func TestUnattributedRecordRoundTrips(t *testing.T) {
 			t.Fatalf("unattributed record came back attributed: %+v", got)
 		}
 		storetest.SameRecord(t, got, r)
+	})
+}
+
+// A group of requests none of which could be priced has no cost to sum.
+func TestSummaryOfOnlyUnpricedRecords(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		tn := storetest.InsertTenant(t, s)
+		storetest.InsertRecord(t, s, storetest.Record(tn.ID, ""))
+		sum, err := s.Usage().Summary(context.Background(), tn.ID.String(), "month")
+		if err != nil {
+			t.Fatalf("summary: %v", err)
+		}
+		if sum == nil {
+			t.Fatalf("summary is nil")
+		}
 	})
 }
