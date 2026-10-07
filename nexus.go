@@ -203,9 +203,9 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 		b.Use(middlewares.NewStreamLifecycle(gw.extensions, gw.streamLifecycleCfg))
 	}
 
-	// Priority 550: Usage tracking (if store available)
+	// Priority 15: Usage tracking (if store available)
 	if gw.usage != nil {
-		b.Use(middlewares.NewUsage(gw.usage))
+		b.Use(middlewares.NewUsage(gw.usage, nil, gw.logger))
 	}
 
 	// Custom middleware (user-provided, any priority)
