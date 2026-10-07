@@ -64,3 +64,23 @@ func TestSummaryOfOnlyUnpricedRecords(t *testing.T) {
 		}
 	})
 }
+
+// MonthlySpend is what budgets and the dashboard read. A tenant with no
+// rows, or only unpriced ones, has spent nothing; it must not be an error.
+func TestMonthlySpendWithNothingPriced(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		empty := storetest.InsertTenant(t, s)
+		unpriced := storetest.InsertTenant(t, s)
+		storetest.InsertRecord(t, s, storetest.Record(unpriced.ID, ""))
+		for name, tid := range map[string]id.TenantID{"no rows": empty.ID, "only unpriced": unpriced.ID} {
+			got, err := s.Usage().MonthlySpend(ctx, tid.String())
+			if err != nil {
+				t.Fatalf("%s: monthly spend: %v", name, err)
+			}
+			if got != 0 {
+				t.Fatalf("%s: monthly spend = %v, want 0", name, got)
+			}
+		}
+	})
+}
