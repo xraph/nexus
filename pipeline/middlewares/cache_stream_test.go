@@ -86,6 +86,45 @@ func TestCacheMiddleware_StreamRecordAndReplay(t *testing.T) {
 	if u := resp2.Stream.Usage(); u == nil || u.TotalTokens != 7 {
 		t.Fatalf("usage on replay = %+v", u)
 	}
+	if req.State[pipeline.StateCacheHit] != true {
+		t.Fatalf("a stream replay must set State[StateCacheHit], got %v", req.State[pipeline.StateCacheHit])
+	}
+}
+
+func TestCacheMiddleware_HitSetsCacheHitFlag(t *testing.T) {
+	t.Parallel()
+
+	mw := middlewares.NewCache(cache.NewService(stores.NewMemory()))
+	newReq := func() *pipeline.Request {
+		return &pipeline.Request{
+			Completion: &provider.CompletionRequest{Model: "m", Messages: []provider.Message{{Role: "user", Content: "hi"}}},
+			Type:       pipeline.RequestCompletion,
+			State:      map[string]any{},
+		}
+	}
+	next := func(context.Context) (*pipeline.Response, error) {
+		return &pipeline.Response{Completion: &provider.CompletionResponse{Model: "m"}}, nil
+	}
+
+	first := newReq()
+	if _, err := mw.Process(context.Background(), first, next); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if first.State[pipeline.StateCacheHit] == true {
+		t.Fatal("a miss must not set State[StateCacheHit]")
+	}
+
+	second := newReq()
+	resp, err := mw.Process(context.Background(), second, func(context.Context) (*pipeline.Response, error) {
+		t.Fatal("expected cache hit, upstream was invoked")
+		return nil, nil //nolint:nilnil // unreachable
+	})
+	if err != nil || resp == nil || resp.Completion == nil || !resp.Completion.Cached {
+		t.Fatalf("second = %+v, %v", resp, err)
+	}
+	if second.State[pipeline.StateCacheHit] != true {
+		t.Fatalf("a hit must set State[StateCacheHit], got %v", second.State[pipeline.StateCacheHit])
+	}
 }
 
 func TestCacheMiddleware_StreamMaxFramesAbandonsRecording(t *testing.T) {

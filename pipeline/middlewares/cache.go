@@ -73,6 +73,7 @@ func (m *CacheMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	cached, err := m.cache.Get(ctx, key)
 	if err == nil && cached != nil {
 		cached.Cached = true
+		req.State[pipeline.StateCacheHit] = true
 		return &pipeline.Response{Completion: cached}, nil
 	}
 
@@ -100,6 +101,7 @@ func (m *CacheMiddleware) handleStream(ctx context.Context, req *pipeline.Reques
 
 	// Cache hit: replay stored frames as a synthesized stream.
 	if frames, err := m.streamCache.GetStream(ctx, key); err == nil && len(frames) > 0 {
+		req.State[pipeline.StateCacheHit] = true
 		return &pipeline.Response{Stream: newReplayStream(frames, m.streamOpts)}, nil
 	}
 

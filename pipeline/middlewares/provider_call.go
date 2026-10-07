@@ -53,6 +53,7 @@ func (m *ProviderCallMiddleware) handleCompletion(ctx context.Context, req *pipe
 	}
 
 	ctx = pipeline.WithProviderName(ctx, p.Name())
+	req.State[pipeline.StateProviderName] = p.Name()
 	start := time.Now()
 
 	resp, err := p.Complete(ctx, req.Completion)
@@ -62,7 +63,6 @@ func (m *ProviderCallMiddleware) handleCompletion(ctx context.Context, req *pipe
 
 	// Store timing
 	req.State["provider_latency"] = time.Since(start)
-	req.State["provider_name"] = p.Name()
 
 	return &pipeline.Response{Completion: resp}, nil
 }
@@ -74,7 +74,7 @@ func (m *ProviderCallMiddleware) handleStream(ctx context.Context, req *pipeline
 	}
 
 	ctx = pipeline.WithProviderName(ctx, p.Name())
-	req.State["provider_name"] = p.Name()
+	req.State[pipeline.StateProviderName] = p.Name()
 
 	stream, err := p.CompleteStream(ctx, req.Completion)
 	if err != nil {
@@ -90,14 +90,14 @@ func (m *ProviderCallMiddleware) handleEmbedding(ctx context.Context, req *pipel
 	}
 
 	// For embeddings, pick the first provider that supports embeddings
-	allProviders := m.providers.WithCapability("embed")
+	allProviders := m.providers.WithCapability("embeddings")
 	if len(allProviders) == 0 {
 		return nil, errors.New("nexus: no providers support embeddings")
 	}
 
 	p := allProviders[0]
 	ctx = pipeline.WithProviderName(ctx, p.Name())
-	req.State["provider_name"] = p.Name()
+	req.State[pipeline.StateProviderName] = p.Name()
 
 	resp, err := p.Embed(ctx, req.Embedding)
 	if err != nil {
