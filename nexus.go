@@ -387,7 +387,8 @@ func (gw *Gateway) LimiterErrors() int64 {
 }
 
 // FlushUsage waits until every usage record taken so far is stored, without
-// closing the stage. Shutdown flushes on its own.
+// closing the stage. It also waits for streams that are still open, until ctx
+// ends. Shutdown flushes on its own.
 func (gw *Gateway) FlushUsage(ctx context.Context) error {
 	if gw.usageMW == nil {
 		return nil

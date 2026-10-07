@@ -56,6 +56,11 @@ func TestUsageCanBeTurnedOff(t *testing.T) {
 	if gw.Usage() == nil {
 		t.Fatalf("the usage service is still built for reading")
 	}
+	for _, want := range []string{"access", "quota"} {
+		if !slices.Contains(stageNames(gw), want) {
+			t.Fatalf("%s stage missing with usage disabled: %v", want, stageNames(gw))
+		}
+	}
 }
 
 func TestEnableCacheBuildsAMemoryCacheAndAccessorsReport(t *testing.T) {
