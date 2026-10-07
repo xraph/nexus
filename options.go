@@ -23,7 +23,9 @@ import (
 // Option configures a Gateway.
 type Option func(*Gateway)
 
-// WithConfig sets the gateway configuration.
+// WithConfig replaces the whole gateway configuration. Start from
+// DefaultConfig() and change fields: a zero Config has EnableUsage false, so
+// the gateway records no usage, and no timeout or retries.
 func WithConfig(cfg *Config) Option {
 	return func(gw *Gateway) { gw.config = cfg }
 }

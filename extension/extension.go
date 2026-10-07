@@ -154,32 +154,38 @@ func (e *Extension) Health(_ context.Context) error {
 
 // applyConfigToGatewayOpts translates extension Config fields into
 // nexus.Option values that are applied when the gateway is created.
+//
+// The config-derived options go first, ahead of anything the caller passed
+// with WithGatewayOption, so an explicit code option wins over the config
+// (the config always fills defaults such as enable_usage and log_level).
 func (e *Extension) applyConfigToGatewayOpts() {
+	var opts []nexus.Option
 	if e.config.BasePath != "" {
-		e.gatewayOpts = append(e.gatewayOpts, nexus.WithBasePath(e.config.BasePath))
+		opts = append(opts, nexus.WithBasePath(e.config.BasePath))
 	}
 	if e.config.DefaultTimeout > 0 {
-		e.gatewayOpts = append(e.gatewayOpts, nexus.WithTimeout(e.config.DefaultTimeout))
+		opts = append(opts, nexus.WithTimeout(e.config.DefaultTimeout))
 	}
 	if e.config.DefaultMaxRetries > 0 {
-		e.gatewayOpts = append(e.gatewayOpts, nexus.WithMaxRetries(e.config.DefaultMaxRetries))
+		opts = append(opts, nexus.WithMaxRetries(e.config.DefaultMaxRetries))
 	}
 	if e.config.GlobalRateLimit > 0 {
-		e.gatewayOpts = append(e.gatewayOpts, nexus.WithRateLimit(e.config.GlobalRateLimit))
+		opts = append(opts, nexus.WithRateLimit(e.config.GlobalRateLimit))
 	}
 	if e.config.EnableUsage != nil {
-		e.gatewayOpts = append(e.gatewayOpts, nexus.WithUsageEnabled(*e.config.EnableUsage))
+		opts = append(opts, nexus.WithUsageEnabled(*e.config.EnableUsage))
 	}
 	if e.config.EnableCache {
-		e.gatewayOpts = append(e.gatewayOpts, nexus.WithCacheEnabled(true))
+		opts = append(opts, nexus.WithCacheEnabled(true))
 	}
 	if e.config.LogLevel != "" {
 		lvl := e.config.LogLevel
-		e.gatewayOpts = append(e.gatewayOpts,
+		opts = append(opts,
 			func(gw *nexus.Gateway) { gw.Config().LogLevel = lvl },
 			nexus.WithLogger(nexus.NewLevelLogger(nexus.NewLogger(e.Logger()), lvl)),
 		)
 	}
+	e.gatewayOpts = append(opts, e.gatewayOpts...)
 }
 
 // loadConfiguration loads config from YAML files or programmatic sources.
