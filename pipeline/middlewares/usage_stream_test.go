@@ -12,6 +12,7 @@ import (
 	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/pipeline/middlewares"
+	"github.com/xraph/nexus/plugin"
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/testutil"
 	"github.com/xraph/nexus/usage"
@@ -245,6 +246,170 @@ func TestUsageRecordsAStreamCutByItsTenantQuota(t *testing.T) {
 			t.Fatalf("status/code = %d/%q, want 500/empty", got.StatusCode, got.RefusalCode)
 		}
 	})
+}
+
+func TestUsageKeepsPrecedenceOverAQuotaCut(t *testing.T) {
+	t.Parallel()
+	cut := &middlewares.QuotaError{What: "output_tokens"}
+
+	t.Run("a cache replay stays cached at zero", func(t *testing.T) {
+		t.Parallel()
+		got := drainStream(t, &erroringStream{chunks: []*provider.StreamChunk{usageChunk(10, 60)}, err: cut}, true)
+		wantRecord(t, got, usage.OutcomeCached, usage.PricingCached, "0")
+		if got.StatusCode != 200 || got.RefusalCode != "" {
+			t.Fatalf("status/code = %d/%q, want 200/empty", got.StatusCode, got.RefusalCode)
+		}
+	})
+	t.Run("a guard block followed by a quota error stays blocked", func(t *testing.T) {
+		t.Parallel()
+		blocked := &guard.BlockedError{Guard: "stream-pii", Phase: guard.PhaseOutput, Reason: "ssn"}
+		st := &sequenceStream{chunks: []*provider.StreamChunk{usageChunk(10, 60)}, errs: []error{blocked, cut}}
+		got := drainStream(t, st, false)
+		wantRecord(t, got, usage.OutcomeBlocked, usage.PricingPriced, "0.000625")
+		if got.BlockedBy != "stream-pii" || got.StatusCode != 400 || got.RefusalCode != "" {
+			t.Fatalf("blocked by %q, status/code = %d/%q", got.BlockedBy, got.StatusCode, got.RefusalCode)
+		}
+	})
+}
+
+// sequenceStream delivers its chunks, then one error per call from errs.
+type sequenceStream struct {
+	chunks []*provider.StreamChunk
+	errs   []error
+	idx    int
+}
+
+func (s *sequenceStream) Next(context.Context) (*provider.StreamChunk, error) {
+	if s.idx < len(s.chunks) {
+		c := s.chunks[s.idx]
+		s.idx++
+		return c, nil
+	}
+	i := s.idx - len(s.chunks)
+	if i >= len(s.errs) {
+		return nil, io.EOF
+	}
+	s.idx++
+	return nil, s.errs[i]
+}
+func (s *sequenceStream) Close() error           { return nil }
+func (s *sequenceStream) Usage() *provider.Usage { return nil }
+
+// drainThroughLifecycle runs a stream request through the usage stage with
+// the stream lifecycle stage inside it, as the pipeline orders them, reads
+// the stream until it ends or fails, and returns the one record and the last Next
+// error. A hung stream fails the test instead of hanging it.
+func drainThroughLifecycle(t *testing.T, st provider.Stream, quota middlewares.StreamQuota) (*usage.Record, error) {
+	t.Helper()
+	rec := newRecordingUsage()
+	umw := middlewares.NewUsage(rec, gpt4o, nil)
+	lmw := middlewares.NewStreamLifecycle(plugin.NewRegistry(), middlewares.StreamLifecycleConfig{
+		QuotaResolver: func(context.Context) middlewares.StreamQuota { return quota },
+	})
+	req := &pipeline.Request{
+		Completion: &provider.CompletionRequest{Model: "gpt-4o"},
+		Type:       pipeline.RequestStream,
+		State:      map[string]any{},
+	}
+	resp, err := umw.Process(context.Background(), req, func(ctx context.Context) (*pipeline.Response, error) {
+		return lmw.Process(ctx, req, func(context.Context) (*pipeline.Response, error) {
+			req.State[pipeline.StateProviderName] = "openai"
+			return &pipeline.Response{Stream: st}, nil
+		})
+	})
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		for {
+			if _, e := resp.Stream.Next(context.Background()); e != nil {
+				done <- e
+				return
+			}
+		}
+	}()
+	var last error
+	select {
+	case last = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream did not end")
+	}
+	_ = resp.Stream.Close()
+	if err := umw.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	return rec.only(t), last
+}
+
+// parkedStream delivers its chunks, then blocks in Next until it is closed,
+// and answers the close with err (io.EOF when err is nil), as a provider
+// body does when something closes it under a reader.
+type parkedStream struct {
+	chunks []*provider.StreamChunk
+	err    error
+	idx    int
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newParkedStream(err error, chunks ...*provider.StreamChunk) *parkedStream {
+	return &parkedStream{chunks: chunks, err: err, closed: make(chan struct{})}
+}
+
+func (s *parkedStream) Next(context.Context) (*provider.StreamChunk, error) {
+	if s.idx < len(s.chunks) {
+		c := s.chunks[s.idx]
+		s.idx++
+		return c, nil
+	}
+	<-s.closed
+	if s.err != nil {
+		return nil, s.err
+	}
+	return nil, io.EOF
+}
+func (s *parkedStream) Close() error           { s.once.Do(func() { close(s.closed) }); return nil }
+func (s *parkedStream) Usage() *provider.Usage { return nil }
+
+func TestUsageRecordsAStreamCutByItsTimeLimitWhileParked(t *testing.T) {
+	t.Parallel()
+	quota := middlewares.StreamQuota{MaxDuration: 20 * time.Millisecond}
+
+	for name, closeErr := range map[string]error{
+		"close surfaces as EOF":            nil,
+		"close surfaces as a read failure": errors.New("body closed"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			st := newParkedStream(closeErr, usageChunk(10, 20))
+			got, last := drainThroughLifecycle(t, st, quota)
+			if !middlewares.IsQuotaExceeded(last) {
+				t.Fatalf("Next ended with %v, want a quota error", last)
+			}
+			// 10 * 2.50/1e6 + 20 * 10/1e6
+			wantRecord(t, got, usage.OutcomeError, usage.PricingPriced, "0.000225")
+			if got.StatusCode != 429 || got.RefusalCode != "quota_exceeded" {
+				t.Fatalf("status/code = %d/%q, want 429/quota_exceeded", got.StatusCode, got.RefusalCode)
+			}
+		})
+	}
+}
+
+func TestUsagePricesTheChunkThatTrippedTheTokenCap(t *testing.T) {
+	t.Parallel()
+	// The provider stream reports no usage of its own: the only count is on
+	// the chunk the lifecycle stage withholds when it cuts the stream.
+	st := testutil.NewFakeStream([]*provider.StreamChunk{usageChunk(10, 60)}, nil)
+	got, last := drainThroughLifecycle(t, st, middlewares.StreamQuota{MaxTokens: 50})
+	if !middlewares.IsQuotaExceeded(last) {
+		t.Fatalf("Next ended with %v, want a quota error", last)
+	}
+	// 10 * 2.50/1e6 + 60 * 10/1e6
+	wantRecord(t, got, usage.OutcomeError, usage.PricingPriced, "0.000625")
+	if got.StatusCode != 429 || got.RefusalCode != "quota_exceeded" || got.TotalTokens != 70 {
+		t.Fatalf("status/code/tokens = %d/%q/%d", got.StatusCode, got.RefusalCode, got.TotalTokens)
+	}
 }
 
 func TestUsageRecordsAStreamCacheReplay(t *testing.T) {

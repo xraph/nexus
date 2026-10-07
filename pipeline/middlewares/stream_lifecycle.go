@@ -153,6 +153,7 @@ type lifecycleStream struct {
 	quotaErr       chan error
 	quotaTokenSeen int
 	watchdogStop   chan struct{}
+	cutUsage       *provider.Usage // the usage chunk that tripped the token cap
 }
 
 func (s *lifecycleStream) Next(ctx context.Context) (*provider.StreamChunk, error) {
@@ -167,6 +168,19 @@ func (s *lifecycleStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 	}
 
 	chunk, err := s.inner.Next(ctx)
+
+	// The duration watchdog sends its error and then closes the inner stream.
+	// A consumer already parked in inner.Next gets the close as an io.EOF or a
+	// provider error, which is not what ended the stream. The watchdog sent
+	// before it closed, so the quota error is already waiting.
+	if err != nil && s.quotaErr != nil {
+		select {
+		case qe := <-s.quotaErr:
+			s.finishOnce(ctx, qe)
+			return nil, qe
+		default:
+		}
+	}
 
 	if errors.Is(err, io.EOF) {
 		s.finishOnce(ctx, nil)
@@ -200,6 +214,10 @@ func (s *lifecycleStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 		s.quotaTokenSeen = chunk.Usage.CompletionTokens
 		if s.quotaTokenSeen > s.quota.MaxTokens {
 			err := errQuotaExceeded("output_tokens")
+			// The chunk is withheld, but the provider reported these tokens:
+			// keep them so Usage still prices what was used.
+			u := *chunk.Usage
+			s.cutUsage = &u
 			s.finishOnce(ctx, err)
 			return nil, err
 		}
@@ -232,7 +250,13 @@ func (s *lifecycleStream) startWatchdog() {
 
 // QuotaError is the typed sentinel emitted when a stream is canceled by
 // the lifecycle middleware's quota watchdog. Use IsQuotaExceeded to detect.
+//
+// It must only come from a stream's Next, never from Process: the usage
+// stage classifies a Refusal returned by Process as refused at $0, and a cut
+// stream was served in part and is priced.
 type QuotaError struct{ What string }
+
+var _ pipeline.Refusal = &QuotaError{}
 
 func (e *QuotaError) Error() string { return "nexus: stream quota exceeded: " + e.What }
 
@@ -282,7 +306,12 @@ func (s *lifecycleStream) Close() error {
 	return s.inner.Close()
 }
 
-func (s *lifecycleStream) Usage() *provider.Usage { return s.inner.Usage() }
+func (s *lifecycleStream) Usage() *provider.Usage {
+	if u := s.inner.Usage(); u != nil {
+		return u
+	}
+	return s.cutUsage
+}
 
 func (s *lifecycleStream) finishOnce(ctx context.Context, streamErr error) {
 	s.once.Do(func() {
