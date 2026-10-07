@@ -115,18 +115,31 @@ func (m *UsageMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 		return next(ctx)
 	}
 	start := time.Now()
+	// Reserve before the call, so a shutdown that starts while this request
+	// is with the provider waits for its record. A request that arrives
+	// after the stage closed is still served; its record is dropped and
+	// counted.
+	reserved := m.reserve()
+	defer func() {
+		if r := recover(); r != nil {
+			if reserved {
+				m.release()
+			}
+			panic(r)
+		}
+	}()
 	resp, err := next(ctx)
 
 	rec := m.newRecord(ctx, req, start)
 	if err == nil && resp != nil && resp.Stream != nil {
-		// The stream counts as pending from now until its record is stored,
-		// so a shutdown waits for a stream that is still open.
-		resp.Stream = &usageRecordingStream{inner: resp.Stream, mw: m, ctx: ctx, rec: rec, req: req, start: start, reserved: m.reserve()}
+		// The reservation moves to the stream and is released after its
+		// record is stored, so a shutdown waits for a stream that is open.
+		resp.Stream = &usageRecordingStream{inner: resp.Stream, mw: m, ctx: ctx, rec: rec, req: req, start: start, reserved: reserved}
 		return resp, nil
 	}
 	rec.Latency = time.Since(start)
 	m.classify(ctx, rec, req, resp, err)
-	m.record(rec)
+	m.finish(rec, reserved)
 	return resp, err
 }
 
@@ -285,13 +298,14 @@ func (m *UsageMiddleware) release() {
 	m.mu.Unlock()
 }
 
-// record stores rec, unless the stage is closed.
-func (m *UsageMiddleware) record(rec *usage.Record) {
-	if !m.reserve() {
-		m.drop(rec)
+// finish stores rec on the reservation taken for it, or drops and counts it
+// when the stage was already closed.
+func (m *UsageMiddleware) finish(rec *usage.Record, reserved bool) {
+	if reserved {
+		m.insert(rec)
 		return
 	}
-	m.insert(rec)
+	m.drop(rec)
 }
 
 // drop counts and logs a record that arrived after Close.
@@ -467,11 +481,7 @@ func (s *usageRecordingStream) Close() error {
 		rec.Outcome, rec.StatusCode = usage.OutcomeOK, 200
 		s.mw.price(s.ctx, rec, u, false, respModel)
 	}
-	if s.reserved {
-		s.mw.insert(rec)
-	} else {
-		s.mw.drop(rec)
-	}
+	s.mw.finish(rec, s.reserved)
 	return closeErr
 }
 

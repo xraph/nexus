@@ -581,3 +581,57 @@ func TestATenantNamedOnlyInTheContextIsRecordedAndCachedApart(t *testing.T) {
 		t.Fatalf("records %d by tenant %v, hits %d; want A twice, B once, one hit", len(recs), byTenant, hits)
 	}
 }
+
+// gateProvider blocks every Complete until release is closed, and signals on
+// entered when a call arrives.
+type gateProvider struct {
+	fakeProvider
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g *gateProvider) Complete(ctx context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
+	g.entered <- struct{}{}
+	<-g.release
+	return g.fakeProvider.Complete(ctx, req)
+}
+
+func TestShutdownWaitsForACompletionStillWithTheProvider(t *testing.T) {
+	s := store.NewMemory()
+	p := &gateProvider{fakeProvider: fakeProvider{name: "openai", price: listPrice}, entered: make(chan struct{}, 1), release: make(chan struct{})}
+	gw := nexus.New(nexus.WithDatabase(s), nexus.WithProvider(p))
+	if err := gw.Initialize(context.Background()); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := gw.Engine().Complete(context.Background(), &provider.CompletionRequest{Model: "gpt-4o", Messages: []provider.Message{{Role: "user", Content: "hi"}}})
+		done <- err
+	}()
+	<-p.entered
+	shut := make(chan error, 1)
+	go func() { shut <- gw.Shutdown(context.Background()) }()
+	// Shutdown must still be waiting: the completion is with the provider.
+	select {
+	case err := <-shut:
+		t.Fatalf("Shutdown returned %v while a completion was in flight", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(p.release)
+	if err := <-done; err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if err := <-shut; err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	res, err := s.Usage().Query(context.Background(), &usage.QueryOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].Outcome != usage.OutcomeOK {
+		t.Fatalf("records = %+v; the in-flight completion's record must be stored", res.Items)
+	}
+	if gw.UsageInsertErrors() != 0 {
+		t.Fatalf("insert errors = %d, want 0", gw.UsageInsertErrors())
+	}
+}
