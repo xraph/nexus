@@ -402,3 +402,84 @@ func TestCustomMiddlewareAboveTheCallRunsPerAttempt(t *testing.T) {
 		t.Fatalf("custom middleware at 400 ran %d times; it must run once per attempt (it was dead before)", n)
 	}
 }
+
+func TestShutdownWaitsForAStreamThatIsStillOpen(t *testing.T) {
+	u := &provider.Usage{PromptTokens: 100, CompletionTokens: 20, TotalTokens: 120}
+	p := &fakeProvider{name: "openai", price: listPrice, stream: []*provider.StreamChunk{
+		{Delta: provider.Delta{Content: "hi"}}, {Kind: provider.EventUsage, Usage: u},
+	}}
+	// The stream is still open when Shutdown starts. Another goroutine reads
+	// and closes it a little later; its record must land before Shutdown
+	// returns.
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		st, err := gw.Engine().CompleteStream(ctx, &provider.CompletionRequest{Model: "gpt-4o", Stream: true})
+		if err != nil {
+			t.Fatalf("stream: %v", err)
+		}
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			for {
+				if _, err := st.Next(ctx); err != nil {
+					break
+				}
+			}
+			_ = st.Close()
+		}()
+	}, nexus.WithProvider(p))
+	if len(recs) != 1 || recs[0].Outcome != usage.OutcomeOK || recs[0].CostUSD == nil || recs[0].CostUSD.String() != "0.00045" {
+		t.Fatalf("records when Shutdown returned = %+v", recs)
+	}
+}
+
+func TestShutdownWithAnExpiredContextAndNothingPendingIsClean(t *testing.T) {
+	// Flush used to select between "done" and ctx.Done() even with nothing
+	// pending, so an expired context failed about half the time.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for i := range 200 {
+		gw := nexus.New(nexus.WithDatabase(store.NewMemory()))
+		if err := gw.Initialize(context.Background()); err != nil {
+			t.Fatalf("initialize: %v", err)
+		}
+		if err := gw.Shutdown(ctx); err != nil {
+			t.Fatalf("run %d: shutdown with nothing pending = %v", i, err)
+		}
+	}
+}
+
+func TestARecordAfterShutdownIsCountedAndNotStored(t *testing.T) {
+	s := store.NewMemory()
+	gw := nexus.New(nexus.WithDatabase(s), nexus.WithProvider(&fakeProvider{name: "openai", price: listPrice}))
+	if err := gw.Initialize(context.Background()); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	if err := gw.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if _, err := gw.Engine().Complete(context.Background(), &provider.CompletionRequest{Model: "gpt-4o"}); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	res, err := s.Usage().Query(context.Background(), &usage.QueryOptions{Limit: 100})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(res.Items) != 0 || gw.UsageInsertErrors() != 1 {
+		t.Fatalf("%d records stored, %d counted as lost; want 0 and 1", len(res.Items), gw.UsageInsertErrors())
+	}
+}
+
+func TestShutdownReturnsTheFlushErrorWhenAnInsertIsStuck(t *testing.T) {
+	g := newGatedUsage()
+	gw := nexus.New(nexus.WithUsageService(g))
+	if err := gw.Initialize(context.Background()); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	oneRequest(t, gw, g)
+	defer close(g.release)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := gw.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown = %v, want the flush's deadline error", err)
+	}
+}

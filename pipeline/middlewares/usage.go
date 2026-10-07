@@ -3,6 +3,7 @@ package middlewares
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -35,7 +36,9 @@ type UsageLogger interface {
 // that served it and says what happened and whether the cost is known.
 //
 // Records are stored asynchronously. A failed insert is logged and counted
-// (InsertErrors), and Flush waits for the inserts still in flight.
+// (InsertErrors), and Flush waits for the inserts still in flight and for
+// the streams still open. After Close, a record that has not started is not
+// stored: it is counted and logged as dropped.
 type UsageMiddleware struct {
 	usage  usage.Service
 	prices PriceLookup
@@ -43,7 +46,8 @@ type UsageMiddleware struct {
 
 	mu           sync.Mutex
 	idle         *sync.Cond // signalled when pending reaches zero
-	pending      int        // inserts in flight, guarded by mu
+	pending      int        // open streams and inserts in flight, guarded by mu
+	closed       bool       // set by Close, guarded by mu
 	insertErrors atomic.Int64
 }
 
@@ -58,11 +62,37 @@ func NewUsage(u usage.Service, prices PriceLookup, log UsageLogger) *UsageMiddle
 func (m *UsageMiddleware) Name() string  { return "usage" }
 func (m *UsageMiddleware) Priority() int { return 15 }
 
-// InsertErrors is how many records failed to store since start.
+// InsertErrors is how many records failed to store since start, including
+// records dropped because they arrived after Close.
 func (m *UsageMiddleware) InsertErrors() int64 { return m.insertErrors.Load() }
 
-// Flush waits for in-flight inserts, or until ctx is done.
+// Pending is how many records are not stored yet: streams still open and
+// inserts still in flight.
+func (m *UsageMiddleware) Pending() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.pending
+}
+
+// Close stops the stage taking new records. A stream that was open before
+// Close still records when it is closed, so Flush can wait for it; any
+// other record after Close is dropped and counted in InsertErrors. Call it
+// before Flush when shutting down, so nothing races the store's Close.
+func (m *UsageMiddleware) Close() {
+	m.mu.Lock()
+	m.closed = true
+	m.mu.Unlock()
+}
+
+// Flush waits for open streams to be closed and their records and every
+// other in-flight insert to be stored, or until ctx is done.
 func (m *UsageMiddleware) Flush(ctx context.Context) error {
+	m.mu.Lock()
+	idle := m.pending == 0
+	m.mu.Unlock()
+	if idle {
+		return nil
+	}
 	done := make(chan struct{})
 	go func() {
 		m.mu.Lock()
@@ -89,7 +119,9 @@ func (m *UsageMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 
 	rec := m.newRecord(ctx, req, start)
 	if err == nil && resp != nil && resp.Stream != nil {
-		resp.Stream = &usageRecordingStream{inner: resp.Stream, mw: m, ctx: ctx, rec: rec, req: req, start: start}
+		// The stream counts as pending from now until its record is stored,
+		// so a shutdown waits for a stream that is still open.
+		resp.Stream = &usageRecordingStream{inner: resp.Stream, mw: m, ctx: ctx, rec: rec, req: req, start: start, reserved: m.reserve()}
 		return resp, nil
 	}
 	rec.Latency = time.Since(start)
@@ -215,28 +247,69 @@ func hasPricedTokens(u provider.Usage, embedding bool) bool {
 	return u.PromptTokens > 0 || u.CompletionTokens > 0
 }
 
-func (m *UsageMiddleware) record(rec *usage.Record) {
+// reserve counts a record that will be stored later, so Flush waits for it.
+// It reports false, and counts nothing, once the stage is closed.
+func (m *UsageMiddleware) reserve() bool {
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return false
+	}
 	m.pending++
+	return true
+}
+
+// release ends a reservation.
+func (m *UsageMiddleware) release() {
+	m.mu.Lock()
+	m.pending--
+	if m.pending == 0 {
+		m.idle.Broadcast()
+	}
 	m.mu.Unlock()
+}
+
+// record stores rec, unless the stage is closed.
+func (m *UsageMiddleware) record(rec *usage.Record) {
+	if !m.reserve() {
+		m.drop(rec)
+		return
+	}
+	m.insert(rec)
+}
+
+// drop counts and logs a record that arrived after Close.
+func (m *UsageMiddleware) drop(rec *usage.Record) {
+	m.insertErrors.Add(1)
+	if m.log != nil {
+		m.log.Error("nexus: usage stage is closed, record dropped", "request_id", rec.RequestID.String())
+	}
+}
+
+// insert stores a reserved record in the background and ends the
+// reservation. A panic from the usage service or its store is counted as a
+// failed insert; it must not take the process down from a goroutine.
+func (m *UsageMiddleware) insert(rec *usage.Record) {
 	go func() {
-		defer func() {
-			m.mu.Lock()
-			m.pending--
-			if m.pending == 0 {
-				m.idle.Broadcast()
-			}
-			m.mu.Unlock()
-		}()
+		defer m.release()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := m.usage.Record(ctx, rec); err != nil {
+		if err := m.store(ctx, rec); err != nil {
 			m.insertErrors.Add(1)
 			if m.log != nil {
 				m.log.Error("nexus: storing a usage record failed", "request_id", rec.RequestID.String(), "error", err)
 			}
 		}
 	}()
+}
+
+func (m *UsageMiddleware) store(ctx context.Context, rec *usage.Record) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("usage service panicked: %v", r)
+		}
+	}()
+	return m.usage.Record(ctx, rec)
 }
 
 func stateString(req *pipeline.Request, key string) string {
@@ -292,6 +365,10 @@ type usageRecordingStream struct {
 	rec   *usage.Record
 	req   *pipeline.Request
 	start time.Time
+
+	// reserved is true when the stream was counted as pending when it was
+	// opened. A stream opened after Close was not, and its record is dropped.
+	reserved bool
 
 	mu       sync.Mutex
 	usage    provider.Usage
@@ -374,7 +451,11 @@ func (s *usageRecordingStream) Close() error {
 		rec.Outcome, rec.StatusCode = usage.OutcomeOK, 200
 		s.mw.price(s.ctx, rec, u, false, respModel)
 	}
-	s.mw.record(rec)
+	if s.reserved {
+		s.mw.insert(rec)
+	} else {
+		s.mw.drop(rec)
+	}
 	return closeErr
 }
 

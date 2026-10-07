@@ -17,6 +17,8 @@ package nexus
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -338,18 +340,26 @@ func (gw *Gateway) Health(_ context.Context) error {
 	return nil
 }
 
-// Shutdown gracefully stops all services.
+// Shutdown gracefully stops all services. It stops the usage stage taking
+// new records, waits until ctx is done for the streams still open and the
+// records still being stored, then closes the store. When ctx ends first,
+// the records not yet stored are lost: Shutdown logs how many and returns
+// the flush error, joined with any error from closing the store.
 func (gw *Gateway) Shutdown(ctx context.Context) error {
 	gw.logger.Info("nexus gateway shutting down")
+	var flushErr error
 	if gw.usageMW != nil {
+		gw.usageMW.Close()
 		if err := gw.usageMW.Flush(ctx); err != nil {
-			gw.logger.Warn("nexus: usage records still in flight at shutdown", "error", err)
+			gw.logger.Warn("nexus: usage records not stored at shutdown", "pending", gw.usageMW.Pending(), "error", err)
+			flushErr = fmt.Errorf("nexus: flushing usage records: %w", err)
 		}
 	}
+	var closeErr error
 	if gw.store != nil {
-		return gw.store.Close()
+		closeErr = gw.store.Close()
 	}
-	return nil
+	return errors.Join(flushErr, closeErr)
 }
 
 // Router is a minimal interface for HTTP routing.

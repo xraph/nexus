@@ -14,6 +14,7 @@ import (
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/pipeline/middlewares"
 	"github.com/xraph/nexus/provider"
+	"github.com/xraph/nexus/testutil"
 	"github.com/xraph/nexus/usage"
 )
 
@@ -278,4 +279,77 @@ type blockedUsage struct {
 func (b *blockedUsage) Record(ctx context.Context, rec *usage.Record) error {
 	<-b.block
 	return b.recordingUsage.Record(ctx, rec)
+}
+
+type panickingUsage struct{ *recordingUsage }
+
+func (panickingUsage) Record(context.Context, *usage.Record) error { panic("store is nil") }
+
+func TestUsageSurvivesAPanickingUsageService(t *testing.T) {
+	log := &errLog{}
+	mw := middlewares.NewUsage(panickingUsage{newRecordingUsage()}, gpt4o, log)
+	req := &pipeline.Request{Type: pipeline.RequestCompletion, Completion: &provider.CompletionRequest{Model: "gpt-4o"}, State: map[string]any{}}
+	_, _ = mw.Process(context.Background(), req, func(context.Context) (*pipeline.Response, error) {
+		return &pipeline.Response{Completion: &provider.CompletionResponse{}}, nil
+	})
+	if err := mw.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if mw.InsertErrors() != 1 || log.n != 1 {
+		t.Fatalf("insert errors %d, logged %d; want 1 and 1", mw.InsertErrors(), log.n)
+	}
+}
+
+func TestUsageAfterCloseDropsNewRecordsButKeepsOpenStreams(t *testing.T) {
+	rec := newRecordingUsage()
+	log := &errLog{}
+	mw := middlewares.NewUsage(rec, gpt4o, log)
+	stream := func() *pipeline.Response {
+		req := &pipeline.Request{Type: pipeline.RequestStream, Completion: &provider.CompletionRequest{Model: "gpt-4o"}, State: map[string]any{pipeline.StateProviderName: "openai"}}
+		resp, _ := mw.Process(context.Background(), req, func(context.Context) (*pipeline.Response, error) {
+			return &pipeline.Response{Stream: testutil.NewFakeStream([]*provider.StreamChunk{usageChunk(100, 20)}, nil)}, nil
+		})
+		return resp
+	}
+	open := stream() // opened before Close
+	mw.Close()
+	if got := mw.Pending(); got != 1 {
+		t.Fatalf("pending = %d, want the open stream", got)
+	}
+
+	// New work after Close is refused: a completion and a stream opened late.
+	req := &pipeline.Request{Type: pipeline.RequestCompletion, Completion: &provider.CompletionRequest{Model: "gpt-4o"}, State: map[string]any{}}
+	_, _ = mw.Process(context.Background(), req, func(context.Context) (*pipeline.Response, error) {
+		return &pipeline.Response{Completion: &provider.CompletionResponse{}}, nil
+	})
+	late := stream()
+	_ = late.Stream.Close()
+
+	// The stream opened before Close still records while Flush waits.
+	flushed := make(chan error, 1)
+	go func() { flushed <- mw.Flush(context.Background()) }()
+	select {
+	case err := <-flushed:
+		t.Fatalf("Flush returned (%v) while a stream opened before Close was still open", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	for {
+		if _, err := open.Stream.Next(context.Background()); err != nil {
+			break
+		}
+	}
+	_ = open.Stream.Close()
+	select {
+	case err := <-flushed:
+		if err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Flush did not return after the stream closed")
+	}
+	got := rec.only(t)
+	wantRecord(t, got, usage.OutcomeOK, usage.PricingPriced, "0.00045")
+	if mw.InsertErrors() != 2 || log.n != 2 {
+		t.Fatalf("insert errors %d, logged %d; want 2 dropped records", mw.InsertErrors(), log.n)
+	}
 }
