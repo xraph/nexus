@@ -37,11 +37,4 @@ The tracing middleware (priority 10) creates spans with:
 
 ## Response Headers
 
-Every response includes diagnostic headers:
-
-| Header | Value |
-|--------|-------|
-| `X-Nexus-Request-ID` | Unique request identifier |
-| `X-Nexus-Provider` | Provider that served the request |
-| `X-Nexus-Cache` | `HIT` or `MISS` |
-| `X-Nexus-Latency` | Processing time in milliseconds |
+The gateway does not set diagnostic response headers. The request id, the provider that served the request, whether it was a cache hit, and the latency are all recorded on the usage record for that request. If you want them, query the usage store.

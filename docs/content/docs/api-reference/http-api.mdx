@@ -68,8 +68,4 @@ Returns all models from all registered providers, plus model aliases.
 
 ## Response Headers
 
-All responses include:
-
-- `X-Nexus-Request-ID` — Unique request identifier
-- `X-Nexus-Provider` — Provider that served the request
-- `X-Nexus-Cache` — `HIT` or `MISS`
+The gateway does not set `X-Nexus-*` response headers. It records the request id, the provider that served the request, whether the response came from the cache, and the latency on the request's usage record instead. Read them from the usage store, not from the response.
