@@ -67,7 +67,7 @@ func TestValidateFindsTheRightKeyAmongSharedPrefixes(t *testing.T) {
 	for raw, want := range map[string]id.KeyID{rawA: a.ID, rawB: b.ID} {
 		got, err := svc.Validate(ctx, raw)
 		if err != nil || got.ID != want {
-			t.Fatalf("validate = %v, %v; want %s", got, err, want)
+			t.Fatalf("validate = %v; want key %s", err, want)
 		}
 	}
 	forged := a.Prefix + strings.Repeat("c", 56)
@@ -107,7 +107,7 @@ func TestRevokedAndExpiredAreReportedOnlyForTheRightKey(t *testing.T) {
 	}
 	got, err := svc.Get(ctx, k.ID.String())
 	if err != nil || got.Status != key.KeyExpired {
-		t.Fatalf("Get = %v, %v; an expired key reads expired without a background job", got, err)
+		t.Fatalf("Get = %v; an expired key reads expired without a background job", err)
 	}
 	k2, raw2, _ := svc.Create(ctx, &key.CreateInput{TenantID: tn.ID.String(), Name: "b"})
 	if err := svc.Revoke(ctx, k2.ID.String()); err != nil {
@@ -155,8 +155,13 @@ func TestCreateRefusesBadInputWithoutPanicking(t *testing.T) {
 		"no name":          {TenantID: tn.ID.String()},
 		"expired already":  {TenantID: tn.ID.String(), Name: "a", ExpiresAt: &past},
 	} {
-		if _, _, err := svc.Create(ctx, in); err == nil {
+		_, _, err := svc.Create(ctx, in)
+		if err == nil {
 			t.Errorf("%s: created", name)
+			continue
+		}
+		if (name == "no name" || name == "expired already" || name == "malformed tenant") && !errors.Is(err, key.ErrInvalid) {
+			t.Errorf("%s = %v, want key.ErrInvalid", name, err)
 		}
 	}
 	if _, _, err := svc.Create(ctx, &key.CreateInput{TenantID: id.NewTenantID().String(), Name: "a"}); !errors.Is(err, tenant.ErrNotFound) {
@@ -191,7 +196,108 @@ func TestRotateRevokesTheOldKeyAndKeepsTheName(t *testing.T) {
 	if len(n2.Scopes) != 1 || n2.Scopes[0] != "completions" {
 		t.Fatalf("scopes = %v", n2.Scopes)
 	}
-	if _, _, err := svc.Rotate(ctx, old.ID.String()); err == nil {
-		t.Fatal("rotating a revoked key must fail")
+	if _, _, err := svc.Rotate(ctx, old.ID.String()); !errors.Is(err, key.ErrInvalid) {
+		t.Fatalf("rotating a revoked key = %v, want key.ErrInvalid", err)
+	}
+}
+
+func TestRevokingTwiceEmitsOneEvent(t *testing.T) {
+	svc, tn, _, ev := setup(t, nil)
+	ctx := context.Background()
+	k, _, _ := svc.Create(ctx, &key.CreateInput{TenantID: tn.ID.String(), Name: "a"})
+	for range 2 {
+		if err := svc.Revoke(ctx, k.ID.String()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(ev.revoked) != 1 {
+		t.Fatalf("revoked events = %v, want exactly one", ev.revoked)
+	}
+}
+
+// failingUpdates is a key.Store whose Update fails for the old key and, when
+// replacementToo is set, for every other key as well (the replacement's id
+// does not exist until Rotate creates it).
+type failingUpdates struct {
+	key.Store
+	old            string
+	replacementToo bool
+}
+
+var errStore = errors.New("store unavailable")
+
+func (f *failingUpdates) Update(ctx context.Context, k *key.APIKey) error {
+	if k.ID.String() == f.old || f.replacementToo {
+		return errStore
+	}
+	return f.Store.Update(ctx, k)
+}
+
+// rotateWithFailures rotates a fresh key while Update fails for the old key,
+// and for the replacement too when replacementToo is set.
+func rotateWithFailures(t *testing.T, replacementToo bool) (*failingUpdates, *key.APIKey, error) {
+	t.Helper()
+	s := store.NewMemory()
+	ctx := context.Background()
+	tn, err := tenant.NewService(s.Tenants()).Create(ctx, &tenant.CreateInput{Name: "Acme", Slug: "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &failingUpdates{Store: s.Keys()}
+	svc := key.NewService(f, key.WithTenants(s.Tenants()))
+	old, _, err := svc.Create(ctx, &key.CreateInput{TenantID: tn.ID.String(), Name: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.old, f.replacementToo = old.ID.String(), replacementToo
+	_, _, rotErr := svc.Rotate(ctx, old.ID.String())
+	return f, old, rotErr
+}
+
+func activeKeys(t *testing.T, st key.Store, tenantID id.TenantID) []*key.APIKey {
+	t.Helper()
+	all, err := st.ListByTenant(context.Background(), tenantID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []*key.APIKey
+	for _, k := range all {
+		if k.Status == key.KeyActive {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+func TestRotateRollsTheReplacementBackWhenTheOldRevokeFails(t *testing.T) {
+	f, old, err := rotateWithFailures(t, false)
+	if err == nil || !errors.Is(err, errStore) {
+		t.Fatalf("rotate = %v, want the store error", err)
+	}
+	if strings.Contains(err.Error(), "still active") {
+		t.Fatalf("rollback succeeded, so the error must not say a key is still active: %v", err)
+	}
+	live := activeKeys(t, f.Store, old.TenantID)
+	if len(live) != 1 || live[0].ID != old.ID {
+		t.Fatalf("active keys after a rolled-back rotation = %d, want only the old key", len(live))
+	}
+}
+
+func TestRotateNamesTheReplacementWhenTheRollbackFailsToo(t *testing.T) {
+	f, old, err := rotateWithFailures(t, true)
+	if err == nil || !errors.Is(err, errStore) {
+		t.Fatalf("rotate = %v, want the store error", err)
+	}
+	live := activeKeys(t, f.Store, old.TenantID)
+	if len(live) != 2 {
+		t.Fatalf("active keys = %d, want the old key and the stuck replacement", len(live))
+	}
+	for _, k := range live {
+		if k.ID != old.ID && !strings.Contains(err.Error(), k.ID.String()) {
+			t.Fatalf("error does not name the replacement key %s: %v", k.ID, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "still active") {
+		t.Fatalf("error does not say the replacement is still active: %v", err)
 	}
 }

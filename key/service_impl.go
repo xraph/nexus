@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -160,8 +161,8 @@ const rotatedSuffix = " (rotated)"
 
 // Rotate creates a replacement for an active key and revokes the old one.
 // It is not atomic across backends: if the revoke fails, the new key is
-// revoked too (best effort) and the error is returned, so no key the caller
-// never saw is left active.
+// revoked too, and the error is returned. If that rollback also fails, the
+// returned error names the replacement key that is still active.
 func (s *service) Rotate(ctx context.Context, oldKeyID string) (*APIKey, string, error) {
 	old, err := s.Get(ctx, oldKeyID)
 	if err != nil {
@@ -181,8 +182,13 @@ func (s *service) Rotate(ctx context.Context, oldKeyID string) (*APIKey, string,
 		return nil, "", err
 	}
 	if err := s.Revoke(ctx, old.ID.String()); err != nil {
-		_ = s.Revoke(ctx, n.ID.String()) //nolint:errcheck // best-effort undo; the revoke error is the one returned
-		return nil, "", fmt.Errorf("nexus: revoke the rotated key: %w", err)
+		first := fmt.Errorf("nexus: revoke the rotated key: %w", err)
+		if rbErr := s.Revoke(ctx, n.ID.String()); rbErr != nil {
+			// Nobody holds the replacement's raw value, yet it is live. Say so.
+			return nil, "", errors.Join(first,
+				fmt.Errorf("nexus: the replacement key %s is still active and must be revoked: %w", n.ID, rbErr))
+		}
+		return nil, "", first
 	}
 	return n, raw, nil
 }
