@@ -8,6 +8,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -81,8 +84,8 @@ func OpenPostgresDB(t *testing.T) *grove.DB {
 	if dsn == "" {
 		t.Skipf("%s is not set", envPostgres)
 	}
-	if strings.Contains(dsn, ":5432") {
-		t.Fatalf("%s points at the default port; refusing to write to what may be a live database", envPostgres)
+	if err := checkPostgresDSN(dsn); err != nil {
+		t.Fatalf("%s: %v", envPostgres, err)
 	}
 	schema := "nexus_test_" + randomHex(t)
 	quoted := pgx.Identifier{schema}.Sanitize()
@@ -110,8 +113,8 @@ func OpenMongoDB(t *testing.T) (db *grove.DB, name string) {
 	if uri == "" {
 		t.Skipf("%s is not set", envMongo)
 	}
-	if strings.Contains(uri, ":27017") {
-		t.Fatalf("%s points at the default port; refusing to write to what may be a live database", envMongo)
+	if err := checkMongoURI(uri); err != nil {
+		t.Fatalf("%s: %v", envMongo, err)
 	}
 	u, err := url.Parse(uri)
 	if err != nil {
@@ -150,7 +153,14 @@ func OpenMongoDB(t *testing.T) (db *grove.DB, name string) {
 // that write raw documents. It is closed when the test ends.
 func MongoClient(t *testing.T) *mongodrv.Client {
 	t.Helper()
-	client, err := mongodrv.Connect(options.Client().ApplyURI(os.Getenv(envMongo)))
+	uri := os.Getenv(envMongo)
+	if uri == "" {
+		t.Skipf("%s is not set", envMongo)
+	}
+	if err := checkMongoURI(uri); err != nil {
+		t.Fatalf("%s: %v", envMongo, err)
+	}
+	client, err := mongodrv.Connect(options.Client().ApplyURI(uri))
 	if err != nil {
 		t.Fatalf("connect mongo: %v", err)
 	}
@@ -160,6 +170,66 @@ func MongoClient(t *testing.T) *mongodrv.Client {
 		}
 	})
 	return client
+}
+
+const (
+	defaultPostgresPort = 5432
+	defaultMongoPort    = "27017"
+)
+
+// checkPostgresDSN refuses a DSN whose effective port, after pgx applies its
+// own defaults, is PostgreSQL's default port (any host listed, for a
+// multi-host DSN). That port is where a live database may be listening.
+func checkPostgresDSN(dsn string) error {
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return fmt.Errorf("parse postgres DSN: %w", err)
+	}
+	ports := []uint16{cfg.Port}
+	for _, fb := range cfg.Fallbacks {
+		ports = append(ports, fb.Port)
+	}
+	for _, p := range ports {
+		if p == defaultPostgresPort {
+			return errors.New("points at the default port 5432 (spelled or implied); refusing to write to what may be a live database")
+		}
+	}
+	return nil
+}
+
+// checkMongoURI refuses a URI that reaches MongoDB's default port, whether
+// spelled or implied by leaving the port out, and any mongodb+srv URI (SRV
+// records hide the port; the tests only run against the throwaway container).
+func checkMongoURI(uri string) error {
+	scheme, rest, ok := strings.Cut(uri, "://")
+	if !ok {
+		return fmt.Errorf("not a mongodb URI: %q", uri)
+	}
+	switch scheme {
+	case "mongodb":
+	case "mongodb+srv":
+		return errors.New("mongodb+srv URIs are refused; point at the throwaway container with mongodb://host:port")
+	default:
+		return fmt.Errorf("unsupported scheme %q", scheme)
+	}
+	authority, _, _ := strings.Cut(rest, "/")
+	authority, _, _ = strings.Cut(authority, "?")
+	if i := strings.LastIndex(authority, "@"); i >= 0 {
+		authority = authority[i+1:]
+	}
+	if authority == "" {
+		return errors.New("no host in URI")
+	}
+	for _, host := range strings.Split(authority, ",") {
+		port := defaultMongoPort
+		if _, p, err := net.SplitHostPort(host); err == nil {
+			port = p
+		}
+		if port == defaultMongoPort {
+			return errors.New("points at the default port 27017 (spelled or implied); refusing to write to what may be a live database")
+		}
+	}
+	return nil
 }
 
 func groveOpen(t *testing.T, drv grove.GroveDriver) *grove.DB {
