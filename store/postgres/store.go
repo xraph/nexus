@@ -374,6 +374,45 @@ func (s *usageStore) Summary(ctx context.Context, tenantID, period string) (*usa
 	return usage.BuildSummary(tenantID, period, out), nil
 }
 
+func (s *usageStore) Series(ctx context.Context, opts *usage.SeriesOptions) ([]usage.SeriesPoint, error) {
+	if _, err := usage.FillSeries(opts, nil); err != nil {
+		return nil, err
+	}
+	rows, err := s.pgdb.Query(ctx,
+		`SELECT date_trunc($2, created_at, 'UTC'), COUNT(*), COALESCE(SUM(total_tokens), 0)::bigint,
+		        SUM(cost_usd), COUNT(*) FILTER (WHERE pricing_status = 'unpriced_model')
+		   FROM nexus_usage_records
+		  WHERE ($1 = '' OR tenant_id = $1) AND created_at >= $3 AND created_at < $4
+		  GROUP BY 1`,
+		opts.TenantID, string(opts.Bucket), opts.Start.UTC(), opts.End.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("nexus/postgres: series: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var points []usage.SeriesPoint
+	for rows.Next() {
+		var p usage.SeriesPoint
+		var tokens int64
+		var cost numeric
+		if err := rows.Scan(&p.Start, &p.Requests, &tokens, &cost, &p.Unpriced); err != nil {
+			return nil, fmt.Errorf("nexus/postgres: series scan: %w", err)
+		}
+		p.Tokens = int(tokens)
+		c, err := cost.usd()
+		if err != nil {
+			return nil, err
+		}
+		if c != nil {
+			p.CostUSD = *c
+		}
+		points = append(points, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return usage.FillSeries(opts, points)
+}
+
 func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) (*usage.QueryResult, error) {
 	if opts == nil {
 		opts = &usage.QueryOptions{}

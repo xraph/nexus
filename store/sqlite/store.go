@@ -383,6 +383,47 @@ func (s *usageStore) Summary(ctx context.Context, tenantID, period string) (*usa
 	return usage.BuildSummary(tenantID, period, out), nil
 }
 
+func (s *usageStore) Series(ctx context.Context, opts *usage.SeriesOptions) ([]usage.SeriesPoint, error) {
+	if _, err := usage.FillSeries(opts, nil); err != nil {
+		return nil, err
+	}
+	rows, err := s.sdb.Query(ctx,
+		`SELECT created_at, total_tokens, cost_usd, pricing_status FROM usage_records
+		  WHERE (? = '' OR tenant_id = ?) AND created_at >= ? AND created_at < ?`,
+		opts.TenantID, opts.TenantID, conv.TimeText(opts.Start), conv.TimeText(opts.End))
+	if err != nil {
+		return nil, fmt.Errorf("nexus/sqlite: series: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var points []usage.SeriesPoint
+	for rows.Next() {
+		var created, status string
+		var cost *string
+		p := usage.SeriesPoint{Requests: 1}
+		if err = rows.Scan(&created, &p.Tokens, &cost, &status); err != nil {
+			return nil, fmt.Errorf("nexus/sqlite: series scan: %w", err)
+		}
+		if p.Start, err = conv.ParseTimeText(created); err != nil {
+			return nil, err
+		}
+		c, err := conv.ParseCost(cost)
+		if err != nil {
+			return nil, err
+		}
+		if c != nil {
+			p.CostUSD = *c
+		}
+		if usage.PricingStatus(status) == usage.PricingUnpricedModel {
+			p.Unpriced = 1
+		}
+		points = append(points, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return usage.FillSeries(opts, points)
+}
+
 func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) (*usage.QueryResult, error) {
 	if opts == nil {
 		opts = &usage.QueryOptions{}

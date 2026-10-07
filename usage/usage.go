@@ -98,6 +98,7 @@ type Service interface {
 	MonthlySpend(ctx context.Context, tenantID string) (money.USD, error)
 	DailyRequests(ctx context.Context, tenantID string) (int, error)
 	Summary(ctx context.Context, tenantID string, period string) (*Summary, error)
+	Series(ctx context.Context, opts *SeriesOptions) ([]SeriesPoint, error)
 	Query(ctx context.Context, opts *QueryOptions) (*QueryResult, error)
 }
 
@@ -110,5 +111,6 @@ type Store interface {
 	MonthlySpend(ctx context.Context, tenantID string) (money.USD, error)
 	DailyRequests(ctx context.Context, tenantID string) (int, error)
 	Summary(ctx context.Context, tenantID string, period string) (*Summary, error)
+	Series(ctx context.Context, opts *SeriesOptions) ([]SeriesPoint, error)
 	Query(ctx context.Context, opts *QueryOptions) (*QueryResult, error)
 }

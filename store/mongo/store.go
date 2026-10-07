@@ -442,6 +442,56 @@ func (s *usageStore) Summary(ctx context.Context, tenantID, period string) (*usa
 	return usage.BuildSummary(tenantID, period, out), nil
 }
 
+func (s *usageStore) Series(ctx context.Context, opts *usage.SeriesOptions) ([]usage.SeriesPoint, error) {
+	if _, err := usage.FillSeries(opts, nil); err != nil {
+		return nil, err
+	}
+	match := bson.M{"created_at": bson.M{"$gte": opts.Start.UTC(), "$lt": opts.End.UTC()}}
+	if opts.TenantID != "" {
+		match["tenant_id"] = opts.TenantID
+	}
+	cursor, err := s.mdb.Collection(colUsage).Aggregate(ctx, bson.A{
+		bson.M{"$match": match},
+		bson.M{"$group": bson.M{
+			"_id":      bson.M{"$dateTrunc": bson.M{"date": "$created_at", "unit": string(opts.Bucket), "timezone": "UTC"}},
+			"requests": bson.M{"$sum": 1},
+			"tokens":   bson.M{"$sum": "$total_tokens"},
+			"cost":     bson.M{"$sum": "$cost_usd"},
+			"unpriced": bson.M{"$sum": bson.M{"$cond": bson.A{bson.M{"$eq": bson.A{"$pricing_status", "unpriced_model"}}, 1, 0}}},
+		}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("nexus/mongo: series: %w", err)
+	}
+	defer func() { _ = cursor.Close(ctx) }()
+	var points []usage.SeriesPoint
+	for cursor.Next(ctx) {
+		var g struct {
+			Start    time.Time `bson:"_id"`
+			Requests int       `bson:"requests"`
+			Tokens   int       `bson:"tokens"`
+			Cost     any       `bson:"cost"`
+			Unpriced int       `bson:"unpriced"`
+		}
+		if err := cursor.Decode(&g); err != nil {
+			return nil, fmt.Errorf("nexus/mongo: series decode: %w", err)
+		}
+		p := usage.SeriesPoint{Start: g.Start, Requests: g.Requests, Tokens: g.Tokens, Unpriced: g.Unpriced}
+		c, err := usdFromBSON(g.Cost)
+		if err != nil {
+			return nil, err
+		}
+		if c != nil {
+			p.CostUSD = *c
+		}
+		points = append(points, p)
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
+	return usage.FillSeries(opts, points)
+}
+
 func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) (*usage.QueryResult, error) {
 	if opts == nil {
 		opts = &usage.QueryOptions{}

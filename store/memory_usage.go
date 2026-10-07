@@ -93,6 +93,36 @@ func rowOf(r *usage.Record) usage.SummaryRow {
 	return row
 }
 
+func (s *memoryUsageStore) Series(_ context.Context, opts *usage.SeriesOptions) ([]usage.SeriesPoint, error) {
+	if _, err := usage.FillSeries(opts, nil); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var points []usage.SeriesPoint
+	for _, r := range s.records {
+		if opts.TenantID != "" && r.TenantID.String() != opts.TenantID {
+			continue
+		}
+		if r.CreatedAt.Before(opts.Start) || !r.CreatedAt.Before(opts.End) {
+			continue
+		}
+		points = append(points, pointOf(r))
+	}
+	return usage.FillSeries(opts, points)
+}
+
+func pointOf(r *usage.Record) usage.SeriesPoint {
+	p := usage.SeriesPoint{Start: r.CreatedAt, Requests: 1, Tokens: r.TotalTokens}
+	if r.CostUSD != nil {
+		p.CostUSD = *r.CostUSD
+	}
+	if r.PricingStatus == usage.PricingUnpricedModel {
+		p.Unpriced = 1
+	}
+	return p
+}
+
 func (s *memoryUsageStore) Query(_ context.Context, opts *usage.QueryOptions) (*usage.QueryResult, error) {
 	if opts == nil {
 		opts = &usage.QueryOptions{}
