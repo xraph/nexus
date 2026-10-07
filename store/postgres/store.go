@@ -7,12 +7,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/pgdriver"
 	"github.com/xraph/grove/migrate"
 
 	"github.com/xraph/nexus/key"
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/store"
 	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/usage"
@@ -252,82 +254,83 @@ func (s *usageStore) Insert(ctx context.Context, rec *usage.Record) error {
 	return nil
 }
 
-func (s *usageStore) MonthlySpend(ctx context.Context, tenantID string) (float64, error) {
-	var total float64
-	row := s.pgdb.QueryRow(ctx,
-		`SELECT COALESCE(SUM(cost_usd), 0) FROM nexus_usage_records
-		 WHERE tenant_id = $1 AND created_at >= date_trunc('month', NOW())`,
-		tenantID)
-	err := row.Scan(&total)
-	return total, err
+func (s *usageStore) MonthlySpend(ctx context.Context, tenantID string) (money.USD, error) {
+	since, err := usage.PeriodStart("month", time.Now())
+	if err != nil {
+		return money.Zero, err
+	}
+	var total numeric
+	err = s.pgdb.QueryRow(ctx,
+		`SELECT SUM(cost_usd) FROM nexus_usage_records
+		  WHERE ($1 = '' OR tenant_id = $1) AND created_at >= $2`,
+		tenantID, since).Scan(&total)
+	if err != nil {
+		return money.Zero, fmt.Errorf("nexus/postgres: monthly spend: %w", err)
+	}
+	u, err := total.usd()
+	if err != nil || u == nil {
+		return money.Zero, err
+	}
+	return *u, nil
 }
 
 func (s *usageStore) DailyRequests(ctx context.Context, tenantID string) (int, error) {
+	since, err := usage.PeriodStart("day", time.Now())
+	if err != nil {
+		return 0, err
+	}
 	var count int
-	row := s.pgdb.QueryRow(ctx,
+	err = s.pgdb.QueryRow(ctx,
 		`SELECT COUNT(*) FROM nexus_usage_records
-		 WHERE tenant_id = $1 AND created_at >= date_trunc('day', NOW())`,
-		tenantID)
-	err := row.Scan(&count)
-	return count, err
+		  WHERE ($1 = '' OR tenant_id = $1) AND created_at >= $2`,
+		tenantID, since).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("nexus/postgres: daily requests: %w", err)
+	}
+	return count, nil
 }
 
 func (s *usageStore) Summary(ctx context.Context, tenantID, period string) (*usage.Summary, error) {
-	var interval string
-	switch period {
-	case "day":
-		interval = "date_trunc('day', NOW())"
-	case "week":
-		interval = "NOW() - INTERVAL '7 days'"
-	default:
-		interval = "date_trunc('month', NOW())"
-	}
-
-	summary := &usage.Summary{
-		TenantID:   tenantID,
-		Period:     period,
-		ByProvider: make(map[string]*usage.ProviderUsage),
-		ByModel:    make(map[string]*usage.ModelUsage),
-	}
-
-	rows, err := s.pgdb.Query(ctx,
-		fmt.Sprintf(`SELECT provider, model, COUNT(*), SUM(total_tokens), COALESCE(SUM(cost_usd), 0), SUM(CASE WHEN cached THEN 1 ELSE 0 END)
-		 FROM nexus_usage_records WHERE tenant_id = $1 AND created_at >= %s
-		 GROUP BY provider, model`, interval), tenantID)
+	since, err := usage.PeriodStart(period, time.Now())
 	if err != nil {
-		return nil, fmt.Errorf("nexus/postgres: summary query: %w", err)
+		return nil, err
+	}
+	rows, err := s.pgdb.Query(ctx,
+		`SELECT provider, model, outcome, pricing_status, cached, COUNT(*),
+		        COALESCE(SUM(total_tokens), 0)::bigint, COALESCE(SUM(latency_ns), 0)::bigint,
+		        SUM(cost_usd)
+		   FROM nexus_usage_records
+		  WHERE ($1 = '' OR tenant_id = $1) AND created_at >= $2
+		  GROUP BY provider, model, outcome, pricing_status, cached`,
+		tenantID, since)
+	if err != nil {
+		return nil, fmt.Errorf("nexus/postgres: summary: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
+	var out []usage.SummaryRow
 	for rows.Next() {
-		var prov, mdl string
-		var requests, tokens int
-		var cost float64
-		var cached int
-		if err := rows.Scan(&prov, &mdl, &requests, &tokens, &cost, &cached); err != nil {
+		var r usage.SummaryRow
+		var outcome, status string
+		var tokens, latency int64
+		var cost numeric
+		if err := rows.Scan(&r.Provider, &r.Model, &outcome, &status, &r.Cached, &r.Requests, &tokens, &latency, &cost); err != nil {
 			return nil, fmt.Errorf("nexus/postgres: summary scan: %w", err)
 		}
-
-		summary.TotalRequests += requests
-		summary.TotalTokens += tokens
-		summary.TotalCostUSD += cost
-
-		if _, ok := summary.ByProvider[prov]; !ok {
-			summary.ByProvider[prov] = &usage.ProviderUsage{}
+		r.Outcome, r.PricingStatus, r.Tokens, r.LatencyNs = usage.Outcome(outcome), usage.PricingStatus(status), int(tokens), latency
+		c, err := cost.usd()
+		if err != nil {
+			return nil, err
 		}
-		summary.ByProvider[prov].Requests += requests
-		summary.ByProvider[prov].Tokens += tokens
-		summary.ByProvider[prov].CostUSD += cost
-
-		if _, ok := summary.ByModel[mdl]; !ok {
-			summary.ByModel[mdl] = &usage.ModelUsage{}
+		if c != nil {
+			r.Cost = *c
 		}
-		summary.ByModel[mdl].Requests += requests
-		summary.ByModel[mdl].Tokens += tokens
-		summary.ByModel[mdl].CostUSD += cost
+		out = append(out, r)
 	}
-
-	return summary, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return usage.BuildSummary(tenantID, period, out), nil
 }
 
 func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) ([]*usage.Record, int, error) {

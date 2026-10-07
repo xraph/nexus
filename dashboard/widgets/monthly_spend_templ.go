@@ -8,13 +8,13 @@ package widgets
 import (
 	"github.com/a-h/templ"
 	templruntime "github.com/a-h/templ/runtime"
-
 	"github.com/xraph/nexus/dashboard/components"
+	"github.com/xraph/nexus/money"
 )
 
 // MonthlySpendData holds the monthly spend value.
 type MonthlySpendData struct {
-	Spend float64
+	Spend money.USD
 }
 
 // MonthlySpendWidget renders the monthly spend widget.

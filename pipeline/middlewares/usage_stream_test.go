@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/pipeline/middlewares"
 	"github.com/xraph/nexus/provider"
@@ -32,8 +33,10 @@ func (r *recordingUsage) Record(_ context.Context, rec *usage.Record) error {
 	r.done <- struct{}{}
 	return nil
 }
-func (r *recordingUsage) MonthlySpend(_ context.Context, _ string) (float64, error) { return 0, nil }
-func (r *recordingUsage) DailyRequests(_ context.Context, _ string) (int, error)    { return 0, nil }
+func (r *recordingUsage) MonthlySpend(_ context.Context, _ string) (money.USD, error) {
+	return money.Zero, nil
+}
+func (r *recordingUsage) DailyRequests(_ context.Context, _ string) (int, error) { return 0, nil }
 func (r *recordingUsage) Summary(_ context.Context, _, _ string) (*usage.Summary, error) {
 	return nil, nil //nolint:nilnil // unused
 }

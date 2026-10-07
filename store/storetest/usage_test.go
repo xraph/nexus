@@ -62,6 +62,9 @@ func TestSummaryOfOnlyUnpricedRecords(t *testing.T) {
 		if sum == nil {
 			t.Fatalf("summary is nil")
 		}
+		if !sum.TotalCostUSD.IsZero() {
+			t.Fatalf("summary cost = %s, want 0", sum.TotalCostUSD)
+		}
 	})
 }
 
@@ -78,8 +81,8 @@ func TestMonthlySpendWithNothingPriced(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: monthly spend: %v", name, err)
 			}
-			if got != 0 {
-				t.Fatalf("%s: monthly spend = %v, want 0", name, got)
+			if !got.IsZero() {
+				t.Fatalf("%s: monthly spend = %s, want 0", name, got)
 			}
 		}
 	})

@@ -47,15 +47,7 @@ func formatTimeAgo(t time.Time) string {
 }
 
 // formatCost formats a USD cost value.
-func formatCost(costUSD float64) string {
-	if costUSD == 0 {
-		return "$0.00"
-	}
-	if costUSD < 0.01 {
-		return fmt.Sprintf("$%.4f", costUSD)
-	}
-	return fmt.Sprintf("$%.2f", costUSD)
-}
+func formatCost(cost money.USD) string { return "$" + cost.String() }
 
 // formatDuration formats a duration for display.
 func formatDuration(d time.Duration) string {
@@ -130,7 +122,7 @@ func fieldRow(label string, value string) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 100, Col: 63}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 92, Col: 63}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -143,7 +135,7 @@ func fieldRow(label string, value string) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(value)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 101, Col: 34}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 93, Col: 34}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -186,7 +178,7 @@ func codeBlock(content string) templ.Component {
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(content)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 107, Col: 114}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 99, Col: 114}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {
@@ -229,7 +221,7 @@ func credentialField(value string) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(value)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 112, Col: 100}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 104, Col: 100}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {

@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -16,6 +15,7 @@ import (
 	"github.com/xraph/grove/drivers/mongodriver"
 
 	"github.com/xraph/nexus/key"
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/store"
 	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/usage"
@@ -295,156 +295,112 @@ func (s *usageStore) Insert(ctx context.Context, rec *usage.Record) error {
 	return nil
 }
 
-func (s *usageStore) MonthlySpend(ctx context.Context, tenantID string) (float64, error) {
-	now := time.Now().UTC()
-	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-
-	pipeline := bson.A{
-		bson.M{"$match": bson.M{
-			"tenant_id":  tenantID,
-			"created_at": bson.M{"$gte": startOfMonth},
-		}},
-		bson.M{"$group": bson.M{
-			"_id":   nil,
-			"total": bson.M{"$sum": "$cost_usd"},
-		}},
+func tenantMatch(tenantID string, since time.Time) bson.M {
+	m := bson.M{"created_at": bson.M{"$gte": since}}
+	if tenantID != "" {
+		m["tenant_id"] = tenantID
 	}
+	return m
+}
 
-	cursor, err := s.mdb.Collection(colUsage).Aggregate(ctx, pipeline)
+func (s *usageStore) MonthlySpend(ctx context.Context, tenantID string) (money.USD, error) {
+	since, err := usage.PeriodStart("month", time.Now())
 	if err != nil {
-		return 0, fmt.Errorf("nexus/mongo: monthly spend: %w", err)
+		return money.Zero, err
+	}
+	cursor, err := s.mdb.Collection(colUsage).Aggregate(ctx, bson.A{
+		bson.M{"$match": tenantMatch(tenantID, since)},
+		bson.M{"$group": bson.M{"_id": nil, "total": bson.M{"$sum": "$cost_usd"}}},
+	})
+	if err != nil {
+		return money.Zero, fmt.Errorf("nexus/mongo: monthly spend: %w", err)
 	}
 	defer func() { _ = cursor.Close(ctx) }()
-
 	var result struct {
 		Total any `bson:"total"`
 	}
 	if cursor.Next(ctx) {
-		if err := cursor.Decode(&result); err != nil {
-			return 0, fmt.Errorf("nexus/mongo: monthly spend decode: %w", err)
+		if err = cursor.Decode(&result); err != nil {
+			return money.Zero, fmt.Errorf("nexus/mongo: monthly spend decode: %w", err)
 		}
 	}
-	return floatOf(result.Total)
-}
-
-// floatOf converts an aggregated amount to a float. It is temporary: the
-// exact-money aggregates replace the float totals that need it. Nil is 0.
-func floatOf(v any) (float64, error) {
-	u, err := usdFromBSON(v)
+	u, err := usdFromBSON(result.Total)
 	if err != nil || u == nil {
-		return 0, err
+		return money.Zero, err
 	}
-	return strconv.ParseFloat(u.String(), 64)
+	return *u, nil
 }
 
 func (s *usageStore) DailyRequests(ctx context.Context, tenantID string) (int, error) {
-	now := time.Now().UTC()
-	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-
-	pipeline := bson.A{
-		bson.M{"$match": bson.M{
-			"tenant_id":  tenantID,
-			"created_at": bson.M{"$gte": startOfDay},
-		}},
-		bson.M{"$count": "count"},
+	since, err := usage.PeriodStart("day", time.Now())
+	if err != nil {
+		return 0, err
 	}
-
-	cursor, err := s.mdb.Collection(colUsage).Aggregate(ctx, pipeline)
+	n, err := s.mdb.Collection(colUsage).CountDocuments(ctx, tenantMatch(tenantID, since))
 	if err != nil {
 		return 0, fmt.Errorf("nexus/mongo: daily requests: %w", err)
 	}
-	defer func() { _ = cursor.Close(ctx) }()
-
-	var result struct {
-		Count int `bson:"count"`
-	}
-	if cursor.Next(ctx) {
-		if err := cursor.Decode(&result); err != nil {
-			return 0, fmt.Errorf("nexus/mongo: daily requests decode: %w", err)
-		}
-	}
-	return result.Count, nil
+	return int(n), nil
 }
 
 func (s *usageStore) Summary(ctx context.Context, tenantID, period string) (*usage.Summary, error) {
-	now := time.Now().UTC()
-	var startTime time.Time
-	switch period {
-	case "day":
-		startTime = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	case "week":
-		startTime = now.AddDate(0, 0, -7)
-	default:
-		startTime = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	since, err := usage.PeriodStart(period, time.Now())
+	if err != nil {
+		return nil, err
 	}
-
-	pipeline := bson.A{
-		bson.M{"$match": bson.M{
-			"tenant_id":  tenantID,
-			"created_at": bson.M{"$gte": startTime},
-		}},
+	cursor, err := s.mdb.Collection(colUsage).Aggregate(ctx, bson.A{
+		bson.M{"$match": tenantMatch(tenantID, since)},
 		bson.M{"$group": bson.M{
-			"_id":      bson.M{"provider": "$provider", "model": "$model"},
+			"_id": bson.M{
+				"provider": "$provider", "model": "$model", "outcome": "$outcome",
+				"pricing_status": "$pricing_status", "cached": "$cached",
+			},
 			"requests": bson.M{"$sum": 1},
 			"tokens":   bson.M{"$sum": "$total_tokens"},
+			"latency":  bson.M{"$sum": "$latency_ns"},
 			"cost":     bson.M{"$sum": "$cost_usd"},
 		}},
-	}
-
-	cursor, err := s.mdb.Collection(colUsage).Aggregate(ctx, pipeline)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("nexus/mongo: summary query: %w", err)
+		return nil, fmt.Errorf("nexus/mongo: summary: %w", err)
 	}
 	defer func() { _ = cursor.Close(ctx) }()
-
-	summary := &usage.Summary{
-		TenantID:   tenantID,
-		Period:     period,
-		ByProvider: make(map[string]*usage.ProviderUsage),
-		ByModel:    make(map[string]*usage.ModelUsage),
-	}
-
+	var out []usage.SummaryRow
 	for cursor.Next(ctx) {
-		var row struct {
+		var g struct {
 			ID struct {
-				Provider string `bson:"provider"`
-				Model    string `bson:"model"`
+				Provider      string `bson:"provider"`
+				Model         string `bson:"model"`
+				Outcome       string `bson:"outcome"`
+				PricingStatus string `bson:"pricing_status"`
+				Cached        bool   `bson:"cached"`
 			} `bson:"_id"`
-			Requests int `bson:"requests"`
-			Tokens   int `bson:"tokens"`
-			Cost     any `bson:"cost"`
+			Requests int   `bson:"requests"`
+			Tokens   int   `bson:"tokens"`
+			Latency  int64 `bson:"latency"`
+			Cost     any   `bson:"cost"`
 		}
-		if err := cursor.Decode(&row); err != nil {
+		if err := cursor.Decode(&g); err != nil {
 			return nil, fmt.Errorf("nexus/mongo: summary decode: %w", err)
 		}
-		cost, err := floatOf(row.Cost)
+		r := usage.SummaryRow{
+			Provider: g.ID.Provider, Model: g.ID.Model, Outcome: usage.Outcome(g.ID.Outcome),
+			PricingStatus: usage.PricingStatus(g.ID.PricingStatus), Cached: g.ID.Cached,
+			Requests: g.Requests, Tokens: g.Tokens, LatencyNs: g.Latency,
+		}
+		c, err := usdFromBSON(g.Cost)
 		if err != nil {
-			return nil, fmt.Errorf("nexus/mongo: summary cost: %w", err)
+			return nil, err
 		}
-
-		prov := row.ID.Provider
-		mdl := row.ID.Model
-
-		summary.TotalRequests += row.Requests
-		summary.TotalTokens += row.Tokens
-		summary.TotalCostUSD += cost
-
-		if _, ok := summary.ByProvider[prov]; !ok {
-			summary.ByProvider[prov] = &usage.ProviderUsage{}
+		if c != nil {
+			r.Cost = *c
 		}
-		summary.ByProvider[prov].Requests += row.Requests
-		summary.ByProvider[prov].Tokens += row.Tokens
-		summary.ByProvider[prov].CostUSD += cost
-
-		if _, ok := summary.ByModel[mdl]; !ok {
-			summary.ByModel[mdl] = &usage.ModelUsage{}
-		}
-		summary.ByModel[mdl].Requests += row.Requests
-		summary.ByModel[mdl].Tokens += row.Tokens
-		summary.ByModel[mdl].CostUSD += cost
+		out = append(out, r)
 	}
-
-	return summary, cursor.Err()
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
+	return usage.BuildSummary(tenantID, period, out), nil
 }
 
 func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) ([]*usage.Record, int, error) {

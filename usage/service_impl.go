@@ -1,6 +1,10 @@
 package usage
 
-import "context"
+import (
+	"context"
+
+	"github.com/xraph/nexus/money"
+)
 
 type service struct {
 	store Store
@@ -15,7 +19,7 @@ func (s *service) Record(ctx context.Context, rec *Record) error {
 	return s.store.Insert(ctx, rec)
 }
 
-func (s *service) MonthlySpend(ctx context.Context, tenantID string) (float64, error) {
+func (s *service) MonthlySpend(ctx context.Context, tenantID string) (money.USD, error) {
 	return s.store.MonthlySpend(ctx, tenantID)
 }
 

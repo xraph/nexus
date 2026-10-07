@@ -40,15 +40,7 @@ func formatTimeAgo(t time.Time) string {
 }
 
 // formatCost formats a USD cost value.
-func formatCost(costUSD float64) string {
-	if costUSD == 0 {
-		return "$0.00"
-	}
-	if costUSD < 0.01 {
-		return fmt.Sprintf("$%.4f", costUSD)
-	}
-	return fmt.Sprintf("$%.2f", costUSD)
-}
+func formatCost(cost money.USD) string { return "$" + cost.String() }
 
 // formatDuration formats a duration for display.
 func formatDuration(d time.Duration) string {

@@ -1,7 +1,10 @@
 package api
 
 import (
+	"errors"
 	"net/http"
+
+	"github.com/xraph/nexus/usage"
 )
 
 func (a *API) handleGetUsage(w http.ResponseWriter, r *http.Request) {
@@ -18,6 +21,10 @@ func (a *API) handleGetUsage(w http.ResponseWriter, r *http.Request) {
 
 	if tenantID != "" {
 		summary, err := a.gw.Usage().Summary(r.Context(), tenantID, period)
+		if errors.Is(err, usage.ErrInvalidPeriod) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return

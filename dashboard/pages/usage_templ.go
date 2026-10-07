@@ -13,15 +13,15 @@ import (
 	"github.com/xraph/forgeui/components/button"
 	"github.com/xraph/forgeui/components/card"
 	"github.com/xraph/forgeui/components/table"
-
 	"github.com/xraph/nexus/dashboard/components"
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/usage"
 )
 
 // UsagePageData holds data for the usage analytics page.
 type UsagePageData struct {
 	Summary      *usage.Summary
-	MonthlySpend float64
+	MonthlySpend money.USD
 	DailyReqs    int
 	Period       string // "day", "week", "month"
 	TenantID     string
@@ -388,7 +388,7 @@ func UsagePage(data UsagePageData) templ.Component {
 											var templ_7745c5c3_Var17 string
 											templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(name)
 											if templ_7745c5c3_Err != nil {
-												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 69, Col: 43}
+												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 70, Col: 43}
 											}
 											_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 											if templ_7745c5c3_Err != nil {
@@ -423,7 +423,7 @@ func UsagePage(data UsagePageData) templ.Component {
 											var templ_7745c5c3_Var19 string
 											templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(pu.Requests))
 											if templ_7745c5c3_Err != nil {
-												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 72, Col: 38}
+												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 73, Col: 38}
 											}
 											_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 											if templ_7745c5c3_Err != nil {
@@ -454,7 +454,7 @@ func UsagePage(data UsagePageData) templ.Component {
 											var templ_7745c5c3_Var21 string
 											templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(pu.Tokens))
 											if templ_7745c5c3_Err != nil {
-												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 75, Col: 36}
+												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 76, Col: 36}
 											}
 											_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 											if templ_7745c5c3_Err != nil {
@@ -485,7 +485,7 @@ func UsagePage(data UsagePageData) templ.Component {
 											var templ_7745c5c3_Var23 string
 											templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(formatCost(pu.CostUSD))
 											if templ_7745c5c3_Err != nil {
-												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 78, Col: 35}
+												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 79, Col: 35}
 											}
 											_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 											if templ_7745c5c3_Err != nil {
@@ -824,7 +824,7 @@ func UsagePage(data UsagePageData) templ.Component {
 											var templ_7745c5c3_Var39 string
 											templ_7745c5c3_Var39, templ_7745c5c3_Err = templ.JoinStringErrs(name)
 											if templ_7745c5c3_Err != nil {
-												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 112, Col: 76}
+												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 113, Col: 76}
 											}
 											_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var39))
 											if templ_7745c5c3_Err != nil {
@@ -859,7 +859,7 @@ func UsagePage(data UsagePageData) templ.Component {
 											var templ_7745c5c3_Var41 string
 											templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(mu.Requests))
 											if templ_7745c5c3_Err != nil {
-												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 115, Col: 38}
+												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 116, Col: 38}
 											}
 											_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var41))
 											if templ_7745c5c3_Err != nil {
@@ -890,7 +890,7 @@ func UsagePage(data UsagePageData) templ.Component {
 											var templ_7745c5c3_Var43 string
 											templ_7745c5c3_Var43, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(mu.Tokens))
 											if templ_7745c5c3_Err != nil {
-												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 118, Col: 36}
+												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 119, Col: 36}
 											}
 											_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var43))
 											if templ_7745c5c3_Err != nil {
@@ -921,7 +921,7 @@ func UsagePage(data UsagePageData) templ.Component {
 											var templ_7745c5c3_Var45 string
 											templ_7745c5c3_Var45, templ_7745c5c3_Err = templ.JoinStringErrs(formatCost(mu.CostUSD))
 											if templ_7745c5c3_Err != nil {
-												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 121, Col: 35}
+												return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 122, Col: 35}
 											}
 											_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var45))
 											if templ_7745c5c3_Err != nil {
@@ -1052,7 +1052,7 @@ func periodButton(label string, period string, activePeriod string) templ.Compon
 				var templ_7745c5c3_Var50 string
 				templ_7745c5c3_Var50, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 145, Col: 10}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 146, Col: 10}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var50))
 				if templ_7745c5c3_Err != nil {
@@ -1082,7 +1082,7 @@ func periodButton(label string, period string, activePeriod string) templ.Compon
 				var templ_7745c5c3_Var52 string
 				templ_7745c5c3_Var52, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 158, Col: 10}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 159, Col: 10}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var52))
 				if templ_7745c5c3_Err != nil {

@@ -7,6 +7,7 @@ import (
 	nexus "github.com/xraph/nexus"
 	"github.com/xraph/nexus/dashboard/components"
 	"github.com/xraph/nexus/key"
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/usage"
@@ -93,13 +94,13 @@ func fetchUsageSummary(ctx context.Context, gw *nexus.Gateway, tenantID, period 
 	return gw.Usage().Summary(ctx, tenantID, period)
 }
 
-func fetchMonthlySpend(ctx context.Context, gw *nexus.Gateway, tenantID string) float64 {
+func fetchMonthlySpend(ctx context.Context, gw *nexus.Gateway, tenantID string) money.USD {
 	if gw == nil || gw.Usage() == nil {
-		return 0
+		return money.Zero
 	}
 	spend, err := gw.Usage().MonthlySpend(ctx, tenantID)
 	if err != nil {
-		return 0
+		return money.Zero
 	}
 	return spend
 }

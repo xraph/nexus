@@ -37,29 +37,37 @@ type Record struct {
 
 // Summary aggregates usage over a period.
 type Summary struct {
-	TenantID      string                    `json:"tenant_id"`
-	Period        string                    `json:"period"` // "day", "week", "month"
-	TotalRequests int                       `json:"total_requests"`
-	TotalTokens   int                       `json:"total_tokens"`
-	TotalCostUSD  float64                   `json:"total_cost_usd"`
-	CacheHitRate  float64                   `json:"cache_hit_rate"`
-	AvgLatency    time.Duration             `json:"avg_latency"`
-	ByProvider    map[string]*ProviderUsage `json:"by_provider"`
-	ByModel       map[string]*ModelUsage    `json:"by_model"`
+	// TenantID is "" when the summary covers every tenant, unattributed
+	// requests included.
+	TenantID      string `json:"tenant_id"`
+	Period        string `json:"period"`
+	TotalRequests int    `json:"total_requests"`
+	TotalTokens   int    `json:"total_tokens"`
+	// TotalCostUSD sums priced requests only. UnpricedRequests counts the
+	// requests it leaves out because their cost is unknown.
+	TotalCostUSD     money.USD                 `json:"total_cost_usd"`
+	UnpricedRequests int                       `json:"unpriced_requests"`
+	CacheHitRate     float64                   `json:"cache_hit_rate"` // share of requests served from cache, 0 to 1
+	AvgLatency       time.Duration             `json:"avg_latency"`
+	ByProvider       map[string]*ProviderUsage `json:"by_provider"`
+	ByModel          map[string]*ModelUsage    `json:"by_model"`
+	ByOutcome        map[Outcome]int           `json:"by_outcome"`
 }
 
 // ProviderUsage is usage aggregated by provider.
 type ProviderUsage struct {
-	Requests int     `json:"requests"`
-	Tokens   int     `json:"tokens"`
-	CostUSD  float64 `json:"cost_usd"`
+	Requests int       `json:"requests"`
+	Tokens   int       `json:"tokens"`
+	CostUSD  money.USD `json:"cost_usd"`
+	Unpriced int       `json:"unpriced"`
 }
 
 // ModelUsage is usage aggregated by model.
 type ModelUsage struct {
-	Requests int     `json:"requests"`
-	Tokens   int     `json:"tokens"`
-	CostUSD  float64 `json:"cost_usd"`
+	Requests int       `json:"requests"`
+	Tokens   int       `json:"tokens"`
+	CostUSD  money.USD `json:"cost_usd"`
+	Unpriced int       `json:"unpriced"`
 }
 
 // QueryOptions configures usage queries.
@@ -73,19 +81,23 @@ type QueryOptions struct {
 	Offset    int       `json:"offset,omitempty"`
 }
 
-// Service tracks and queries usage data.
+// Service tracks and queries usage data. Wherever a method takes a tenant
+// id, "" means every tenant, including requests attributed to none.
 type Service interface {
 	Record(ctx context.Context, rec *Record) error
-	MonthlySpend(ctx context.Context, tenantID string) (float64, error)
+	MonthlySpend(ctx context.Context, tenantID string) (money.USD, error)
 	DailyRequests(ctx context.Context, tenantID string) (int, error)
 	Summary(ctx context.Context, tenantID string, period string) (*Summary, error)
 	Query(ctx context.Context, opts *QueryOptions) ([]*Record, int, error)
 }
 
-// Store is the persistence interface for usage records.
+// Store is the persistence interface for usage records. Wherever a method
+// takes a tenant id, "" means every tenant, including requests attributed
+// to none. Summary returns ErrInvalidPeriod for a period other than day,
+// week or month.
 type Store interface {
 	Insert(ctx context.Context, rec *Record) error
-	MonthlySpend(ctx context.Context, tenantID string) (float64, error)
+	MonthlySpend(ctx context.Context, tenantID string) (money.USD, error)
 	DailyRequests(ctx context.Context, tenantID string) (int, error)
 	Summary(ctx context.Context, tenantID string, period string) (*Summary, error)
 	Query(ctx context.Context, opts *QueryOptions) ([]*Record, int, error)

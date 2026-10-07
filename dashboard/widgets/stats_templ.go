@@ -10,15 +10,15 @@ import (
 
 	"github.com/a-h/templ"
 	templruntime "github.com/a-h/templ/runtime"
-
 	"github.com/xraph/nexus/dashboard/components"
+	"github.com/xraph/nexus/money"
 )
 
 // StatsData holds aggregate stats for the stats widget.
 type StatsData struct {
 	TenantCount   int
 	ActiveKeys    int
-	MonthlySpend  float64
+	MonthlySpend  money.USD
 	TotalRequests int
 }
 
@@ -72,14 +72,6 @@ func StatsWidget(data StatsData) templ.Component {
 	})
 }
 
-func formatCost(costUSD float64) string {
-	if costUSD == 0 {
-		return "$0.00"
-	}
-	if costUSD < 0.01 {
-		return "$" + strconv.FormatFloat(costUSD, 'f', 4, 64)
-	}
-	return "$" + strconv.FormatFloat(costUSD, 'f', 2, 64)
-}
+func formatCost(cost money.USD) string { return "$" + cost.String() }
 
 var _ = templruntime.GeneratedTemplate
