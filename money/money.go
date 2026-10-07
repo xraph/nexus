@@ -24,6 +24,9 @@ var ErrInvalid = errors.New("money: invalid amount")
 // exponents, NaN, Inf, a leading plus sign, separators and spaces, so an
 // amount someone typed is read the way they typed it.
 func Parse(s string) (USD, error) {
+	if len(s) > 80 {
+		return Zero, fmt.Errorf("%w: %q", ErrInvalid, s)
+	}
 	if !plainDecimal(s) {
 		return Zero, fmt.Errorf("%w: %q", ErrInvalid, s)
 	}
@@ -34,6 +37,12 @@ func Parse(s string) (USD, error) {
 // values read back from a database or an old JSON document that prints
 // decimals that way. The result is still exact.
 func ParseLenient(s string) (USD, error) {
+	if len(s) > 80 {
+		return Zero, fmt.Errorf("%w: %q", ErrInvalid, s)
+	}
+	if err := checkExponentBound(s); err != nil {
+		return Zero, err
+	}
 	return parse(s)
 }
 
@@ -73,6 +82,22 @@ func plainDecimal(s string) bool {
 		}
 	}
 	return digits > 0
+}
+
+func checkExponentBound(s string) error {
+	for i, c := range s {
+		if c == 'e' || c == 'E' {
+			expStr := s[i+1:]
+			var expVal int64
+			if _, err := fmt.Sscanf(expStr, "%d", &expVal); err == nil {
+				if expVal > 40 || expVal < -40 {
+					return fmt.Errorf("%w: %q", ErrInvalid, s)
+				}
+			}
+			break
+		}
+	}
+	return nil
 }
 
 // Sum adds amounts exactly.

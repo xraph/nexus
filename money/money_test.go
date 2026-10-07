@@ -3,6 +3,7 @@ package money_test
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/xraph/nexus/money"
@@ -87,6 +88,22 @@ func TestParseLenientReadsExponentsExactly(t *testing.T) {
 	}
 }
 
+func TestParseLenientRefusesUnboundedExponents(t *testing.T) {
+	if _, err := money.ParseLenient("1e999999999"); !errors.Is(err, money.ErrInvalid) {
+		t.Errorf("ParseLenient(1e999999999) err = %v, want ErrInvalid", err)
+	}
+	if _, err := money.ParseLenient("1e-999999999"); !errors.Is(err, money.ErrInvalid) {
+		t.Errorf("ParseLenient(1e-999999999) err = %v, want ErrInvalid", err)
+	}
+}
+
+func TestParseRefusesLongStrings(t *testing.T) {
+	longStr := "1" + strings.Repeat("1", 80)
+	if _, err := money.Parse(longStr); !errors.Is(err, money.ErrInvalid) {
+		t.Errorf("Parse(81-char string) err = %v, want ErrInvalid", err)
+	}
+}
+
 func TestJSON(t *testing.T) {
 	type doc struct {
 		Price money.USD  `json:"price"`
@@ -119,5 +136,21 @@ func TestJSON(t *testing.T) {
 	d.Price = money.MustParse("3")
 	if err := json.Unmarshal([]byte(`{"price":null}`), &d); err != nil || d.Price.String() != "3" {
 		t.Fatalf("null = %s, %v", d.Price, err)
+	}
+
+	// Unbounded exponents in bare numbers are rejected.
+	if err := json.Unmarshal([]byte(`{"price":1e999999999}`), &d); err == nil {
+		t.Fatalf("unbounded exponent in bare number should be refused")
+	}
+
+	// High-precision floats come back exactly from their text representation.
+	if err := json.Unmarshal([]byte(`{"price":0.30000000000000004}`), &d); err != nil || d.Price.String() != "0.30000000000000004" {
+		t.Fatalf("0.30000000000000004 = %s, %v", d.Price, err)
+	}
+	if err := json.Unmarshal([]byte(`{"price":-0.1}`), &d); err != nil || d.Price.String() != "-0.1" {
+		t.Fatalf("-0.1 = %s, %v", d.Price, err)
+	}
+	if err := json.Unmarshal([]byte(`{"price":1234567890.1234567891}`), &d); err != nil || d.Price.String() != "1234567890.1234567891" {
+		t.Fatalf("20-digit value = %s, %v", d.Price, err)
 	}
 }
