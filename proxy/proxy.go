@@ -24,6 +24,7 @@ import (
 	nexus "github.com/xraph/nexus"
 	"github.com/xraph/nexus/auth"
 	"github.com/xraph/nexus/httpstream"
+	"github.com/xraph/nexus/key"
 )
 
 // Proxy is an OpenAI-compatible HTTP server.
@@ -168,7 +169,7 @@ func (p *Proxy) registerRoutes() {
 		// RequireScope fails closed (an anonymous request is a 401), so it
 		// is added only when keys are required: an open gateway lists its
 		// models to anyone.
-		models = auth.RequireScope("models", p.onAuthError)
+		models = auth.RequireScope(key.ScopeModels, p.onAuthError)
 	}
 
 	// Completions and embeddings: the pipeline checks the scope.

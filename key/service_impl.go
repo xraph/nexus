@@ -48,6 +48,11 @@ func (s *service) Create(ctx context.Context, input *CreateInput) (*APIKey, stri
 	if input.ExpiresAt != nil && !input.ExpiresAt.After(s.now()) {
 		return nil, "", fmt.Errorf("%w: expires_at is in the past", ErrInvalid)
 	}
+	for _, sc := range input.Scopes {
+		if !KnownScope(sc) {
+			return nil, "", fmt.Errorf("%w: unknown scope %q (want completions, embeddings, models or admin)", ErrInvalid, sc)
+		}
+	}
 	if s.tenants != nil {
 		if _, err := s.tenants.FindByID(ctx, tid.String()); err != nil {
 			return nil, "", fmt.Errorf("nexus: key for tenant %s: %w", tid, err)
@@ -60,7 +65,7 @@ func (s *service) Create(ctx context.Context, input *CreateInput) (*APIKey, stri
 	rawKey := "nxs_" + hex.EncodeToString(rawBytes)
 	scopes := input.Scopes
 	if len(scopes) == 0 {
-		scopes = []string{"completions", "embeddings", "models"}
+		scopes = []string{ScopeCompletions, ScopeEmbeddings, ScopeModels}
 	}
 	k := &APIKey{
 		ID:        id.NewKeyID(),

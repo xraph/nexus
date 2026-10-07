@@ -328,3 +328,12 @@ func TestTheBudgetOvershootIsBoundedByTheRequestsInFlight(t *testing.T) {
 	}
 	t.Logf("served %d of %d parallel requests on a $0.01 budget", served, inFlight)
 }
+
+func TestAnInProcessKeyIDWithoutATenantIsRefused(t *testing.T) {
+	gw, _, k := enforced(t, store.NewMemory(), tenant.Quota{})
+	_, err := gw.Engine().Complete(context.Background(), &provider.CompletionRequest{Model: "gpt-4o", KeyID: k.ID.String(),
+		Messages: []provider.Message{{Role: "user", Content: "hi"}}})
+	if refusedCode(err) != pipeline.CodeInvalidRequest {
+		t.Fatalf("key id with no tenant = %v; want invalid_request", err)
+	}
+}

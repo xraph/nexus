@@ -452,3 +452,53 @@ func TestARefusalBeforeTheDailyChargeDoesNotUseUpTheDay(t *testing.T) {
 		t.Fatalf("daily count after three refusals = %d, %v; want 0", d.Count, err)
 	}
 }
+
+func TestANegativeMaxTokensIsRefused(t *testing.T) {
+	mw := middlewares.NewQuota(middlewares.QuotaConfig{Usage: &counter{}, Limiter: ratelimit.NewMemory()})
+	for name, tn := range map[string]*tenant.Tenant{
+		"under a cap": quotaTenant(tenant.Quota{MaxTokensPerReq: 500}),
+		"no cap":      quotaTenant(tenant.Quota{}),
+	} {
+		if err := runQuota(t, mw, tn, &provider.CompletionRequest{MaxTokens: -1}); code(err) != pipeline.CodeInvalidRequest {
+			t.Fatalf("%s: max_tokens -1 = %v; want invalid_request", name, err)
+		}
+	}
+	next := func(context.Context) (*pipeline.Response, error) { return &pipeline.Response{}, nil }
+	req := &pipeline.Request{Type: pipeline.RequestCompletion, Completion: &provider.CompletionRequest{MaxTokens: -5}, State: map[string]any{}}
+	if _, err := mw.Process(context.Background(), req, next); code(err) != pipeline.CodeInvalidRequest {
+		t.Fatalf("unattributed max_tokens -5 = %v; want invalid_request", err)
+	}
+}
+
+// hungLimiter never answers until its context ends, like a Redis that
+// accepts the connection and goes quiet.
+type hungLimiter struct{}
+
+func (hungLimiter) Allow(ctx context.Context, _ string, _, _ int64, _ time.Duration) (ratelimit.Decision, error) {
+	<-ctx.Done()
+	return ratelimit.Decision{}, ctx.Err()
+}
+func (hungLimiter) Kind() string { return "redis" }
+
+func TestAHungLimiterFailsOpenWithinItsBound(t *testing.T) {
+	mw := middlewares.NewQuota(middlewares.QuotaConfig{Usage: &counter{}, Limiter: hungLimiter{}})
+	tn := quotaTenant(tenant.Quota{RPM: 10, DailyRequests: 10})
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- runQuota(t, mw, tn, &provider.CompletionRequest{}) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("hung limiter = %v; want the request through", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the request was still waiting on the limiter after 3s")
+	}
+	// Two pre-request checks (RPM, then the daily charge), 250ms each at most.
+	if took := time.Since(start); took > 1500*time.Millisecond {
+		t.Fatalf("took %v; each check is bounded at 250ms", took)
+	}
+	if got := mw.LimiterErrors(); got != 2 {
+		t.Fatalf("limiter errors = %d, want 2", got)
+	}
+}

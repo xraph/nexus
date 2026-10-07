@@ -14,6 +14,7 @@ import (
 	nexus "github.com/xraph/nexus"
 	"github.com/xraph/nexus/auth"
 	"github.com/xraph/nexus/httpstream"
+	"github.com/xraph/nexus/key"
 )
 
 // API wires all HTTP handlers for the Nexus gateway.
@@ -125,13 +126,13 @@ func (a *API) registerRoutes() {
 	// the /v1 routes only.
 	adminKeys := auth.KeyAuth(auth.KeyAuthOptions{Keys: keys, Tenants: a.gw.Tenants(), Required: true, OnError: a.onAuthError})
 	adminAuth := func(h http.Handler) http.Handler { return rid(adminKeys(h)) }
-	admin := auth.RequireScope("admin", a.onAuthError)
+	admin := auth.RequireScope(key.ScopeAdmin, a.onAuthError)
 	models := func(h http.Handler) http.Handler { return h }
 	if required {
 		// RequireScope fails closed (an anonymous request is a 401), so it
 		// is added only when keys are required: an open gateway lists its
 		// models to anyone.
-		models = auth.RequireScope("models", a.onAuthError)
+		models = auth.RequireScope(key.ScopeModels, a.onAuthError)
 	}
 
 	// Completion and embedding routes: the pipeline checks the scope.

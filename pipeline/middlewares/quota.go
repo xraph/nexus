@@ -66,7 +66,10 @@ type QuotaMiddleware struct {
 	exceeded      map[string]string // tenant -> month already reported
 }
 
-// NewQuota returns the quota stage.
+// NewQuota returns the quota stage. It enforces nothing per tenant on its
+// own: it reads the tenant the access stage (NewAccess) published, so a
+// custom pipeline must put access ahead of it. Without access, only
+// GlobalRPM applies.
 func NewQuota(cfg QuotaConfig) *QuotaMiddleware {
 	if cfg.Usage == nil {
 		panic("middlewares: NewQuota needs QuotaConfig.Usage")
@@ -87,6 +90,9 @@ func (*QuotaMiddleware) Priority() int { return 50 }
 func (m *QuotaMiddleware) LimiterErrors() int64 { return m.limiterErrors.Load() }
 
 func (m *QuotaMiddleware) Process(ctx context.Context, req *pipeline.Request, next pipeline.NextFunc) (*pipeline.Response, error) {
+	if req.Completion != nil && req.Completion.MaxTokens < 0 {
+		return nil, &pipeline.RefusalError{Code: pipeline.CodeInvalidRequest, Status: 400, Message: "max_tokens must not be negative"}
+	}
 	if m.cfg.GlobalRPM > 0 {
 		if r := m.allow(ctx, "global:rpm", 1, int64(m.cfg.GlobalRPM), "requests a minute across the gateway"); r != nil {
 			return nil, r
@@ -219,9 +225,17 @@ func (m *QuotaMiddleware) try(ctx context.Context, key string, n, limit int64, w
 	return d, true
 }
 
+// preCheckTimeout bounds each limiter call made before a request runs. A
+// hung limiter (a Redis that accepts the connection and never answers)
+// would otherwise hold every request for the client's read timeout. A
+// timeout fails open and is counted, like any other limiter failure.
+const preCheckTimeout = 250 * time.Millisecond
+
 // allow charges n and refuses when the window was already at limit. A
 // limiter failure lets the request through and is counted.
 func (m *QuotaMiddleware) allow(ctx context.Context, key string, n, limit int64, what string) *pipeline.RefusalError {
+	ctx, cancel := context.WithTimeout(ctx, preCheckTimeout)
+	defer cancel()
 	d, ok := m.try(ctx, key, n, limit, time.Minute)
 	if !ok || d.Allowed {
 		return nil
@@ -235,6 +249,8 @@ func (m *QuotaMiddleware) allow(ctx context.Context, key string, n, limit int64,
 // calendar day and RetryAfter runs to the next midnight. A limiter failure
 // lets the request through and is counted, as RPM does.
 func (m *QuotaMiddleware) chargeDay(ctx context.Context, tid string, limit int64) *pipeline.RefusalError {
+	ctx, cancel := context.WithTimeout(ctx, preCheckTimeout)
+	defer cancel()
 	d, ok := m.try(ctx, "daily:"+tid, 1, limit, 24*time.Hour)
 	if !ok || d.Allowed {
 		return nil

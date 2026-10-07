@@ -25,7 +25,8 @@ type KeyGetter interface {
 // AccessMiddleware refuses a request whose tenant is not active or whose key
 // lacks the scope the request needs. It runs inside identity, so the tenant
 // and key are in the context, and publishes the tenant for the quota stage.
-// A request that names no tenant is not checked.
+// A request that names no tenant is not checked, unless it names a key, which
+// is refused invalid_request.
 type AccessMiddleware struct {
 	tenants TenantGetter
 	keys    KeyGetter
@@ -54,6 +55,13 @@ func refuse(code string, status int, msg string) *pipeline.RefusalError {
 func (m *AccessMiddleware) Process(ctx context.Context, req *pipeline.Request, next pipeline.NextFunc) (*pipeline.Response, error) {
 	tenantID := pipeline.TenantID(ctx)
 	if tenantID == "" {
+		// A key belongs to a tenant. A request that names a key and no
+		// tenant would skip every check below, so it is refused.
+		if pipeline.KeyID(ctx) != "" {
+			r := refuse(pipeline.CodeInvalidRequest, 400, "a key id needs its tenant id")
+			r.Unattributed = true
+			return nil, r
+		}
 		return next(ctx)
 	}
 	t, err := m.tenants.Get(ctx, tenantID)
@@ -94,9 +102,9 @@ func (m *AccessMiddleware) Process(ctx context.Context, req *pipeline.Request, n
 		scopes, edge = k.Scopes, true
 	}
 	if edge {
-		need := "completions"
+		need := key.ScopeCompletions
 		if req.Type == pipeline.RequestEmbedding {
-			need = "embeddings"
+			need = key.ScopeEmbeddings
 		}
 		if !slices.Contains(scopes, need) {
 			return nil, refuse(pipeline.CodeForbidden, 403, "the key lacks the "+need+" scope")

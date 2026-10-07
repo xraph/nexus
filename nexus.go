@@ -184,6 +184,10 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 	}
 
 	gw.initialized = true
+	if !gw.config.EnableUsage {
+		gw.logger.Warn("nexus: usage recording is off: daily and monthly budget limits will not apply",
+			"enable_usage", false)
+	}
 	gw.logger.Info("nexus gateway initialized",
 		"providers", gw.providers.Count(),
 		"extensions", gw.extensions.Count(),

@@ -331,3 +331,23 @@ func TestAMalformedKeyNeverReachesTheStore(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateRefusesAnUnknownScope(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	tn, err := tenant.NewService(s.Tenants()).Create(ctx, &tenant.CreateInput{Name: "A", Slug: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := key.NewService(s.Keys(), key.WithTenants(s.Tenants()))
+	for _, bad := range [][]string{{"completion"}, {key.ScopeCompletions, "Admin"}, {""}} {
+		if _, _, cerr := svc.Create(ctx, &key.CreateInput{TenantID: tn.ID.String(), Name: "k", Scopes: bad}); !errors.Is(cerr, key.ErrInvalid) {
+			t.Fatalf("scopes %q = %v; want key.ErrInvalid", bad, cerr)
+		}
+	}
+	all := []string{key.ScopeCompletions, key.ScopeEmbeddings, key.ScopeModels, key.ScopeAdmin}
+	k, _, err := svc.Create(ctx, &key.CreateInput{TenantID: tn.ID.String(), Name: "k", Scopes: all})
+	if err != nil || len(k.Scopes) != 4 {
+		t.Fatalf("every known scope = %v; want a key with all four", err)
+	}
+}

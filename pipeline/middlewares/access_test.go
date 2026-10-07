@@ -259,3 +259,14 @@ func TestEmptyEdgeScopesGrantNothing(t *testing.T) {
 		wantRefusal(t, err, pipeline.CodeForbidden, 403)
 	}
 }
+
+func TestAKeyIDWithoutATenantIsRefused(t *testing.T) {
+	f := newAccessFixture(t)
+	ctx := pipeline.WithKeyID(context.Background(), id.NewKeyID().String())
+	_, err := f.run(ctx, pipeline.RequestCompletion)
+	wantRefusal(t, err, pipeline.CodeInvalidRequest, 400)
+	var r *pipeline.RefusalError
+	if !errorsAs(err, &r) || !r.Unattributed {
+		t.Fatalf("refusal %v; want it recorded unattributed, since its key names no tenant", err)
+	}
+}

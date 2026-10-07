@@ -23,6 +23,25 @@ type APIKey struct {
 	CreatedAt  time.Time         `json:"created_at"`
 }
 
+// The scopes a key can hold. A key with no scopes given gets completions,
+// embeddings and models. Admin is cross-tenant: an admin key administers
+// every tenant, whichever tenant it belongs to.
+const (
+	ScopeCompletions = "completions"
+	ScopeEmbeddings  = "embeddings"
+	ScopeModels      = "models"
+	ScopeAdmin       = "admin"
+)
+
+// KnownScope reports whether s is one of the scopes above.
+func KnownScope(s string) bool {
+	switch s {
+	case ScopeCompletions, ScopeEmbeddings, ScopeModels, ScopeAdmin:
+		return true
+	}
+	return false
+}
+
 // Status represents the key's current state.
 type Status string
 

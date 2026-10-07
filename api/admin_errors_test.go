@@ -43,6 +43,7 @@ func TestAdminInputErrorsAre400sWithTheirMessage(t *testing.T) {
 	for _, c := range []struct{ path, body, says string }{
 		{"/admin/keys", `{"name":"","tenant_id":"x"}`, "name is required"},
 		{"/admin/keys", `{"name":"k","tenant_id":"not-an-id"}`, "tenant id"},
+		{"/admin/keys", `{"name":"k","tenant_id":"` + id.NewTenantID().String() + `","scopes":["completion"]}`, "unknown scope"},
 		{"/admin/tenants", `{"name":"","slug":"x"}`, "name is required"},
 		{"/admin/tenants", `{"name":"x","slug":""}`, "slug is required"},
 	} {

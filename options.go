@@ -79,7 +79,13 @@ func WithMiddleware(m pipeline.Middleware) Option {
 	}
 }
 
-// WithPipeline sets a fully custom pipeline, replacing the default.
+// WithPipeline sets a fully custom pipeline, replacing the default. The
+// default carries the access stage (tenant status and key scopes) and the
+// quota stage (token cap, daily requests, budget, RPM, TPM). A custom
+// pipeline without them enforces none of that, while the HTTP edge still
+// authenticates keys, so a key without the completions scope is served.
+// Include middlewares.NewAccess ahead of middlewares.NewQuota: quota reads
+// the tenant access publishes.
 func WithPipeline(p pipeline.Service) Option {
 	return func(gw *Gateway) { gw.pipeline = p }
 }
