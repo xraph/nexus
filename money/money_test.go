@@ -179,3 +179,25 @@ func TestAmountsCarryAtMostEighteenPlaces(t *testing.T) {
 		t.Errorf("UnmarshalJSON of 19 places err = %v, want ErrInvalid", err)
 	}
 }
+
+func TestPerMillionRoundsToMaxPlaces(t *testing.T) {
+	cases := []struct {
+		price  string
+		tokens int64
+		want   string
+	}{
+		{"0.000000000000000001", 3, "0"},                          // 3e-24 rounds to 0
+		{"0.000000000000000009", 500_000, "0.000000000000000005"}, // 4.5e-18 rounds half away from zero
+		{"0.000000000000000009", 400_000, "0.000000000000000004"}, // 3.6e-18
+		{"0.075", 333, "0.000024975"},                             // unaffected
+	}
+	for _, c := range cases {
+		got := money.MustParse(c.price).PerMillion(c.tokens)
+		if got.String() != c.want {
+			t.Errorf("%s per million × %d = %s, want %s", c.price, c.tokens, got, c.want)
+		}
+		if _, err := money.Parse(got.String()); err != nil {
+			t.Errorf("computed %s does not parse back: %v", got, err)
+		}
+	}
+}

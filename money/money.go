@@ -15,7 +15,8 @@ import (
 //
 // An amount read by Parse or ParseLenient carries at most MaxPlaces decimal
 // places, the most a Postgres NUMERIC(38,18) column keeps, so no store
-// rounds one silently.
+// rounds one silently. Computed amounts are rounded to MaxPlaces in PerMillion,
+// the only operation that adds places.
 //
 // Compare amounts with Equal or IsZero, never ==: two equal amounts can
 // differ in representation.
@@ -131,9 +132,12 @@ func (u USD) Sub(v USD) USD { return USD{d: u.d.Sub(v.d)} }
 // Mul multiplies by a whole count.
 func (u USD) Mul(n int64) USD { return USD{d: u.d.Mul(decimal.NewFromInt(n))} }
 
-// PerMillion is the cost of n units at u per million units: u × n / 10⁶.
+// PerMillion is the cost of n units at u per million units: u × n / 10⁶,
+// rounded to MaxPlaces decimal places, half away from zero. It is the one
+// operation that adds decimal places, so it is where the bound is kept: an
+// amount the library computes is always one every store can hold and read.
 func (u USD) PerMillion(n int64) USD {
-	return USD{d: u.d.Mul(decimal.NewFromInt(n)).Shift(-6)}
+	return USD{d: u.d.Mul(decimal.NewFromInt(n)).Shift(-6).Round(MaxPlaces)}
 }
 
 // Cmp returns -1, 0 or +1 as u is less than, equal to or greater than v.

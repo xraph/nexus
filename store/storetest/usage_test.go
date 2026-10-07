@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/xraph/nexus/id"
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/store"
 	"github.com/xraph/nexus/store/storetest"
 	"github.com/xraph/nexus/usage"
@@ -100,5 +101,21 @@ func TestSmallestAmountRoundTripsExactly(t *testing.T) {
 			t.Fatalf("cost = %v, want 0.000000000000000001", got.CostUSD)
 		}
 		storetest.SameRecord(t, got, want)
+	})
+}
+
+// A cost the library computes must be readable on every backend, so a
+// computed amount past 18 places cannot become a row that breaks Query.
+func TestComputedCostIsReadableEverywhere(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		tn := storetest.InsertTenant(t, s)
+		r := storetest.Record(tn.ID, "")
+		c := money.MustParse("0.000000000000000009").PerMillion(500_000)
+		r.CostUSD, r.PricingStatus = &c, usage.PricingPriced
+		storetest.InsertRecord(t, s, r)
+		got := storetest.FindRecord(t, s, r.ID)
+		if got.CostUSD == nil || got.CostUSD.String() != "0.000000000000000005" {
+			t.Fatalf("computed cost came back as %v", got.CostUSD)
+		}
 	})
 }
