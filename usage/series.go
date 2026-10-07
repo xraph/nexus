@@ -25,6 +25,10 @@ var ErrInvalidSeries = errors.New("nexus: invalid series")
 
 // SeriesOptions asks for usage between Start and End (exclusive), one point
 // per bucket. An empty TenantID means every tenant.
+//
+// Start is rounded down to the start of its bucket, so every point covers its
+// whole bucket and its label is true. End is used as given: when it is not on
+// a bucket boundary the last bucket covers usage up to End only.
 type SeriesOptions struct {
 	TenantID string    `json:"tenant_id,omitempty"`
 	Start    time.Time `json:"start"`
@@ -62,17 +66,23 @@ func step(b Bucket) time.Duration {
 // one point per bucket from Start to End, oldest first, with empty buckets
 // present as zeros.
 func FillSeries(opts *SeriesOptions, points []SeriesPoint) ([]SeriesPoint, error) {
+	if opts == nil {
+		return nil, fmt.Errorf("%w: no options", ErrInvalidSeries)
+	}
 	if opts.Bucket != BucketHour && opts.Bucket != BucketDay {
 		return nil, fmt.Errorf("%w: bucket %q", ErrInvalidSeries, opts.Bucket)
 	}
-	first, end := BucketStart(opts.Start, opts.Bucket), opts.End.UTC()
-	if !end.After(first) {
+	if !opts.End.After(opts.Start) {
 		return nil, fmt.Errorf("%w: end must be after start", ErrInvalidSeries)
 	}
-	n := int((end.Sub(first) + step(opts.Bucket) - 1) / step(opts.Bucket))
-	if n > maxBuckets {
-		return nil, fmt.Errorf("%w: %d buckets, at most %d", ErrInvalidSeries, n, maxBuckets)
+	first, end := BucketStart(opts.Start, opts.Bucket), opts.End.UTC()
+	// Sub saturates on a very wide range, so compare against the cap before
+	// doing any arithmetic that could overflow a Duration.
+	width := end.Sub(first)
+	if width > time.Duration(maxBuckets)*step(opts.Bucket) {
+		return nil, fmt.Errorf("%w: more than %d buckets", ErrInvalidSeries, maxBuckets)
 	}
+	n := int((width + step(opts.Bucket) - 1) / step(opts.Bucket))
 	out := make([]SeriesPoint, n)
 	for i := range out {
 		out[i].Start = first.Add(time.Duration(i) * step(opts.Bucket))

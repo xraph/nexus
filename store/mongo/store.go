@@ -446,7 +446,7 @@ func (s *usageStore) Series(ctx context.Context, opts *usage.SeriesOptions) ([]u
 	if _, err := usage.FillSeries(opts, nil); err != nil {
 		return nil, err
 	}
-	match := bson.M{"created_at": bson.M{"$gte": opts.Start.UTC(), "$lt": opts.End.UTC()}}
+	match := bson.M{"created_at": bson.M{"$gte": usage.BucketStart(opts.Start, opts.Bucket), "$lt": opts.End.UTC()}}
 	if opts.TenantID != "" {
 		match["tenant_id"] = opts.TenantID
 	}

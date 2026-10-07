@@ -37,6 +37,12 @@ func TestSeriesOptionsAreChecked(t *testing.T) {
 		{Start: start, End: start, Bucket: usage.BucketHour},
 		{Start: start, End: start.Add(time.Hour), Bucket: "minute"},
 		{Start: start, End: start.Add(1001 * time.Hour), Bucket: usage.BucketHour},
+		{Start: start.Add(30 * time.Minute), End: start.Add(30 * time.Minute), Bucket: usage.BucketHour},
+		{Start: start.Add(30 * time.Minute), End: start.Add(10 * time.Minute), Bucket: usage.BucketHour},
+		{Start: time.Time{}, End: time.Now(), Bucket: usage.BucketHour},
+		{Start: time.Time{}, End: time.Now(), Bucket: usage.BucketDay},
+		{Start: time.Now(), End: time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC), Bucket: usage.BucketHour},
+		{Start: start, End: start.Add(1001 * 24 * time.Hour), Bucket: usage.BucketDay},
 	} {
 		if _, err := usage.FillSeries(o, nil); !errors.Is(err, usage.ErrInvalidSeries) {
 			t.Errorf("%+v = %v, want ErrInvalidSeries", o, err)
@@ -44,5 +50,19 @@ func TestSeriesOptionsAreChecked(t *testing.T) {
 	}
 	if got := usage.BucketStart(start.Add(90*time.Minute+5*time.Second), usage.BucketHour); !got.Equal(start.Add(time.Hour)) {
 		t.Fatalf("BucketStart hour = %s", got)
+	}
+}
+
+func TestFillSeriesRejectsNilOptions(t *testing.T) {
+	if _, err := usage.FillSeries(nil, nil); !errors.Is(err, usage.ErrInvalidSeries) {
+		t.Fatalf("nil options = %v, want ErrInvalidSeries", err)
+	}
+}
+
+func TestFillSeriesAcceptsTheCap(t *testing.T) {
+	start := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
+	got, err := usage.FillSeries(&usage.SeriesOptions{Start: start, End: start.Add(1000 * time.Hour), Bucket: usage.BucketHour}, nil)
+	if err != nil || len(got) != 1000 {
+		t.Fatalf("1000 buckets = %d, %v", len(got), err)
 	}
 }

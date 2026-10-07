@@ -384,7 +384,7 @@ func (s *usageStore) Series(ctx context.Context, opts *usage.SeriesOptions) ([]u
 		   FROM nexus_usage_records
 		  WHERE ($1 = '' OR tenant_id = $1) AND created_at >= $3 AND created_at < $4
 		  GROUP BY 1`,
-		opts.TenantID, string(opts.Bucket), opts.Start.UTC(), opts.End.UTC())
+		opts.TenantID, string(opts.Bucket), usage.BucketStart(opts.Start, opts.Bucket), opts.End.UTC())
 	if err != nil {
 		return nil, fmt.Errorf("nexus/postgres: series: %w", err)
 	}

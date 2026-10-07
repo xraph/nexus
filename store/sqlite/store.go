@@ -390,7 +390,7 @@ func (s *usageStore) Series(ctx context.Context, opts *usage.SeriesOptions) ([]u
 	rows, err := s.sdb.Query(ctx,
 		`SELECT created_at, total_tokens, cost_usd, pricing_status FROM usage_records
 		  WHERE (? = '' OR tenant_id = ?) AND created_at >= ? AND created_at < ?`,
-		opts.TenantID, opts.TenantID, conv.TimeText(opts.Start), conv.TimeText(opts.End))
+		opts.TenantID, opts.TenantID, conv.TimeText(usage.BucketStart(opts.Start, opts.Bucket)), conv.TimeText(opts.End))
 	if err != nil {
 		return nil, fmt.Errorf("nexus/sqlite: series: %w", err)
 	}

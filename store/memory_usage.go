@@ -97,6 +97,7 @@ func (s *memoryUsageStore) Series(_ context.Context, opts *usage.SeriesOptions) 
 	if _, err := usage.FillSeries(opts, nil); err != nil {
 		return nil, err
 	}
+	from := usage.BucketStart(opts.Start, opts.Bucket)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var points []usage.SeriesPoint
@@ -104,7 +105,7 @@ func (s *memoryUsageStore) Series(_ context.Context, opts *usage.SeriesOptions) 
 		if opts.TenantID != "" && r.TenantID.String() != opts.TenantID {
 			continue
 		}
-		if r.CreatedAt.Before(opts.Start) || !r.CreatedAt.Before(opts.End) {
+		if r.CreatedAt.Before(from) || !r.CreatedAt.Before(opts.End) {
 			continue
 		}
 		points = append(points, pointOf(r))
