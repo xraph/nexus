@@ -127,10 +127,18 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 	}
 
 	if gw.tenant == nil {
-		gw.tenant = tenant.NewService(gw.store.Tenants())
+		var te tenant.Events
+		if gw.extensions != nil {
+			te = gw.extensions
+		}
+		gw.tenant = tenant.NewService(gw.store.Tenants(), tenant.WithEvents(te))
 	}
 	if gw.key == nil {
-		gw.key = key.NewService(gw.store.Keys())
+		var ke key.Events
+		if gw.extensions != nil {
+			ke = gw.extensions
+		}
+		gw.key = key.NewService(gw.store.Keys(), key.WithTenants(gw.store.Tenants()), key.WithEvents(ke))
 	}
 	if gw.usage == nil {
 		gw.usage = usage.NewService(gw.store.Usage())

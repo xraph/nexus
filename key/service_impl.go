@@ -4,106 +4,130 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
-	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/xraph/nexus/id"
 )
 
 type service struct {
-	store Store
+	store   Store
+	tenants TenantFinder
+	events  Events
+	now     func() time.Time
 }
 
-// NewService creates a new API key service.
-func NewService(store Store) Service {
-	return &service{store: store}
+func NewService(store Store, opts ...Option) Service {
+	s := &service{store: store, now: time.Now}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+// derive reports an active key whose expiry has passed as expired.
+func (s *service) derive(k *APIKey) *APIKey {
+	if k != nil && k.Status == KeyActive && k.ExpiresAt != nil && !k.ExpiresAt.After(s.now()) {
+		k.Status = KeyExpired
+	}
+	return k
 }
 
 func (s *service) Create(ctx context.Context, input *CreateInput) (*APIKey, string, error) {
-	if input.TenantID == "" {
-		return nil, "", errors.New("nexus: tenant_id is required")
+	if input == nil || input.Name == "" {
+		return nil, "", fmt.Errorf("%w: name is required", ErrInvalid)
 	}
-	if input.Name == "" {
-		return nil, "", errors.New("nexus: key name is required")
+	tid, err := id.ParseTenantID(input.TenantID)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: tenant id: %w", ErrInvalid, err)
 	}
-
-	// Generate a random API key: nxs_<32 random hex chars>
+	if input.ExpiresAt != nil && !input.ExpiresAt.After(s.now()) {
+		return nil, "", fmt.Errorf("%w: expires_at is in the past", ErrInvalid)
+	}
+	if s.tenants != nil {
+		if _, err := s.tenants.FindByID(ctx, tid.String()); err != nil {
+			return nil, "", fmt.Errorf("nexus: key for tenant %s: %w", tid, err)
+		}
+	}
 	rawBytes := make([]byte, 32)
 	if _, err := rand.Read(rawBytes); err != nil {
-		return nil, "", fmt.Errorf("nexus: failed to generate key: %w", err)
+		return nil, "", fmt.Errorf("nexus: generate key: %w", err)
 	}
 	rawKey := "nxs_" + hex.EncodeToString(rawBytes)
-
-	// Hash for storage
-	hash := hashKey(rawKey)
-
-	// Prefix for lookup (first 8 chars of the random part)
-	prefix := rawKey[:12] // "nxs_" + 8 hex chars
-
 	scopes := input.Scopes
 	if len(scopes) == 0 {
 		scopes = []string{"completions", "embeddings", "models"}
 	}
-
 	k := &APIKey{
 		ID:        id.NewKeyID(),
-		TenantID:  id.MustParseTenantID(input.TenantID),
+		TenantID:  tid,
 		Name:      input.Name,
-		Prefix:    prefix,
-		Hash:      hash,
+		Prefix:    rawKey[:12],
+		Hash:      hashKey(rawKey),
 		Scopes:    scopes,
 		Status:    KeyActive,
+		ExpiresAt: input.ExpiresAt,
 		Metadata:  input.Metadata,
-		CreatedAt: time.Now(),
+		CreatedAt: s.now(),
 	}
-
 	if k.Metadata == nil {
-		k.Metadata = make(map[string]string)
+		k.Metadata = map[string]string{}
 	}
-
 	if err := s.store.Insert(ctx, k); err != nil {
 		return nil, "", err
 	}
-
+	if s.events != nil {
+		s.events.EmitKeyCreated(ctx, k.ID, k.TenantID)
+	}
 	return k, rawKey, nil
 }
 
 func (s *service) Validate(ctx context.Context, rawKey string) (*APIKey, error) {
 	if len(rawKey) < 12 {
-		return nil, errors.New("nexus: invalid API key format")
+		return nil, ErrNotFound
 	}
-
-	prefix := rawKey[:12]
-	keys, err := s.store.FindByPrefix(ctx, prefix)
+	candidates, err := s.store.FindByPrefix(ctx, rawKey[:12])
 	if err != nil {
 		return nil, err
 	}
-	if len(keys) == 0 {
+	want := []byte(hashKey(rawKey))
+	var match *APIKey
+	// Compare against every candidate, in constant time, and keep going
+	// after a match, so timing says nothing about which key matched.
+	for _, k := range candidates {
+		if subtle.ConstantTimeCompare([]byte(k.Hash), want) == 1 {
+			match = k
+		}
+	}
+	if match == nil {
 		return nil, ErrNotFound
 	}
-	k := keys[0]
-
-	// Verify hash
-	if hashKey(rawKey) != k.Hash {
-		return nil, errors.New("nexus: invalid API key")
+	s.derive(match)
+	switch match.Status {
+	case KeyRevoked:
+		return nil, ErrRevoked
+	case KeyExpired:
+		return nil, ErrExpired
 	}
-
-	// Check status
-	if k.Status == KeyRevoked {
-		return nil, errors.New("nexus: API key revoked")
+	now := s.now()
+	if match.LastUsedAt == nil || now.Sub(*match.LastUsedAt) >= time.Minute {
+		// Best effort: a failed touch must not refuse a valid key.
+		if err := s.store.TouchLastUsed(ctx, match.ID.String(), now); err == nil {
+			match.LastUsedAt = &now
+		}
 	}
-	if k.ExpiresAt != nil && k.ExpiresAt.Before(time.Now()) {
-		return nil, errors.New("nexus: API key expired")
+	return match, nil
+}
+
+func (s *service) Get(ctx context.Context, keyID string) (*APIKey, error) {
+	k, err := s.store.FindByID(ctx, keyID)
+	if err != nil {
+		return nil, err
 	}
-
-	// Update last used (best-effort: last-used update is non-critical)
-	now := time.Now()
-	k.LastUsedAt = &now
-	_ = s.store.Update(ctx, k) //nolint:errcheck // best-effort last-used timestamp
-
-	return k, nil
+	return s.derive(k), nil
 }
 
 func (s *service) Revoke(ctx context.Context, keyID string) error {
@@ -111,36 +135,56 @@ func (s *service) Revoke(ctx context.Context, keyID string) error {
 	if err != nil {
 		return err
 	}
+	if k.Status == KeyRevoked {
+		return nil
+	}
 	k.Status = KeyRevoked
-	return s.store.Update(ctx, k)
+	if err := s.store.Update(ctx, k); err != nil {
+		return err
+	}
+	if s.events != nil {
+		s.events.EmitKeyRevoked(ctx, k.ID)
+	}
+	return nil
 }
 
 func (s *service) List(ctx context.Context, tenantID string) ([]*APIKey, error) {
-	return s.store.ListByTenant(ctx, tenantID)
+	keys, err := s.store.ListByTenant(ctx, tenantID)
+	for _, k := range keys {
+		s.derive(k)
+	}
+	return keys, err
 }
 
-func (s *service) Rotate(ctx context.Context, oldKeyID string) (*APIKey, string, error) {
-	old, err := s.store.FindByID(ctx, oldKeyID)
-	if err != nil {
-		return nil, "", fmt.Errorf("nexus: old key not found: %w", err)
-	}
+const rotatedSuffix = " (rotated)"
 
-	// Create new key with same properties
-	newKey, rawKey, err := s.Create(ctx, &CreateInput{
-		TenantID: old.TenantID.String(),
-		Name:     old.Name + " (rotated)",
-		Scopes:   old.Scopes,
-		Metadata: old.Metadata,
+// Rotate creates a replacement for an active key and revokes the old one.
+// It is not atomic across backends: if the revoke fails, the new key is
+// revoked too (best effort) and the error is returned, so no key the caller
+// never saw is left active.
+func (s *service) Rotate(ctx context.Context, oldKeyID string) (*APIKey, string, error) {
+	old, err := s.Get(ctx, oldKeyID)
+	if err != nil {
+		return nil, "", fmt.Errorf("nexus: old key: %w", err)
+	}
+	if old.Status != KeyActive {
+		return nil, "", fmt.Errorf("%w: only an active key can be rotated (this one is %s)", ErrInvalid, old.Status)
+	}
+	n, raw, err := s.Create(ctx, &CreateInput{
+		TenantID:  old.TenantID.String(),
+		Name:      strings.TrimSuffix(old.Name, rotatedSuffix) + rotatedSuffix,
+		Scopes:    old.Scopes,
+		ExpiresAt: old.ExpiresAt,
+		Metadata:  old.Metadata,
 	})
 	if err != nil {
 		return nil, "", err
 	}
-
-	// Revoke old key (best-effort: revocation during rotate is non-critical)
-	old.Status = KeyRevoked
-	_ = s.store.Update(ctx, old) //nolint:errcheck // best-effort revocation of old key during rotate
-
-	return newKey, rawKey, nil
+	if err := s.Revoke(ctx, old.ID.String()); err != nil {
+		_ = s.Revoke(ctx, n.ID.String()) //nolint:errcheck // best-effort undo; the revoke error is the one returned
+		return nil, "", fmt.Errorf("nexus: revoke the rotated key: %w", err)
+	}
+	return n, raw, nil
 }
 
 // hashKey creates a SHA-256 hash of the API key.

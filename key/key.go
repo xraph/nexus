@@ -14,7 +14,7 @@ type APIKey struct {
 	TenantID   id.TenantID       `json:"tenant_id"`
 	Name       string            `json:"name"`
 	Prefix     string            `json:"prefix"` // "nxs_" + first 8 chars (for display)
-	Hash       string            `json:"-"`      // bcrypt hash (never exposed)
+	Hash       string            `json:"-"`      // SHA-256 of the raw key, hex (never exposed). The raw key carries 256 random bits, so an unsalted hash is enough.
 	Scopes     []string          `json:"scopes"` // ["completions", "embeddings", "models"]
 	Status     Status            `json:"status"`
 	ExpiresAt  *time.Time        `json:"expires_at,omitempty"`
@@ -38,6 +38,8 @@ type CreateInput struct {
 	Name     string            `json:"name"`
 	Scopes   []string          `json:"scopes,omitempty"`
 	Metadata map[string]string `json:"metadata,omitempty"`
+	// ExpiresAt, when set, must be in the future.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 // Service manages API key lifecycle.
@@ -48,13 +50,19 @@ type Service interface {
 	// Validate checks a raw API key and returns the associated key record.
 	Validate(ctx context.Context, rawKey string) (*APIKey, error)
 
+	// Get returns one key, with its expiry derived: an active key whose
+	// ExpiresAt has passed reads expired.
+	Get(ctx context.Context, id string) (*APIKey, error)
+
 	// Revoke deactivates an API key.
 	Revoke(ctx context.Context, id string) error
 
 	// List returns keys for a tenant (hashed, never shows full key).
 	List(ctx context.Context, tenantID string) ([]*APIKey, error)
 
-	// Rotate creates a new key and revokes the old one atomically.
+	// Rotate creates a replacement for an active key and revokes the old one.
+	// It is not atomic across backends: if the revoke fails, the new key is
+	// revoked too (best effort) and the error is returned.
 	Rotate(ctx context.Context, oldKeyID string) (*APIKey, string, error)
 }
 

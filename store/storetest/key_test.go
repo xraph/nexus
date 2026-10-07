@@ -3,6 +3,7 @@ package storetest_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -76,6 +77,9 @@ func TestTouchingAKeyNeverChangesItsStatus(t *testing.T) {
 		}
 		if got.LastUsedAt == nil || !got.LastUsedAt.Equal(at) {
 			t.Fatalf("last used = %v, want %v", got.LastUsedAt, at)
+		}
+		if got.Name != k.Name || got.Hash != k.Hash || got.TenantID != k.TenantID || !slices.Equal(got.Scopes, k.Scopes) {
+			t.Fatalf("touch changed more than last_used_at: name %q hash %q tenant %s scopes %v", got.Name, got.Hash, got.TenantID, got.Scopes)
 		}
 		if err := s.Keys().TouchLastUsed(ctx, id.NewKeyID().String(), at); !errors.Is(err, key.ErrNotFound) {
 			t.Fatalf("touch of a missing key = %v, want key.ErrNotFound", err)

@@ -9,12 +9,17 @@ import (
 )
 
 type service struct {
-	store Store
+	store  Store
+	events Events
 }
 
 // NewService creates a new tenant service.
-func NewService(store Store) Service {
-	return &service{store: store}
+func NewService(store Store, opts ...Option) Service {
+	s := &service{store: store}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 func (s *service) Create(ctx context.Context, input *CreateInput) (*Tenant, error) {
@@ -47,6 +52,9 @@ func (s *service) Create(ctx context.Context, input *CreateInput) (*Tenant, erro
 
 	if err := s.store.Insert(ctx, t); err != nil {
 		return nil, err
+	}
+	if s.events != nil {
+		s.events.EmitTenantCreated(ctx, t.ID)
 	}
 	return t, nil
 }
@@ -111,7 +119,14 @@ func (s *service) SetStatus(ctx context.Context, tenantID string, status Status)
 	if err != nil {
 		return err
 	}
+	was := t.Status
 	t.Status = status
 	t.UpdatedAt = time.Now()
-	return s.store.Update(ctx, t)
+	if err := s.store.Update(ctx, t); err != nil {
+		return err
+	}
+	if s.events != nil && was == StatusActive && status != StatusActive {
+		s.events.EmitTenantDisabled(ctx, t.ID)
+	}
+	return nil
 }
