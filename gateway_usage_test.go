@@ -10,6 +10,7 @@ import (
 	"time"
 
 	nexus "github.com/xraph/nexus"
+	"github.com/xraph/nexus/cache"
 	"github.com/xraph/nexus/cache/stores"
 	"github.com/xraph/nexus/guard"
 	"github.com/xraph/nexus/id"
@@ -23,11 +24,12 @@ import (
 )
 
 type fakeProvider struct {
-	name     string
-	price    provider.Pricing
-	failures int // fail this many Complete calls first
-	calls    int
-	stream   []*provider.StreamChunk
+	name        string
+	price       provider.Pricing
+	failures    int // fail this many Complete calls first
+	calls       int
+	streamCalls int
+	stream      []*provider.StreamChunk
 }
 
 func (f *fakeProvider) Name() string { return f.name }
@@ -47,6 +49,7 @@ func (f *fakeProvider) Complete(_ context.Context, req *provider.CompletionReque
 		Usage:   provider.Usage{PromptTokens: 1234, CompletionTokens: 567, TotalTokens: 1801}}, nil
 }
 func (f *fakeProvider) CompleteStream(context.Context, *provider.CompletionRequest) (provider.Stream, error) {
+	f.streamCalls++
 	return &sliceStream{chunks: f.stream}, nil
 }
 func (f *fakeProvider) Embed(_ context.Context, req *provider.EmbeddingRequest) (*provider.EmbeddingResponse, error) {
@@ -508,5 +511,73 @@ func TestAMismatchedIdentityIsRefusedAndChargedToNeitherTenant(t *testing.T) {
 	}
 	if r.PricingStatus != usage.PricingNotCharged || r.CostUSD == nil || !r.CostUSD.IsZero() {
 		t.Fatalf("record = %s cost %v; want not_charged at $0", r.PricingStatus, r.CostUSD)
+	}
+}
+
+func TestAStreamCacheReplayIsRecordedAsCached(t *testing.T) {
+	u := &provider.Usage{PromptTokens: 100, CompletionTokens: 20, TotalTokens: 120}
+	p := &fakeProvider{name: "openai", price: listPrice, stream: []*provider.StreamChunk{
+		{Delta: provider.Delta{Content: "he"}}, {Delta: provider.Delta{Content: "llo"}}, {Kind: provider.EventUsage, Usage: u},
+	}}
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		for range 2 {
+			st, err := gw.Engine().CompleteStream(ctx, &provider.CompletionRequest{Model: "gpt-4o", Stream: true, Messages: []provider.Message{{Role: "user", Content: "same"}}})
+			if err != nil {
+				t.Fatalf("stream: %v", err)
+			}
+			for {
+				if _, err := st.Next(ctx); err != nil {
+					break
+				}
+			}
+			_ = st.Close()
+		}
+	}, nexus.WithProvider(p), nexus.WithStreamCache(stores.NewMemoryStream(), cache.StreamCacheOptions{}))
+	if p.streamCalls != 1 {
+		t.Fatalf("provider streamed %d times; the second request should replay from the cache", p.streamCalls)
+	}
+	var priced, replayed int
+	for _, r := range recs {
+		switch {
+		case r.Outcome == usage.OutcomeOK && r.PricingStatus == usage.PricingPriced && r.CostUSD != nil && r.CostUSD.String() == "0.00045":
+			priced++
+		case r.Outcome == usage.OutcomeCached && r.PricingStatus == usage.PricingCached && r.Cached && r.CostUSD != nil && r.CostUSD.IsZero() && r.TotalTokens == 120:
+			replayed++
+		default:
+			t.Fatalf("record = %s/%s cost %v tokens %d", r.Outcome, r.PricingStatus, r.CostUSD, r.TotalTokens)
+		}
+	}
+	if len(recs) != 2 || priced != 1 || replayed != 1 {
+		t.Fatalf("records %d: priced %d, replayed %d; want 2: 1 and 1", len(recs), priced, replayed)
+	}
+}
+
+func TestATenantNamedOnlyInTheContextIsRecordedAndCachedApart(t *testing.T) {
+	a, b := id.NewTenantID().String(), id.NewTenantID().String()
+	p := &fakeProvider{name: "openai", price: listPrice}
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		for _, tenant := range []string{a, a, b} {
+			tctx := pipeline.WithTenantID(ctx, tenant)
+			if _, err := gw.Engine().Complete(tctx, &provider.CompletionRequest{Model: "gpt-4o", Messages: []provider.Message{{Role: "user", Content: "same"}}}); err != nil {
+				t.Fatalf("complete: %v", err)
+			}
+		}
+	}, nexus.WithProvider(p), nexus.WithCache(stores.NewMemory()))
+	if p.calls != 2 {
+		t.Fatalf("provider called %d times; tenant A's repeat should hit and tenant B's should not", p.calls)
+	}
+	byTenant := map[string]int{}
+	var hits int
+	for _, r := range recs {
+		byTenant[r.TenantID.String()]++
+		if r.Outcome == usage.OutcomeCached {
+			hits++
+			if r.TenantID.String() != a {
+				t.Fatalf("cache hit recorded under %s, want tenant A", r.TenantID)
+			}
+		}
+	}
+	if len(recs) != 3 || byTenant[a] != 2 || byTenant[b] != 1 || hits != 1 {
+		t.Fatalf("records %d by tenant %v, hits %d; want A twice, B once, one hit", len(recs), byTenant, hits)
 	}
 }

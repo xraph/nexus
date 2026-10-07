@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/xraph/nexus/cache"
 	"github.com/xraph/nexus/cache/stores"
+	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/pipeline/middlewares"
 	"github.com/xraph/nexus/provider"
@@ -169,6 +171,57 @@ func TestCacheMiddleware_NeverHandsOutTheStoredResponse(t *testing.T) {
 	})
 	if got := again.Completion.Choices[0].Message.Content; got != "original" {
 		t.Fatalf("the second hit served %v", got)
+	}
+}
+
+// callTerminal ends a test pipeline and counts the provider calls.
+type callTerminal struct{ calls *atomic.Int64 }
+
+func (callTerminal) Name() string  { return "provider_call" }
+func (callTerminal) Priority() int { return 350 }
+func (callTerminal) Terminal()     {}
+func (c callTerminal) Process(context.Context, *pipeline.Request, pipeline.NextFunc) (*pipeline.Response, error) {
+	c.calls.Add(1)
+	return &pipeline.Response{Completion: &provider.CompletionResponse{Model: "m"}}, nil
+}
+
+func TestCacheKeysAContextOnlyTenantWithoutTheIdentityStage(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int64
+	p, err := pipeline.NewBuilder().
+		Use(middlewares.NewCache(cache.NewService(stores.NewMemory())), callTerminal{&calls}).
+		Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	a, b := id.NewTenantID().String(), id.NewTenantID().String()
+	run := func(ctxTenant, reqTenant string) {
+		t.Helper()
+		ctx := pipeline.WithTenantID(context.Background(), ctxTenant)
+		req := &provider.CompletionRequest{Model: "m", TenantID: reqTenant, Messages: []provider.Message{{Role: "user", Content: "same"}}}
+		if _, err := p.Execute(ctx, req); err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+	}
+
+	// Two tenants named only in the context must not share an entry.
+	run(a, "")
+	run(b, "")
+	if calls.Load() != 2 {
+		t.Fatalf("provider calls = %d; tenant B was served tenant A's cached completion", calls.Load())
+	}
+	run(a, "") // and each still hits its own
+	if calls.Load() != 2 {
+		t.Fatalf("provider calls = %d; tenant A's repeat should hit the cache", calls.Load())
+	}
+
+	// A request whose context and fields disagree bypasses the cache: it
+	// reads neither tenant's entry and writes none.
+	run(a, b)
+	run(a, b)
+	if calls.Load() != 4 {
+		t.Fatalf("provider calls = %d; a request naming two tenants must bypass the cache", calls.Load())
 	}
 }
 
