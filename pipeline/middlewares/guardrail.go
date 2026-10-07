@@ -2,7 +2,6 @@ package middlewares
 
 import (
 	"context"
-	"errors"
 
 	"github.com/xraph/nexus/guard"
 	"github.com/xraph/nexus/pipeline"
@@ -38,7 +37,7 @@ func (m *GuardrailMiddleware) Process(ctx context.Context, req *pipeline.Request
 		return nil, err
 	}
 	if result.Blocked {
-		return nil, errors.New("nexus: " + result.Reason)
+		return nil, &guard.BlockedError{Guard: result.Guard, Phase: guard.PhaseInput, Reason: result.Reason}
 	}
 	if result.Modified {
 		req.Completion.Messages = result.Messages
@@ -68,7 +67,11 @@ func (m *GuardrailMiddleware) Process(ctx context.Context, req *pipeline.Request
 			return nil, err
 		}
 		if outputResult.Blocked {
-			return nil, errors.New("nexus: output blocked: " + outputResult.Reason)
+			u := resp.Completion.Usage
+			return nil, &guard.BlockedError{
+				Guard: outputResult.Guard, Phase: guard.PhaseOutput, Reason: outputResult.Reason,
+				Usage: &u, Model: resp.Completion.Model, Provider: resp.Completion.Provider,
+			}
 		}
 		if outputResult.Modified && len(outputResult.Messages) > 0 {
 			for i := range resp.Completion.Choices {

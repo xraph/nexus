@@ -96,7 +96,7 @@ func (gs *GuardedStream) nextBuffered(ctx context.Context) (*provider.StreamChun
 					return nil, err
 				}
 				if result.Blocked {
-					return nil, &BlockedError{Guard: g.Name(), Reason: result.Reason}
+					return nil, &BlockedError{Guard: g.Name(), Phase: PhaseOutput, Reason: result.Reason}
 				}
 			}
 		}
@@ -126,19 +126,9 @@ func (gs *GuardedStream) nextChunkwise(ctx context.Context) (*provider.StreamChu
 		}
 		if result.Blocked {
 			_ = gs.inner.Close()
-			return nil, &BlockedError{Guard: g.Name(), Reason: result.Reason}
+			return nil, &BlockedError{Guard: g.Name(), Phase: PhaseOutput, Reason: result.Reason}
 		}
 	}
 
 	return chunk, nil
-}
-
-// BlockedError is returned when a stream guard blocks content.
-type BlockedError struct {
-	Guard  string
-	Reason string
-}
-
-func (e *BlockedError) Error() string {
-	return "nexus: stream blocked by guard " + e.Guard + ": " + e.Reason
 }
