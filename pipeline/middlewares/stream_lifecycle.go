@@ -50,9 +50,9 @@ type StreamQuota struct {
 // streamed response and synthesises a merged CompletionResponse for hooks /
 // usage / audit downstream.
 //
-// Position: priority 545 — after all transforms / cache / retry / provider
-// call, but before UsageMiddleware (550) so the wrapper is the outermost
-// envelope when usage tries to record.
+// Position: priority 60, inside the usage stage (15), so the usage stage's
+// stream wrapper closes it first and reads the merged final response it
+// publishes.
 type StreamLifecycleMiddleware struct {
 	registry *plugin.Registry
 	cfg      StreamLifecycleConfig
@@ -65,7 +65,7 @@ func NewStreamLifecycle(r *plugin.Registry, cfg StreamLifecycleConfig) *StreamLi
 }
 
 func (m *StreamLifecycleMiddleware) Name() string  { return "stream_lifecycle" }
-func (m *StreamLifecycleMiddleware) Priority() int { return 545 }
+func (m *StreamLifecycleMiddleware) Priority() int { return 60 }
 
 // StateKeyStreamFinalResponse is the pipeline.Request.State key under which
 // the merged CompletionResponse is published once the stream completes.

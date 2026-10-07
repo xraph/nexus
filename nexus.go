@@ -22,6 +22,7 @@ import (
 
 	"github.com/xraph/nexus/auth"
 	"github.com/xraph/nexus/cache"
+	"github.com/xraph/nexus/cache/stores"
 	"github.com/xraph/nexus/guard"
 	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/model"
@@ -57,6 +58,15 @@ type Gateway struct {
 	key       key.Service
 	usage     usage.Service
 	model     model.Service
+
+	// routerStrategy is the name of the routing strategy in use.
+	routerStrategy string
+
+	// priceBook prices requests for the usage stage.
+	priceBook *model.PriceBook
+
+	// usageMW is the usage stage, kept so Shutdown can flush it.
+	usageMW *middlewares.UsageMiddleware
 
 	// Model alias registry
 	aliasRegistry model.AliasRegistry
@@ -114,6 +124,20 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 		gw.logger = NewNoopLogger()
 	}
 
+	if gw.tenant == nil {
+		gw.tenant = tenant.NewService(gw.store.Tenants())
+	}
+	if gw.key == nil {
+		gw.key = key.NewService(gw.store.Keys())
+	}
+	if gw.usage == nil {
+		gw.usage = usage.NewService(gw.store.Usage())
+	}
+	if gw.config.EnableCache && gw.cache == nil && gw.streamCache == nil {
+		gw.cache = cache.NewService(stores.NewMemory())
+	}
+	gw.priceBook = model.NewPriceBook(gw.providers)
+
 	// Initialize model service
 	if gw.model == nil {
 		gw.model = model.NewService(gw.aliasRegistry, gw.providers)
@@ -121,7 +145,9 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 
 	// Default router: priority strategy (registration order)
 	if gw.router == nil {
-		gw.router = router.NewService(strategies.NewPriority())
+		s := strategies.NewPriority()
+		gw.router = router.NewService(s)
+		gw.routerStrategy = s.Name()
 	}
 
 	// Initialize engine
@@ -147,18 +173,37 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 
 // buildDefaultPipeline creates the standard middleware chain.
 // Middleware is sorted by priority (lower = earlier), so the order
-// of b.Use() calls here doesn't matter — priority determines execution order.
+// of b.Use() calls here doesn't matter: priority determines execution order.
 func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 	b := pipeline.NewBuilder()
+
+	// Priority 5: request id
+	b.Use(middlewares.NewRequestID())
 
 	// Priority 10: Tracing (if configured)
 	if gw.tracer != nil {
 		b.Use(observability.NewTracingMiddleware(gw.tracer))
 	}
 
+	// Priority 15: Usage recording (unless turned off)
+	if gw.config.EnableUsage && gw.usage != nil {
+		gw.usageMW = middlewares.NewUsage(gw.usage, gw.priceBook, gw.logger)
+		b.Use(gw.usageMW)
+	}
+
 	// Priority 20: Timeout (if configured)
 	if gw.config.DefaultTimeout > 0 {
 		b.Use(middlewares.NewTimeout(gw.config.DefaultTimeout))
+	}
+
+	// Priority 30: Identity (tenant isolation for the cache depends on it)
+	b.Use(middlewares.NewIdentity())
+
+	// Priority 60: Stream lifecycle hooks (only meaningful when extensions
+	// are registered; the middleware short-circuits when the registry is
+	// empty or the request isn't a stream).
+	if gw.extensions != nil {
+		b.Use(middlewares.NewStreamLifecycle(gw.extensions, gw.streamLifecycleCfg))
 	}
 
 	// Priority 150: Input guardrails (if configured)
@@ -190,28 +235,13 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 		b.Use(middlewares.NewRetry(gw.config.DefaultMaxRetries, 500*time.Millisecond, 2.0))
 	}
 
-	// Priority 350: Core provider call (always present)
-	b.Use(middlewares.NewProviderCall(gw.router, gw.providers))
-
-	// Priority 500: Response headers
-	b.Use(middlewares.NewHeaders("nexus"))
-
-	// Priority 545: Stream lifecycle hooks (only meaningful when extensions
-	// are registered; the middleware short-circuits when the registry is
-	// empty or the request isn't a stream).
-	if gw.extensions != nil {
-		b.Use(middlewares.NewStreamLifecycle(gw.extensions, gw.streamLifecycleCfg))
-	}
-
-	// Priority 15: Usage tracking (if store available)
-	if gw.usage != nil {
-		b.Use(middlewares.NewUsage(gw.usage, nil, gw.logger))
-	}
-
 	// Custom middleware (user-provided, any priority)
 	for _, m := range gw.customMiddleware {
 		b.Use(m)
 	}
+
+	// Priority 350: Core provider call (always present, always last)
+	b.Use(middlewares.NewProviderCall(gw.router, gw.providers))
 
 	return b.Build()
 }
@@ -269,14 +299,53 @@ func (gw *Gateway) Pipeline() pipeline.Service { return gw.pipeline }
 // Logger returns the gateway logger.
 func (gw *Gateway) Logger() Logger { return gw.logger }
 
+// RoutingStrategy is the name of the routing strategy in use.
+func (gw *Gateway) RoutingStrategy() string { return gw.routerStrategy }
+
+// Aliases lists the configured model aliases, or nil when there are none.
+func (gw *Gateway) Aliases() []model.Alias {
+	if gw.aliasRegistry == nil {
+		return nil
+	}
+	return gw.aliasRegistry.List()
+}
+
+// Transforms returns the transform registry, or nil when none is configured.
+func (gw *Gateway) Transforms() *transform.Registry { return gw.transforms }
+
+// PipelineStages lists the pipeline's stages in the order they run, or nil
+// for a custom pipeline that cannot list them.
+func (gw *Gateway) PipelineStages() []pipeline.Stage {
+	if in, ok := gw.pipeline.(pipeline.Inspector); ok {
+		return in.Stages()
+	}
+	return nil
+}
+
+// UsageInsertErrors is how many usage records failed to store since start.
+func (gw *Gateway) UsageInsertErrors() int64 {
+	if gw.usageMW == nil {
+		return 0
+	}
+	return gw.usageMW.InsertErrors()
+}
+
+// PriceBook returns the price book the usage stage prices requests with.
+func (gw *Gateway) PriceBook() *model.PriceBook { return gw.priceBook }
+
 // Health checks the health of the Gateway.
 func (gw *Gateway) Health(_ context.Context) error {
 	return nil
 }
 
 // Shutdown gracefully stops all services.
-func (gw *Gateway) Shutdown(_ context.Context) error {
+func (gw *Gateway) Shutdown(ctx context.Context) error {
 	gw.logger.Info("nexus gateway shutting down")
+	if gw.usageMW != nil {
+		if err := gw.usageMW.Flush(ctx); err != nil {
+			gw.logger.Warn("nexus: usage records still in flight at shutdown", "error", err)
+		}
+	}
 	if gw.store != nil {
 		return gw.store.Close()
 	}

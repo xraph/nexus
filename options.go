@@ -6,6 +6,7 @@ import (
 	"github.com/xraph/nexus/auth"
 	"github.com/xraph/nexus/cache"
 	"github.com/xraph/nexus/guard"
+	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/model"
 	"github.com/xraph/nexus/observability"
 	"github.com/xraph/nexus/pipeline"
@@ -14,7 +15,9 @@ import (
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/router"
 	"github.com/xraph/nexus/store"
+	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/transform"
+	"github.com/xraph/nexus/usage"
 )
 
 // Option configures a Gateway.
@@ -44,6 +47,7 @@ func WithProvider(p provider.Provider) Option {
 func WithRouter(r router.Strategy) Option {
 	return func(gw *Gateway) {
 		gw.router = router.NewService(r)
+		gw.routerStrategy = r.Name()
 	}
 }
 
@@ -202,3 +206,20 @@ func WithTenantAlias(tenantID, name string, targets ...model.AliasTarget) Option
 		}
 	}
 }
+
+// WithTenantService replaces the tenant service Initialize would build.
+func WithTenantService(s tenant.Service) Option { return func(gw *Gateway) { gw.tenant = s } }
+
+// WithKeyService replaces the API key service Initialize would build.
+func WithKeyService(s key.Service) Option { return func(gw *Gateway) { gw.key = s } }
+
+// WithUsageService replaces the usage service Initialize would build.
+func WithUsageService(s usage.Service) Option { return func(gw *Gateway) { gw.usage = s } }
+
+// WithUsageEnabled turns usage recording on or off (default on). Off is the
+// one way to stop recording; the usage service is still built for reads.
+func WithUsageEnabled(on bool) Option { return func(gw *Gateway) { gw.config.EnableUsage = on } }
+
+// WithCacheEnabled turns the response cache on. Without WithCache it is an
+// in-memory cache with the default size and TTL.
+func WithCacheEnabled(on bool) Option { return func(gw *Gateway) { gw.config.EnableCache = on } }

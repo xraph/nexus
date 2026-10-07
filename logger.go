@@ -58,3 +58,36 @@ func (noopLogger) Error(string, ...any) {}
 
 // NewNoopLogger returns a Logger that discards all output.
 func NewNoopLogger() Logger { return noopLogger{} }
+
+// NewLevelLogger drops messages below level: "debug", "info", "warn" or
+// "error". Any other value means "info".
+func NewLevelLogger(l Logger, level string) Logger {
+	levels := map[string]int{"debug": 0, "info": 1, "warn": 2, "error": 3}
+	floor, ok := levels[level]
+	if !ok {
+		floor = levels["info"]
+	}
+	return &levelLogger{l: l, floor: floor}
+}
+
+type levelLogger struct {
+	l     Logger
+	floor int
+}
+
+func (g *levelLogger) Debug(msg string, args ...any) {
+	if g.floor <= 0 {
+		g.l.Debug(msg, args...)
+	}
+}
+func (g *levelLogger) Info(msg string, args ...any) {
+	if g.floor <= 1 {
+		g.l.Info(msg, args...)
+	}
+}
+func (g *levelLogger) Warn(msg string, args ...any) {
+	if g.floor <= 2 {
+		g.l.Warn(msg, args...)
+	}
+}
+func (g *levelLogger) Error(msg string, args ...any) { g.l.Error(msg, args...) }

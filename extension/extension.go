@@ -167,6 +167,19 @@ func (e *Extension) applyConfigToGatewayOpts() {
 	if e.config.GlobalRateLimit > 0 {
 		e.gatewayOpts = append(e.gatewayOpts, nexus.WithRateLimit(e.config.GlobalRateLimit))
 	}
+	if e.config.EnableUsage != nil {
+		e.gatewayOpts = append(e.gatewayOpts, nexus.WithUsageEnabled(*e.config.EnableUsage))
+	}
+	if e.config.EnableCache {
+		e.gatewayOpts = append(e.gatewayOpts, nexus.WithCacheEnabled(true))
+	}
+	if e.config.LogLevel != "" {
+		lvl := e.config.LogLevel
+		e.gatewayOpts = append(e.gatewayOpts,
+			func(gw *nexus.Gateway) { gw.Config().LogLevel = lvl },
+			nexus.WithLogger(nexus.NewLevelLogger(nexus.NewLogger(e.Logger()), lvl)),
+		)
+	}
 }
 
 // loadConfiguration loads config from YAML files or programmatic sources.
