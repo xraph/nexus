@@ -12,26 +12,36 @@ func TestSweepEndsEndedWindows(t *testing.T) {
 	defer func() { sweepAt = oldSweepAt }()
 	sweepAt = 3
 
-	l := NewMemory(WithClock(func() time.Time { return now }))
+	clockNow := now
+	l := NewMemory(WithClock(func() time.Time { return clockNow }))
 	ctx := context.Background()
 
-	// Fill to sweepAt (3 windows), all within the current minute
-	l.Allow(ctx, "key1", 1, 100, time.Minute)
-	l.Allow(ctx, "key2", 1, 100, time.Minute)
-	l.Allow(ctx, "key3", 1, 100, time.Minute)
+	// Create 3 keys at time T, each with a 1-minute window
+	l.Allow(ctx, "k1", 1, 100, time.Minute)
+	l.Allow(ctx, "k2", 1, 100, time.Minute)
+	l.Allow(ctx, "k3", 1, 100, time.Minute)
 
-	// Move 61 seconds forward - key1, key2, key3 are now ended
-	now = now.Add(61 * time.Second)
+	// Advance past their window end (61 seconds)
+	clockNow = clockNow.Add(61 * time.Second)
 
-	// Insert a new window which triggers sweep on the 4th entry
-	l.Allow(ctx, "key4", 1, 100, time.Minute)
+	// Insert a 4th key which triggers sweep because len >= sweepAt
+	l.Allow(ctx, "k4", 1, 100, time.Minute)
 
-	// After sweep, ended windows should be gone
-	// Check by trying to access them - a new window should be created
-	// (old window would have been deleted)
-	d1, _ := l.Allow(ctx, "key1", 1, 100, time.Minute)
-	if d1.Count != 1 {
-		t.Fatalf("key1 after sweep should be in new window with count=1, got %d", d1.Count)
+	// Assert that ended windows are gone and only k4 remains
+	if len(l.windows) != 1 {
+		t.Fatalf("after sweep, expected 1 window, got %d", len(l.windows))
+	}
+	if _, ok := l.windows["k1"]; ok {
+		t.Fatal("k1 should be swept away")
+	}
+	if _, ok := l.windows["k2"]; ok {
+		t.Fatal("k2 should be swept away")
+	}
+	if _, ok := l.windows["k3"]; ok {
+		t.Fatal("k3 should be swept away")
+	}
+	if _, ok := l.windows["k4"]; !ok {
+		t.Fatal("k4 should be present")
 	}
 }
 
@@ -41,26 +51,44 @@ func TestSweepPreservesLiveWindowsOfOtherKeys(t *testing.T) {
 	defer func() { sweepAt = oldSweepAt }()
 	sweepAt = 3
 
-	l := NewMemory(WithClock(func() time.Time { return now }))
+	clockNow := now
+	l := NewMemory(WithClock(func() time.Time { return clockNow }))
 	ctx := context.Background()
 
 	// Create key1 with a 2-minute window
-	l.Allow(ctx, "key1", 1, 100, 2*time.Minute)
+	l.Allow(ctx, "k1", 1, 100, 2*time.Minute)
 
 	// Create key2 and key3 with 1-minute windows
-	l.Allow(ctx, "key2", 1, 100, time.Minute)
-	l.Allow(ctx, "key3", 1, 100, time.Minute)
+	l.Allow(ctx, "k2", 1, 100, time.Minute)
+	l.Allow(ctx, "k3", 1, 100, time.Minute)
 
-	// Move 61 seconds forward - key2 and key3 are ended, key1 is still live
-	now = now.Add(61 * time.Second)
+	// Create an ended key that will be swept
+	l.Allow(ctx, "ended", 1, 100, time.Minute)
 
-	// Insert a new window which triggers sweep
-	l.Allow(ctx, "key4", 1, 100, time.Minute)
+	// Advance past the 1-minute windows but not past the 2-minute window
+	clockNow = clockNow.Add(61 * time.Second)
 
-	// key1 should still be in its original window and have count=1
-	d1, _ := l.Allow(ctx, "key1", 1, 100, 2*time.Minute)
+	// Insert a 5th key to trigger sweep
+	l.Allow(ctx, "k5", 1, 100, time.Minute)
+
+	// Assert k1 (live) is still present, but ended is gone
+	if _, ok := l.windows["k1"]; !ok {
+		t.Fatal("k1 with 2-minute window should still be present")
+	}
+	if _, ok := l.windows["ended"]; ok {
+		t.Fatal("ended key should be swept away")
+	}
+	if _, ok := l.windows["k2"]; ok {
+		t.Fatal("k2 should be swept away")
+	}
+	if _, ok := l.windows["k3"]; ok {
+		t.Fatal("k3 should be swept away")
+	}
+
+	// Verify k1 is still in its original window with count=2
+	d1, _ := l.Allow(ctx, "k1", 1, 100, 2*time.Minute)
 	if d1.Count != 2 {
-		t.Fatalf("key1 should still have count=2 (1 old + 1 new), got %d", d1.Count)
+		t.Fatalf("k1 should still have count=2 (1 old + 1 new), got %d", d1.Count)
 	}
 }
 
@@ -70,34 +98,53 @@ func TestSweepOnlyHappensOncePerMinute(t *testing.T) {
 	defer func() { sweepAt = oldSweepAt }()
 	sweepAt = 2
 
-	l := NewMemory(WithClock(func() time.Time { return now }))
+	clockNow := now
+	l := NewMemory(WithClock(func() time.Time { return clockNow }))
 	ctx := context.Background()
 
-	// Create two windows to fill to sweepAt
-	l.Allow(ctx, "key1", 1, 100, time.Minute)
-	l.Allow(ctx, "key2", 1, 100, time.Minute)
+	// At T, create keys a and b with 1s window
+	l.Allow(ctx, "a", 1, 100, time.Second)
+	l.Allow(ctx, "b", 1, 100, time.Second)
 
-	// Move 61 seconds forward to end these windows
-	now = now.Add(61 * time.Second)
+	// At T+2s (both ended), call Allow on key c to trigger sweep
+	clockNow = clockNow.Add(2 * time.Second)
+	l.Allow(ctx, "c", 1, 100, time.Second)
 
-	// Insert key3 to trigger sweep
-	l.Allow(ctx, "key3", 1, 100, time.Minute)
+	// Assert a and b are gone and nextSweep is set
+	if _, ok := l.windows["a"]; ok {
+		t.Fatal("a should be swept away")
+	}
+	if _, ok := l.windows["b"]; ok {
+		t.Fatal("b should be swept away")
+	}
+	if _, ok := l.windows["c"]; !ok {
+		t.Fatal("c should be present")
+	}
+	expectedNextSweep := clockNow.Add(time.Minute)
+	if l.nextSweep != expectedNextSweep {
+		t.Fatalf("nextSweep should be %v, got %v", expectedNextSweep, l.nextSweep)
+	}
 
-	// Insert key4 (an ended window entry that won't be swept yet)
-	now = now.Add(1 * time.Second) // Still within the minute after sweep
-	l.Allow(ctx, "key4", 1, 100, time.Minute)
+	// Still at T+2s, insert an ended entry directly and call Allow on key d
+	clockNow = clockNow.Add(1 * time.Second) // T+3s, still within the minute
+	l.windows["stale"] = &memWindow{
+		start: now,
+		end:   now.Add(time.Second),
+		count: 1,
+	}
+	l.Allow(ctx, "d", 1, 100, time.Second)
 
-	// Move 61 seconds forward again
-	now = now.Add(61 * time.Second)
+	// Assert "stale" is STILL present because no second sweep ran
+	if _, ok := l.windows["stale"]; !ok {
+		t.Fatal("stale should still be present (no sweep ran yet)")
+	}
 
-	// Insert key5 - this should trigger another sweep
-	l.Allow(ctx, "key5", 1, 100, time.Minute)
+	// Advance past nextSweep and call Allow on key e
+	clockNow = clockNow.Add(59 * time.Second) // Past nextSweep
+	l.Allow(ctx, "e", 1, 100, time.Second)
 
-	// If sweep happened on key4, it should be gone. If not, it would still be there.
-	// We can't directly check the internal state, but we verify by attempting to
-	// access key4 which should create a new window if it was swept.
-	d4, _ := l.Allow(ctx, "key4", 1, 100, time.Minute)
-	if d4.Count != 1 {
-		t.Fatalf("key4 should be in a new window with count=1 after second sweep, got %d", d4.Count)
+	// Assert "stale" is now gone because sweep ran
+	if _, ok := l.windows["stale"]; ok {
+		t.Fatal("stale should be swept away now")
 	}
 }

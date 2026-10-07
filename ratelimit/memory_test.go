@@ -80,6 +80,13 @@ func TestErrorOnInvalidWindow(t *testing.T) {
 	if d != (ratelimit.Decision{}) {
 		t.Fatalf("window=0 should return zero Decision, got %+v", d)
 	}
+	d, err = l.Allow(ctx, "key", 1, 100, -1*time.Second)
+	if err == nil {
+		t.Fatalf("window=-1 should error, got decision %+v", d)
+	}
+	if d != (ratelimit.Decision{}) {
+		t.Fatalf("window=-1 should return zero Decision, got %+v", d)
+	}
 }
 
 func TestErrorOnNegativeCharge(t *testing.T) {
