@@ -12,7 +12,17 @@ import (
 )
 
 // USD is an exact decimal amount of US dollars. The zero value is $0.
+//
+// An amount read by Parse or ParseLenient carries at most MaxPlaces decimal
+// places, the most a Postgres NUMERIC(38,18) column keeps, so no store
+// rounds one silently.
+//
+// Compare amounts with Equal or IsZero, never ==: two equal amounts can
+// differ in representation.
 type USD struct{ d decimal.Decimal }
+
+// MaxPlaces is the most decimal places Parse and ParseLenient accept.
+const MaxPlaces = 18
 
 // Zero is $0.
 var Zero USD
@@ -59,6 +69,9 @@ func parse(s string) (USD, error) {
 	d, err := decimal.NewFromString(s)
 	if err != nil {
 		return Zero, fmt.Errorf("%w: %q", ErrInvalid, s)
+	}
+	if d.Exponent() < -MaxPlaces {
+		return Zero, fmt.Errorf("%w: %q has more than %d decimal places", ErrInvalid, s, MaxPlaces)
 	}
 	return USD{d: d}, nil
 }

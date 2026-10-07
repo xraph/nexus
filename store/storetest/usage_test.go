@@ -87,3 +87,18 @@ func TestMonthlySpendWithNothingPriced(t *testing.T) {
 		}
 	})
 }
+
+// Amounts carry at most 18 decimal places, which is what a Postgres
+// NUMERIC(38,18) keeps. The smallest one must come back exactly.
+func TestSmallestAmountRoundTripsExactly(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		tn := storetest.InsertTenant(t, s)
+		want := storetest.Record(tn.ID, "0.000000000000000001")
+		storetest.InsertRecord(t, s, want)
+		got := storetest.FindRecord(t, s, want.ID)
+		if got.CostUSD == nil || got.CostUSD.String() != "0.000000000000000001" {
+			t.Fatalf("cost = %v, want 0.000000000000000001", got.CostUSD)
+		}
+		storetest.SameRecord(t, got, want)
+	})
+}

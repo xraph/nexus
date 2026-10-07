@@ -154,3 +154,28 @@ func TestJSON(t *testing.T) {
 		t.Fatalf("20-digit value = %s, %v", d.Price, err)
 	}
 }
+
+func TestAmountsCarryAtMostEighteenPlaces(t *testing.T) {
+	for _, s := range []string{"0.000000000000000001", "1.500000000000000000"} {
+		if _, err := money.Parse(s); err != nil {
+			t.Errorf("Parse(%q) = %v, want it accepted", s, err)
+		}
+	}
+	for _, s := range []string{"0.0000000000000000001", "1.5000000000000000000"} {
+		if _, err := money.Parse(s); !errors.Is(err, money.ErrInvalid) {
+			t.Errorf("Parse(%q) err = %v, want ErrInvalid", s, err)
+		}
+	}
+	if _, err := money.ParseLenient("1E-18"); err != nil {
+		t.Errorf("ParseLenient(1E-18) = %v, want it accepted", err)
+	}
+	for _, s := range []string{"1E-19", "0.0000000000000000001", "1.5E-19"} {
+		if _, err := money.ParseLenient(s); !errors.Is(err, money.ErrInvalid) {
+			t.Errorf("ParseLenient(%q) err = %v, want ErrInvalid", s, err)
+		}
+	}
+	var u money.USD
+	if err := json.Unmarshal([]byte(`"0.0000000000000000001"`), &u); !errors.Is(err, money.ErrInvalid) {
+		t.Errorf("UnmarshalJSON of 19 places err = %v, want ErrInvalid", err)
+	}
+}
