@@ -12,6 +12,7 @@ import (
 	"github.com/xraph/nexus/pipeline/middlewares"
 	"github.com/xraph/nexus/plugin"
 	"github.com/xraph/nexus/provider"
+	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/testutil"
 )
 
@@ -122,4 +123,38 @@ func TestStreamLifecycle_NoQuotaResolverNoEnforcement(t *testing.T) {
 		}
 	}
 	_ = resp.Stream.Close()
+}
+
+// TestTenantStreamQuota reads the stream limits from the tenant the access
+// stage loaded, and applies none without one.
+func TestTenantStreamQuota(t *testing.T) {
+	t.Parallel()
+
+	t.Run("with a tenant", func(t *testing.T) {
+		t.Parallel()
+		ctx := middlewares.WithTenantForTest(context.Background(), &tenant.Tenant{
+			Quota: tenant.Quota{MaxStreamDuration: 2 * time.Second, MaxStreamTokens: 50},
+		})
+		got := middlewares.TenantStreamQuota(ctx)
+		want := middlewares.StreamQuota{MaxDuration: 2 * time.Second, MaxTokens: 50}
+		if got != want {
+			t.Fatalf("quota = %+v, want %+v", got, want)
+		}
+	})
+	t.Run("without a tenant", func(t *testing.T) {
+		t.Parallel()
+		if got := middlewares.TenantStreamQuota(context.Background()); got != (middlewares.StreamQuota{}) {
+			t.Fatalf("quota = %+v, want none", got)
+		}
+	})
+}
+
+// TestQuotaErrorIsAQuotaExceededRefusal pins the code and status a stream
+// cut by its tenant's limit reports.
+func TestQuotaErrorIsAQuotaExceededRefusal(t *testing.T) {
+	t.Parallel()
+	status, code := pipeline.HTTPStatus(&middlewares.QuotaError{What: "output_tokens"})
+	if status != 429 || code != pipeline.CodeQuotaExceeded {
+		t.Fatalf("status/code = %d/%s, want 429/%s", status, code, pipeline.CodeQuotaExceeded)
+	}
 }

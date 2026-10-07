@@ -404,6 +404,7 @@ type usageRecordingStream struct {
 	mu       sync.Mutex
 	usage    provider.Usage
 	failed   bool
+	quotaCut bool // the stream was cut by its tenant's duration or token limit
 	blocked  *guard.BlockedError
 	recorded bool
 }
@@ -416,6 +417,9 @@ func (s *usageRecordingStream) Next(ctx context.Context) (*provider.StreamChunk,
 	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		s.failed = true
+		if IsQuotaExceeded(err) {
+			s.quotaCut = true
+		}
 		var blocked *guard.BlockedError
 		if s.blocked == nil && errors.As(err, &blocked) {
 			s.blocked = blocked
@@ -437,7 +441,7 @@ func (s *usageRecordingStream) Close() error {
 	}
 
 	s.mu.Lock()
-	u, failed, blocked := s.usage, s.failed, s.blocked
+	u, failed, quotaCut, blocked := s.usage, s.failed, s.quotaCut, s.blocked
 	s.mu.Unlock()
 	respModel := ""
 	if v, ok := s.req.State[StateKeyStreamFinalResponse].(*provider.CompletionResponse); ok && v != nil {
@@ -475,8 +479,10 @@ func (s *usageRecordingStream) Close() error {
 		cached(rec)
 	case failed && !hasTokens:
 		rec.Outcome, rec.StatusCode, rec.PricingStatus = usage.OutcomeError, 500, usage.PricingUnknown
+		streamCutCode(rec, quotaCut)
 	case failed:
 		rec.Outcome, rec.StatusCode = usage.OutcomeError, 500
+		streamCutCode(rec, quotaCut)
 		s.mw.price(s.ctx, rec, u, false, respModel)
 	default:
 		rec.Outcome, rec.StatusCode = usage.OutcomeOK, 200
@@ -484,6 +490,15 @@ func (s *usageRecordingStream) Close() error {
 	}
 	s.mw.finish(rec, s.reserved)
 	return closeErr
+}
+
+// streamCutCode marks a stream cut by its tenant's limit as 429
+// quota_exceeded. It stays an error, not a refusal: the stream was served in
+// part, so its tokens are priced.
+func streamCutCode(rec *usage.Record, quotaCut bool) {
+	if quotaCut {
+		rec.StatusCode, rec.RefusalCode = 429, pipeline.CodeQuotaExceeded
+	}
 }
 
 func (s *usageRecordingStream) Usage() *provider.Usage { return s.inner.Usage() }

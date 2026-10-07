@@ -214,6 +214,39 @@ func TestUsageRecordsAFailedStream(t *testing.T) {
 	})
 }
 
+func TestUsageRecordsAStreamCutByItsTenantQuota(t *testing.T) {
+	t.Parallel()
+	cut := &middlewares.QuotaError{What: "output_tokens"}
+
+	t.Run("after reporting tokens", func(t *testing.T) {
+		t.Parallel()
+		got := drainStream(t, &erroringStream{chunks: []*provider.StreamChunk{usageChunk(10, 60)}, err: cut}, false)
+		// 10 * 2.50/1e6 + 60 * 10/1e6
+		wantRecord(t, got, usage.OutcomeError, usage.PricingPriced, "0.000625")
+		if got.StatusCode != 429 || got.RefusalCode != "quota_exceeded" {
+			t.Fatalf("status/code = %d/%q, want 429/quota_exceeded", got.StatusCode, got.RefusalCode)
+		}
+		if got.TotalTokens != 70 {
+			t.Fatalf("tokens = %d, want 70", got.TotalTokens)
+		}
+	})
+	t.Run("with no tokens", func(t *testing.T) {
+		t.Parallel()
+		got := drainStream(t, &erroringStream{err: cut}, false)
+		wantRecord(t, got, usage.OutcomeError, usage.PricingUnknown, "")
+		if got.StatusCode != 429 || got.RefusalCode != "quota_exceeded" {
+			t.Fatalf("status/code = %d/%q, want 429/quota_exceeded", got.StatusCode, got.RefusalCode)
+		}
+	})
+	t.Run("a plain failure keeps 500", func(t *testing.T) {
+		t.Parallel()
+		got := drainStream(t, &erroringStream{err: errors.New("connection reset")}, false)
+		if got.StatusCode != 500 || got.RefusalCode != "" {
+			t.Fatalf("status/code = %d/%q, want 500/empty", got.StatusCode, got.RefusalCode)
+		}
+	})
+}
+
 func TestUsageRecordsAStreamCacheReplay(t *testing.T) {
 	t.Parallel()
 	st := testutil.NewFakeStream([]*provider.StreamChunk{

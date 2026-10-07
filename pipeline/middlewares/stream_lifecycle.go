@@ -238,6 +238,22 @@ func (e *QuotaError) Error() string { return "nexus: stream quota exceeded: " + 
 
 func errQuotaExceeded(what string) error { return &QuotaError{What: what} }
 
+// RefusalCode and StatusCode report a stream cut by its tenant's limit as
+// quota_exceeded, 429. The stream was served in part, so the usage stage
+// still prices the tokens it saw.
+func (e *QuotaError) RefusalCode() string { return pipeline.CodeQuotaExceeded }
+func (e *QuotaError) StatusCode() int     { return 429 }
+
+// TenantStreamQuota is the default QuotaResolver: the stream limits of the
+// tenant the access stage loaded, or none.
+func TenantStreamQuota(ctx context.Context) StreamQuota {
+	t, ok := TenantFromContext(ctx)
+	if !ok {
+		return StreamQuota{}
+	}
+	return StreamQuota{MaxDuration: t.Quota.MaxStreamDuration, MaxTokens: t.Quota.MaxStreamTokens}
+}
+
 // IsQuotaExceeded reports whether err is a stream-quota violation.
 func IsQuotaExceeded(err error) bool {
 	var qe *QuotaError
