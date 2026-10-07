@@ -10,6 +10,9 @@ import (
 
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
+
+	// Registers the "sqlite" migration executor that Migrate looks up.
+	_ "github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate"
 	"github.com/xraph/grove/migrate"
 
 	"github.com/xraph/nexus/key"
