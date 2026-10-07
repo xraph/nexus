@@ -11,7 +11,7 @@ import (
 	"github.com/xraph/nexus/provider"
 )
 
-func runOnce(t *testing.T, ctx context.Context, mw pipeline.Middleware, req *pipeline.Request) (context.Context, error) {
+func runOnce(ctx context.Context, t *testing.T, mw pipeline.Middleware, req *pipeline.Request) (context.Context, error) {
 	t.Helper()
 	var seen context.Context
 	_, err := mw.Process(ctx, req, func(c context.Context) (*pipeline.Response, error) {
@@ -23,12 +23,12 @@ func runOnce(t *testing.T, ctx context.Context, mw pipeline.Middleware, req *pip
 
 func TestRequestIDIsSetOnce(t *testing.T) {
 	req := &pipeline.Request{State: map[string]any{}}
-	seen, _ := runOnce(t, context.Background(), middlewares.NewRequestID(), req)
+	seen, _ := runOnce(context.Background(), t, middlewares.NewRequestID(), req)
 	if _, err := id.ParseRequestID(pipeline.RequestID(seen)); err != nil {
 		t.Fatalf("request id %q: %v", pipeline.RequestID(seen), err)
 	}
 	given := id.NewRequestID().String()
-	seen, _ = runOnce(t, pipeline.WithRequestID(context.Background(), given), middlewares.NewRequestID(), req)
+	seen, _ = runOnce(pipeline.WithRequestID(context.Background(), given), t, middlewares.NewRequestID(), req)
 	if pipeline.RequestID(seen) != given {
 		t.Fatalf("an existing request id must be kept")
 	}
@@ -57,7 +57,7 @@ func TestIdentityReconcilesContextAndRequest(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			seen, err := runOnce(t, c.ctx, middlewares.NewIdentity(), c.req)
+			seen, err := runOnce(c.ctx, t, middlewares.NewIdentity(), c.req)
 			if c.wantErr {
 				if !errors.Is(err, middlewares.ErrInvalidIdentity) {
 					t.Fatalf("err = %v, want ErrInvalidIdentity", err)
