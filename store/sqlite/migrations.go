@@ -186,6 +186,22 @@ ALTER TABLE usage_records DROP COLUMN pricing_status;
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "index_usage_by_tenant_and_time",
+			Version: "20261007000002",
+			Comment: "Index usage by tenant and time for the daily count and the monthly spend",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// The quota stage reads a tenant's count for the day and spend
+				// for the month on every request it checks. Both filter on
+				// tenant_id and a created_at range.
+				_, err := exec.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_usage_tenant_created ON usage_records (tenant_id, created_at)`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP INDEX IF EXISTS idx_usage_tenant_created`)
+				return err
+			},
+		},
 	)
 	return g
 }()
