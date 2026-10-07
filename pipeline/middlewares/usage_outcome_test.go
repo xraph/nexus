@@ -61,6 +61,7 @@ func TestUsageClassifiesEveryOutcome(t *testing.T) {
 		{"input block", false, false, nil, &guard.BlockedError{Guard: "pii", Phase: guard.PhaseInput, Reason: "ssn"}, "gpt-4o", usage.OutcomeBlocked, usage.PricingNotCharged, "0", "pii", ""},
 		{"output block", true, false, nil, &guard.BlockedError{Guard: "leak", Phase: guard.PhaseOutput, Usage: &served.Usage, Model: "gpt-4o", Provider: "openai"}, "gpt-4o", usage.OutcomeBlocked, usage.PricingPriced, "0.008755", "leak", ""},
 		{"output block without usage", true, false, nil, &guard.BlockedError{Guard: "leak", Phase: guard.PhaseOutput}, "gpt-4o", usage.OutcomeBlocked, usage.PricingUnknown, "", "leak", ""},
+		{"output block, response names another provider", true, false, nil, &guard.BlockedError{Guard: "leak", Phase: guard.PhaseOutput, Usage: &served.Usage, Model: "gpt-4o", Provider: "openai-compatible"}, "gpt-4o", usage.OutcomeBlocked, usage.PricingPriced, "0.008755", "leak", ""},
 		{"block with no phase", true, false, nil, &guard.BlockedError{Guard: "odd"}, "gpt-4o", usage.OutcomeBlocked, usage.PricingUnknown, "", "odd", ""},
 		{"block with no phase, with usage", true, false, nil, &guard.BlockedError{Guard: "odd", Usage: &served.Usage, Model: "gpt-4o", Provider: "openai"}, "gpt-4o", usage.OutcomeBlocked, usage.PricingPriced, "0.008755", "odd", ""},
 		{"served, only a total reported", true, false, &pipeline.Response{Completion: &provider.CompletionResponse{Model: "gpt-4o", Usage: provider.Usage{TotalTokens: 1801}}}, nil, "gpt-4o", usage.OutcomeOK, usage.PricingUnknown, "", "", ""},
@@ -351,5 +352,35 @@ func TestUsageAfterCloseDropsNewRecordsButKeepsOpenStreams(t *testing.T) {
 	wantRecord(t, got, usage.OutcomeOK, usage.PricingPriced, "0.00045")
 	if mw.InsertErrors() != 2 || log.n != 2 {
 		t.Fatalf("insert errors %d, logged %d; want 2 dropped records", mw.InsertErrors(), log.n)
+	}
+}
+
+func TestUsageAttributesFromItsContextFirst(t *testing.T) {
+	ctxTenant, ctxKey := id.NewTenantID().String(), id.NewKeyID().String()
+	reqTenant, reqKey := id.NewTenantID().String(), id.NewKeyID().String()
+	for _, c := range []struct {
+		name                string
+		ctxT, ctxK          string
+		reqT, reqK          string
+		wantTenant, wantKey string
+	}{
+		{"both set: the context wins", ctxTenant, ctxKey, reqTenant, reqKey, ctxTenant, ctxKey},
+		{"only the context", ctxTenant, ctxKey, "", "", ctxTenant, ctxKey},
+		{"only the request", "", "", reqTenant, reqKey, reqTenant, reqKey},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rec := newRecordingUsage()
+			mw := middlewares.NewUsage(rec, gpt4o, nil)
+			req := &pipeline.Request{Type: pipeline.RequestCompletion, Completion: &provider.CompletionRequest{Model: "gpt-4o", TenantID: c.reqT, KeyID: c.reqK}, State: map[string]any{}}
+			ctx := pipeline.WithKeyID(pipeline.WithTenantID(context.Background(), c.ctxT), c.ctxK)
+			_, _ = mw.Process(ctx, req, func(context.Context) (*pipeline.Response, error) {
+				return nil, refusal{}
+			})
+			_ = mw.Flush(context.Background())
+			got := rec.only(t)
+			if got.TenantID.String() != c.wantTenant || got.KeyID.String() != c.wantKey {
+				t.Fatalf("attributed to %s / %s, want %s / %s", got.TenantID, got.KeyID, c.wantTenant, c.wantKey)
+			}
+		})
 	}
 }

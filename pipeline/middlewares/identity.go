@@ -2,7 +2,6 @@ package middlewares
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/xraph/nexus/id"
@@ -10,15 +9,28 @@ import (
 )
 
 // ErrInvalidIdentity reports a tenant or key id that does not parse, or a
-// request whose context and fields name different tenants or keys.
-var ErrInvalidIdentity = errors.New("nexus: invalid tenant or key id")
+// request whose context and fields name different tenants or keys. It is a
+// pipeline.Refusal (invalid_request, 400): the request is refused before any
+// provider is called, and the usage stage records it unattributed at $0,
+// because neither identity it named can be trusted. The identity stage wraps
+// it with the detail, so match it with errors.Is.
+var ErrInvalidIdentity error = invalidIdentity{}
+
+type invalidIdentity struct{}
+
+func (invalidIdentity) Error() string       { return "nexus: invalid tenant or key id" }
+func (invalidIdentity) RefusalCode() string { return "invalid_request" }
+func (invalidIdentity) StatusCode() int     { return 400 }
+
+var _ pipeline.Refusal = invalidIdentity{}
 
 // IdentityMiddleware makes the tenant and key a request is attributed to
 // agree in both places later stages read them: the pipeline context (set by
 // an authenticating HTTP edge) and the request's TenantID/KeyID fields (set
 // by an in-process Go caller). Stages that wrap it, such as usage, read the
-// request fields after the call returns, because a context set here is not
-// visible to them. Both may be empty: an unattributed request is allowed.
+// context they were given and fall back to the request fields after the
+// call returns, because a context set here is not visible to them. Both may
+// be empty: an unattributed request is allowed.
 type IdentityMiddleware struct{}
 
 // NewIdentity creates the identity middleware.

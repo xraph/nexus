@@ -15,6 +15,7 @@ import (
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/pipeline"
+	"github.com/xraph/nexus/pipeline/middlewares"
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/router/strategies"
 	"github.com/xraph/nexus/store"
@@ -481,5 +482,31 @@ func TestShutdownReturnsTheFlushErrorWhenAnInsertIsStuck(t *testing.T) {
 	defer cancel()
 	if err := gw.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("shutdown = %v, want the flush's deadline error", err)
+	}
+}
+
+func TestAMismatchedIdentityIsRefusedAndChargedToNeitherTenant(t *testing.T) {
+	a, b := id.NewTenantID().String(), id.NewTenantID().String()
+	p := &fakeProvider{name: "openai", price: listPrice}
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		ctx = pipeline.WithTenantID(ctx, a)
+		_, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "gpt-4o", TenantID: b, Messages: []provider.Message{{Role: "user", Content: "hi"}}})
+		var refused pipeline.Refusal
+		if !errors.Is(err, middlewares.ErrInvalidIdentity) || !errors.As(err, &refused) || refused.StatusCode() != 400 {
+			t.Fatalf("err = %v, want an invalid_request refusal", err)
+		}
+	}, nexus.WithProvider(p))
+	if p.calls != 0 || len(recs) != 1 {
+		t.Fatalf("provider calls %d, records %d; want 0 and 1", p.calls, len(recs))
+	}
+	r := recs[0]
+	if r.Outcome != usage.OutcomeRefused || r.RefusalCode != "invalid_request" || r.StatusCode != 400 {
+		t.Fatalf("record = %s code %q status %d; want refused, invalid_request, 400", r.Outcome, r.RefusalCode, r.StatusCode)
+	}
+	if !r.TenantID.IsNil() || !r.KeyID.IsNil() {
+		t.Fatalf("record attributed to %s / %s; a mismatched identity is charged to neither", r.TenantID, r.KeyID)
+	}
+	if r.PricingStatus != usage.PricingNotCharged || r.CostUSD == nil || !r.CostUSD.IsZero() {
+		t.Fatalf("record = %s cost %v; want not_charged at $0", r.PricingStatus, r.CostUSD)
 	}
 }

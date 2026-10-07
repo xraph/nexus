@@ -135,7 +135,16 @@ func (m *UsageMiddleware) newRecord(ctx context.Context, req *pipeline.Request, 
 	if rid, err := id.ParseRequestID(pipeline.RequestID(ctx)); err == nil {
 		rec.RequestID = rid
 	}
+	// The identity this stage was given in its context comes from the
+	// authenticating edge, so it wins over the request fields. Either may be
+	// set alone; the identity stage refuses a request where they disagree.
 	tenant, key := requestIdentity(req)
+	if t := pipeline.TenantID(ctx); t != "" {
+		tenant = t
+	}
+	if k := pipeline.KeyID(ctx); k != "" {
+		key = k
+	}
 	if tid, err := id.ParseTenantID(tenant); err == nil {
 		rec.TenantID = tid
 	}
@@ -173,7 +182,9 @@ func (m *UsageMiddleware) classify(ctx context.Context, rec *usage.Record, req *
 			}
 			cached(rec)
 		case blocked.Usage != nil:
-			if blocked.Provider != "" {
+			// The registry name from State is what the price book is keyed
+			// by. The response's own provider field is only a fallback.
+			if rec.Provider == "" {
 				rec.Provider = blocked.Provider
 			}
 			setTokens(rec, *blocked.Usage)
@@ -184,6 +195,11 @@ func (m *UsageMiddleware) classify(ctx context.Context, rec *usage.Record, req *
 	case errors.As(err, &refused):
 		rec.Outcome, rec.RefusalCode, rec.StatusCode = usage.OutcomeRefused, refused.RefusalCode(), refused.StatusCode()
 		notCharged(rec)
+		// A request whose identities disagree or do not parse is charged to
+		// neither: it is recorded unattributed.
+		if errors.Is(err, ErrInvalidIdentity) {
+			rec.TenantID, rec.KeyID = id.TenantID{}, id.KeyID{}
+		}
 	case err != nil:
 		rec.Outcome, rec.StatusCode = usage.OutcomeError, 500
 		if rec.Provider == "" {

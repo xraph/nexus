@@ -39,13 +39,22 @@ func (s *service) Record(ctx context.Context, rec *Record) error {
 //     otherwise.
 //
 // A record that says its cost is unknown (PricingUnpricedModel or
-// PricingUnknown) and also carries a cost, or says PricingNotCharged with a
+// PricingUnknown) and also carries a cost, says PricingNotCharged with a
+// non-zero cost, or says PricingCached without being a cache hit or with a
 // non-zero cost, contradicts itself, so it is refused rather than guessed at.
 func normalise(rec *Record) (*Record, error) {
 	if rec == nil {
 		return nil, errors.New("usage: record is nil")
 	}
 	r := *rec
+	if r.PricingStatus == PricingCached {
+		if !r.Cached {
+			return nil, errors.New("usage: record is priced as cached but is not a cache hit")
+		}
+		if r.CostUSD != nil && !r.CostUSD.IsZero() {
+			return nil, errors.New("usage: record is priced as cached but carries a non-zero cost")
+		}
+	}
 	switch {
 	case r.Cached:
 		zero := money.Zero
