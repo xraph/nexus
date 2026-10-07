@@ -37,12 +37,12 @@ func formatQuotaValue(v int) string {
 	return fmt.Sprintf("%d", v)
 }
 
-// formatBudget formats a USD budget.
-func formatBudget(v float64) string {
-	if v == 0 {
+// formatBudget formats a monthly budget; zero means no budget.
+func formatBudget(v money.USD) string {
+	if v.IsZero() {
 		return "Unlimited"
 	}
-	return fmt.Sprintf("$%.2f", v)
+	return "$" + v.String()
 }
 
 // formatCost formats an exact USD amount for the legacy dashboard.

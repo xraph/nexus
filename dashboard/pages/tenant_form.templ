@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/forgeui/components/input"
 	"github.com/xraph/forgeui/components/separator"
 	"github.com/xraph/forgeui/icons"
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/tenant"
 )
 
@@ -243,7 +244,7 @@ func tenantQuotaValue(t *tenant.Tenant, field string) string {
 	case "daily_requests":
 		return intToStr(t.Quota.DailyRequests)
 	case "monthly_budget_usd":
-		return floatToStr(t.Quota.MonthlyBudgetUSD)
+		return usdToStr(t.Quota.MonthlyBudgetUSD)
 	case "max_tokens_per_req":
 		return intToStr(t.Quota.MaxTokensPerReq)
 	}
@@ -276,11 +277,11 @@ func intToStr(v int) string {
 	return strconv.Itoa(v)
 }
 
-func floatToStr(v float64) string {
-	if v == 0 {
+func usdToStr(v money.USD) string {
+	if v.IsZero() {
 		return ""
 	}
-	return strconv.FormatFloat(v, 'f', 2, 64)
+	return v.String()
 }
 
 func joinStrings(ss []string) string {

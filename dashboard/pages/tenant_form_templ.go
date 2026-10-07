@@ -15,7 +15,7 @@ import (
 	"github.com/xraph/forgeui/components/input"
 	"github.com/xraph/forgeui/components/separator"
 	"github.com/xraph/forgeui/icons"
-
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/tenant"
 )
 
@@ -206,7 +206,7 @@ func TenantFormPage(data TenantFormData) templ.Component {
 					var templ_7745c5c3_Var8 string
 					templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(data.Error)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/tenant_form.templ`, Line: 58, Col: 18}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/tenant_form.templ`, Line: 59, Col: 18}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 					if templ_7745c5c3_Err != nil {
@@ -229,7 +229,7 @@ func TenantFormPage(data TenantFormData) templ.Component {
 					var templ_7745c5c3_Var9 string
 					templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(string(templ.SafeURL("./edit?id=" + data.Tenant.ID.String())))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/tenant_form.templ`, Line: 63, Col: 77}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/tenant_form.templ`, Line: 64, Col: 77}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 					if templ_7745c5c3_Err != nil {
@@ -524,7 +524,7 @@ func tenantQuotaValue(t *tenant.Tenant, field string) string {
 	case "daily_requests":
 		return intToStr(t.Quota.DailyRequests)
 	case "monthly_budget_usd":
-		return floatToStr(t.Quota.MonthlyBudgetUSD)
+		return usdToStr(t.Quota.MonthlyBudgetUSD)
 	case "max_tokens_per_req":
 		return intToStr(t.Quota.MaxTokensPerReq)
 	}
@@ -557,11 +557,11 @@ func intToStr(v int) string {
 	return strconv.Itoa(v)
 }
 
-func floatToStr(v float64) string {
-	if v == 0 {
+func usdToStr(v money.USD) string {
+	if v.IsZero() {
 		return ""
 	}
-	return strconv.FormatFloat(v, 'f', 2, 64)
+	return v.String()
 }
 
 func joinStrings(ss []string) string {

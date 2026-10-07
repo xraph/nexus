@@ -15,6 +15,7 @@ import (
 	"github.com/xraph/nexus/dashboard/pages"
 	"github.com/xraph/nexus/dashboard/widgets"
 	"github.com/xraph/nexus/key"
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/usage"
 )
@@ -245,7 +246,7 @@ func (c *Contributor) renderTenantCreate(ctx context.Context, params contributor
 			quota.DailyRequests = safeAtoi(v)
 		}
 		if v := params.FormData["monthly_budget_usd"]; v != "" {
-			quota.MonthlyBudgetUSD = safeParseFloat(v)
+			quota.MonthlyBudgetUSD = parseBudget(v)
 		}
 		if v := params.FormData["max_tokens_per_req"]; v != "" {
 			quota.MaxTokensPerReq = safeAtoi(v)
@@ -316,7 +317,7 @@ func (c *Contributor) renderTenantEdit(ctx context.Context, params contributor.P
 			quota.DailyRequests = safeAtoi(v)
 		}
 		if v := params.FormData["monthly_budget_usd"]; v != "" {
-			quota.MonthlyBudgetUSD = safeParseFloat(v)
+			quota.MonthlyBudgetUSD = parseBudget(v)
 		}
 		if v := params.FormData["max_tokens_per_req"]; v != "" {
 			quota.MaxTokensPerReq = safeAtoi(v)
@@ -639,10 +640,12 @@ func safeAtoi(s string) int {
 	return v
 }
 
-func safeParseFloat(s string) float64 {
-	v, err := strconv.ParseFloat(s, 64)
+// parseBudget reads a budget field; anything that is not an amount means
+// no budget, as an empty field always did.
+func parseBudget(s string) money.USD {
+	v, err := money.Parse(s)
 	if err != nil {
-		return 0
+		return money.Zero
 	}
 	return v
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/key"
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/store"
 	"github.com/xraph/nexus/tenant"
 )
@@ -33,6 +34,7 @@ func Tenant(slug string) *tenant.Tenant {
 			RPM:               60,
 			TPM:               90_000,
 			DailyRequests:     1_000,
+			MonthlyBudgetUSD:  money.MustParse("1234.567891"),
 			MaxTokensPerReq:   4_096,
 			MaxStreamDuration: 90 * time.Second,
 			MaxStreamTokens:   8_192,
@@ -94,6 +96,11 @@ func SameTenant(t *testing.T, got, want *tenant.Tenant) {
 	if !g.CreatedAt.Equal(w.CreatedAt) || !g.UpdatedAt.Equal(w.UpdatedAt) {
 		t.Errorf("tenant times = %s/%s, want %s/%s", g.CreatedAt, g.UpdatedAt, w.CreatedAt, w.UpdatedAt)
 	}
+	// Compare the budget by value: two equal amounts can differ in layout.
+	if !g.Quota.MonthlyBudgetUSD.Equal(w.Quota.MonthlyBudgetUSD) {
+		t.Errorf("tenant monthly budget = %s, want %s", g.Quota.MonthlyBudgetUSD, w.Quota.MonthlyBudgetUSD)
+	}
+	g.Quota.MonthlyBudgetUSD, w.Quota.MonthlyBudgetUSD = money.Zero, money.Zero
 	g.ID, w.ID = id.Nil, id.Nil
 	g.CreatedAt, w.CreatedAt, g.UpdatedAt, w.UpdatedAt = time.Time{}, time.Time{}, time.Time{}, time.Time{}
 	if !reflect.DeepEqual(g, w) {

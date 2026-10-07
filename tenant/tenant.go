@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xraph/nexus/id"
+	"github.com/xraph/nexus/money"
 )
 
 // Tenant represents an isolated customer / team / project.
@@ -32,11 +33,11 @@ const (
 
 // Quota defines limits for a tenant.
 type Quota struct {
-	RPM              int     `json:"rpm"`                // requests per minute
-	TPM              int     `json:"tpm"`                // tokens per minute
-	DailyRequests    int     `json:"daily_requests"`     // max requests per day (0 = unlimited)
-	MonthlyBudgetUSD float64 `json:"monthly_budget_usd"` // max spend per month (0 = unlimited)
-	MaxTokensPerReq  int     `json:"max_tokens_per_req"` // max tokens per single request
+	RPM              int       `json:"rpm"`                // requests per minute
+	TPM              int       `json:"tpm"`                // tokens per minute
+	DailyRequests    int       `json:"daily_requests"`     // max requests per day (0 = unlimited)
+	MonthlyBudgetUSD money.USD `json:"monthly_budget_usd"` // max spend per month, exact; zero means no budget
+	MaxTokensPerReq  int       `json:"max_tokens_per_req"` // max tokens per single request
 
 	// Streaming-specific limits. Enforced by middlewares.NewStreamLifecycle
 	// when wired with a QuotaResolver.

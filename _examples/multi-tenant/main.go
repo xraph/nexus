@@ -23,6 +23,7 @@ import (
 	nexus "github.com/xraph/nexus"
 	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/model"
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/providers/openai"
 	"github.com/xraph/nexus/tenant"
@@ -61,7 +62,7 @@ func main() {
 			RPM:              60,
 			TPM:              100000,
 			DailyRequests:    1000,
-			MonthlyBudgetUSD: 100.0,
+			MonthlyBudgetUSD: money.MustParse("100"),
 		},
 	})
 	if err != nil {

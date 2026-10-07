@@ -27,29 +27,80 @@ type tenantModel struct {
 	Name            string            `grove:"name"       bson:"name"`
 	Slug            string            `grove:"slug"       bson:"slug"`
 	Status          string            `grove:"status"     bson:"status"`
-	Quota           tenant.Quota      `grove:"quota"      bson:"quota"`
+	Quota           quotaDoc          `grove:"quota"      bson:"quota"`
 	Config          tenant.Config     `grove:"config"     bson:"config"`
 	Metadata        map[string]string `grove:"metadata"   bson:"metadata,omitempty"`
 	CreatedAt       time.Time         `grove:"created_at" bson:"created_at"`
 	UpdatedAt       time.Time         `grove:"updated_at" bson:"updated_at"`
 }
 
-func tenantToModel(t *tenant.Tenant) *tenantModel {
+// quotaDoc is tenant.Quota as stored. Its keys are the lowercased names the
+// driver's default codec wrote before this type existed, so old documents
+// still read.
+type quotaDoc struct {
+	RPM               int           `bson:"rpm"`
+	TPM               int           `bson:"tpm"`
+	DailyRequests     int           `bson:"dailyrequests"`
+	MonthlyBudgetUSD  any           `bson:"monthlybudgetusd"`
+	MaxTokensPerReq   int           `bson:"maxtokensperreq"`
+	MaxStreamDuration time.Duration `bson:"maxstreamduration"`
+	MaxStreamTokens   int           `bson:"maxstreamtokens"`
+}
+
+func quotaToDoc(q tenant.Quota) (quotaDoc, error) {
+	var budget any
+	if !q.MonthlyBudgetUSD.IsZero() {
+		b, err := decimalOf(&q.MonthlyBudgetUSD)
+		if err != nil {
+			return quotaDoc{}, err
+		}
+		budget = b
+	}
+	return quotaDoc{
+		RPM: q.RPM, TPM: q.TPM, DailyRequests: q.DailyRequests, MonthlyBudgetUSD: budget,
+		MaxTokensPerReq: q.MaxTokensPerReq, MaxStreamDuration: q.MaxStreamDuration, MaxStreamTokens: q.MaxStreamTokens,
+	}, nil
+}
+
+func quotaFromDoc(d quotaDoc) (tenant.Quota, error) {
+	q := tenant.Quota{
+		RPM: d.RPM, TPM: d.TPM, DailyRequests: d.DailyRequests, MaxTokensPerReq: d.MaxTokensPerReq,
+		MaxStreamDuration: d.MaxStreamDuration, MaxStreamTokens: d.MaxStreamTokens,
+	}
+	budget, err := usdFromBSON(d.MonthlyBudgetUSD)
+	if err != nil {
+		return tenant.Quota{}, err
+	}
+	if budget != nil {
+		q.MonthlyBudgetUSD = *budget
+	}
+	return q, nil
+}
+
+func tenantToModel(t *tenant.Tenant) (*tenantModel, error) {
+	quota, err := quotaToDoc(t.Quota)
+	if err != nil {
+		return nil, err
+	}
 	return &tenantModel{
 		ID:        t.ID.String(),
 		Name:      t.Name,
 		Slug:      t.Slug,
 		Status:    string(t.Status),
-		Quota:     t.Quota,
+		Quota:     quota,
 		Config:    t.Config,
 		Metadata:  t.Metadata,
 		CreatedAt: t.CreatedAt,
 		UpdatedAt: t.UpdatedAt,
-	}
+	}, nil
 }
 
 func tenantFromModel(m *tenantModel) (*tenant.Tenant, error) {
 	tid, err := id.ParseTenantID(m.ID)
+	if err != nil {
+		return nil, err
+	}
+	quota, err := quotaFromDoc(m.Quota)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +109,7 @@ func tenantFromModel(m *tenantModel) (*tenant.Tenant, error) {
 		Name:      m.Name,
 		Slug:      m.Slug,
 		Status:    tenant.Status(m.Status),
-		Quota:     m.Quota,
+		Quota:     quota,
 		Config:    m.Config,
 		Metadata:  m.Metadata,
 		CreatedAt: m.CreatedAt,

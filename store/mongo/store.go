@@ -100,9 +100,11 @@ type tenantStore struct {
 }
 
 func (s *tenantStore) Insert(ctx context.Context, t *tenant.Tenant) error {
-	m := tenantToModel(t)
-	_, err := s.mdb.NewInsert(m).Exec(ctx)
+	m, err := tenantToModel(t)
 	if err != nil {
+		return err
+	}
+	if _, err := s.mdb.NewInsert(m).Exec(ctx); err != nil {
 		return fmt.Errorf("nexus/mongo: insert tenant: %w", err)
 	}
 	return nil
@@ -133,7 +135,10 @@ func (s *tenantStore) FindBySlug(ctx context.Context, slug string) (*tenant.Tena
 }
 
 func (s *tenantStore) Update(ctx context.Context, t *tenant.Tenant) error {
-	m := tenantToModel(t)
+	m, err := tenantToModel(t)
+	if err != nil {
+		return err
+	}
 	res, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID}).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("nexus/mongo: update tenant: %w", err)

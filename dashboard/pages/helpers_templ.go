@@ -12,6 +12,7 @@ import (
 
 	"github.com/a-h/templ"
 	templruntime "github.com/a-h/templ/runtime"
+	"github.com/xraph/nexus/money"
 )
 
 // truncateString shortens s to maxLen characters, appending "..." if truncated.
@@ -75,12 +76,12 @@ func formatQuotaValue(v int) string {
 	return fmt.Sprintf("%d", v)
 }
 
-// formatBudget formats a USD budget value.
-func formatBudget(v float64) string {
-	if v == 0 {
+// formatBudget formats a monthly budget; zero means no budget.
+func formatBudget(v money.USD) string {
+	if v.IsZero() {
 		return "Unlimited"
 	}
-	return fmt.Sprintf("$%.2f", v)
+	return "$" + v.String()
 }
 
 // formatJSON returns a pretty-printed JSON string.
@@ -129,7 +130,7 @@ func fieldRow(label string, value string) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 98, Col: 63}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 100, Col: 63}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -142,7 +143,7 @@ func fieldRow(label string, value string) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(value)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 99, Col: 34}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 101, Col: 34}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -185,7 +186,7 @@ func codeBlock(content string) templ.Component {
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(content)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 105, Col: 114}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 107, Col: 114}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {
@@ -228,7 +229,7 @@ func credentialField(value string) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(value)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 110, Col: 100}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/helpers.templ`, Line: 112, Col: 100}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
