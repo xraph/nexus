@@ -301,3 +301,33 @@ func TestRotateNamesTheReplacementWhenTheRollbackFailsToo(t *testing.T) {
 		t.Fatalf("error does not say the replacement is still active: %v", err)
 	}
 }
+
+// untouchedStore fails the test if Validate reaches the store.
+type untouchedStore struct {
+	key.Store
+	t *testing.T
+}
+
+func (u untouchedStore) FindByPrefix(context.Context, string) ([]*key.APIKey, error) {
+	u.t.Error("Validate called FindByPrefix for a malformed key")
+	return nil, errStore
+}
+
+func TestAMalformedKeyNeverReachesTheStore(t *testing.T) {
+	svc := key.NewService(untouchedStore{Store: store.NewMemory().Keys(), t: t})
+	good := "nxs_" + strings.Repeat("a1", 32)
+	for name, raw := range map[string]string{
+		"non-utf8":      "nxs_\xff\xfe" + strings.Repeat("a", 62),
+		"non-utf8 long": "\xff\xfe\xfd\xfc\xfb\xfa\xf9\xf8\xf7\xf6\xf5\xf4\xf3",
+		"uppercase hex": "nxs_" + strings.Repeat("A1", 32),
+		"non-hex":       "nxs_" + strings.Repeat("g", 64),
+		"too short":     good[:67],
+		"too long":      good + "a",
+		"wrong prefix":  "abc_" + strings.Repeat("a", 64),
+		"empty":         "",
+	} {
+		if _, err := svc.Validate(context.Background(), raw); !errors.Is(err, key.ErrNotFound) {
+			t.Errorf("%s: Validate = %v, want ErrNotFound", name, err)
+		}
+	}
+}

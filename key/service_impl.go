@@ -87,7 +87,10 @@ func (s *service) Create(ctx context.Context, input *CreateInput) (*APIKey, stri
 }
 
 func (s *service) Validate(ctx context.Context, rawKey string) (*APIKey, error) {
-	if len(rawKey) < 12 {
+	// A value Create could not have made never reaches the store: a store
+	// may reject odd bytes (Postgres refuses invalid UTF-8) and the caller
+	// would see an outage instead of a wrong key.
+	if !wellFormed(rawKey) {
 		return nil, ErrNotFound
 	}
 	candidates, err := s.store.FindByPrefix(ctx, rawKey[:12])
@@ -191,6 +194,22 @@ func (s *service) Rotate(ctx context.Context, oldKeyID string) (*APIKey, string,
 		return nil, "", first
 	}
 	return n, raw, nil
+}
+
+// wellFormed reports whether raw has the shape Create gives a key: "nxs_"
+// and 64 lowercase hex digits.
+func wellFormed(raw string) bool {
+	const prefix = "nxs_"
+	if len(raw) != len(prefix)+64 || raw[:len(prefix)] != prefix {
+		return false
+	}
+	for i := len(prefix); i < len(raw); i++ {
+		c := raw[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // hashKey creates a SHA-256 hash of the API key.
