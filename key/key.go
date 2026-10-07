@@ -59,6 +59,7 @@ type Service interface {
 }
 
 // Store is the persistence interface for API keys.
+// Finders and Update return ErrNotFound when no key matches; Delete of an unknown id is a no-op.
 type Store interface {
 	Insert(ctx context.Context, k *APIKey) error
 	FindByID(ctx context.Context, id string) (*APIKey, error)

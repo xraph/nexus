@@ -84,7 +84,7 @@ func (s *tenantStore) FindByID(ctx context.Context, tid string) (*tenant.Tenant,
 	err := s.sdb.NewSelect(m).Where("id = ?", tid).Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
-			return nil, nil
+			return nil, tenant.ErrNotFound
 		}
 		return nil, fmt.Errorf("nexus/sqlite: find tenant by id: %w", err)
 	}
@@ -96,7 +96,7 @@ func (s *tenantStore) FindBySlug(ctx context.Context, slug string) (*tenant.Tena
 	err := s.sdb.NewSelect(m).Where("slug = ?", slug).Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
-			return nil, nil
+			return nil, tenant.ErrNotFound
 		}
 		return nil, fmt.Errorf("nexus/sqlite: find tenant by slug: %w", err)
 	}
@@ -105,9 +105,12 @@ func (s *tenantStore) FindBySlug(ctx context.Context, slug string) (*tenant.Tena
 
 func (s *tenantStore) Update(ctx context.Context, t *tenant.Tenant) error {
 	m := tenantToModel(t)
-	_, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("nexus/sqlite: update tenant: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return tenant.ErrNotFound
 	}
 	return nil
 }
@@ -175,7 +178,7 @@ func (s *keyStore) FindByID(ctx context.Context, kid string) (*key.APIKey, error
 	err := s.sdb.NewSelect(m).Where("id = ?", kid).Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
-			return nil, nil
+			return nil, key.ErrNotFound
 		}
 		return nil, fmt.Errorf("nexus/sqlite: find key by id: %w", err)
 	}
@@ -190,7 +193,7 @@ func (s *keyStore) FindByPrefix(ctx context.Context, prefix string) (*key.APIKey
 		Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
-			return nil, nil
+			return nil, key.ErrNotFound
 		}
 		return nil, fmt.Errorf("nexus/sqlite: find key by prefix: %w", err)
 	}
@@ -199,9 +202,12 @@ func (s *keyStore) FindByPrefix(ctx context.Context, prefix string) (*key.APIKey
 
 func (s *keyStore) Update(ctx context.Context, k *key.APIKey) error {
 	m := apiKeyToModel(k)
-	_, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("nexus/sqlite: update key: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return key.ErrNotFound
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -62,8 +63,12 @@ func (a *API) handleGetTenant(w http.ResponseWriter, r *http.Request) {
 
 	id := r.PathValue("id")
 	t, err := a.gw.Tenants().Get(r.Context(), id)
+	if errors.Is(err, tenant.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -92,6 +97,10 @@ func (a *API) handleUpdateTenant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	t, err := a.gw.Tenants().Update(r.Context(), id, &input)
+	if errors.Is(err, tenant.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

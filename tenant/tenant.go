@@ -92,6 +92,7 @@ type Service interface {
 }
 
 // Store is the persistence interface for tenants.
+// Finders and Update return ErrNotFound when no tenant matches; Delete of an unknown id is a no-op.
 type Store interface {
 	Insert(ctx context.Context, t *Tenant) error
 	FindByID(ctx context.Context, id string) (*Tenant, error)

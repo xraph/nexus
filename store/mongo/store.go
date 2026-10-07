@@ -95,7 +95,7 @@ func (s *tenantStore) FindByID(ctx context.Context, tid string) (*tenant.Tenant,
 	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": tid}).Scan(ctx)
 	if err != nil {
 		if isNoDocuments(err) {
-			return nil, nil
+			return nil, tenant.ErrNotFound
 		}
 		return nil, fmt.Errorf("nexus/mongo: find tenant by id: %w", err)
 	}
@@ -107,7 +107,7 @@ func (s *tenantStore) FindBySlug(ctx context.Context, slug string) (*tenant.Tena
 	err := s.mdb.NewFind(&m).Filter(bson.M{"slug": slug}).Scan(ctx)
 	if err != nil {
 		if isNoDocuments(err) {
-			return nil, nil
+			return nil, tenant.ErrNotFound
 		}
 		return nil, fmt.Errorf("nexus/mongo: find tenant by slug: %w", err)
 	}
@@ -121,7 +121,7 @@ func (s *tenantStore) Update(ctx context.Context, t *tenant.Tenant) error {
 		return fmt.Errorf("nexus/mongo: update tenant: %w", err)
 	}
 	if res.MatchedCount() == 0 {
-		return fmt.Errorf("nexus/mongo: tenant not found")
+		return tenant.ErrNotFound
 	}
 	return nil
 }
@@ -191,7 +191,7 @@ func (s *keyStore) FindByID(ctx context.Context, kid string) (*key.APIKey, error
 	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": kid}).Scan(ctx)
 	if err != nil {
 		if isNoDocuments(err) {
-			return nil, nil
+			return nil, key.ErrNotFound
 		}
 		return nil, fmt.Errorf("nexus/mongo: find key by id: %w", err)
 	}
@@ -205,7 +205,7 @@ func (s *keyStore) FindByPrefix(ctx context.Context, prefix string) (*key.APIKey
 		Scan(ctx)
 	if err != nil {
 		if isNoDocuments(err) {
-			return nil, nil
+			return nil, key.ErrNotFound
 		}
 		return nil, fmt.Errorf("nexus/mongo: find key by prefix: %w", err)
 	}
@@ -219,7 +219,7 @@ func (s *keyStore) Update(ctx context.Context, k *key.APIKey) error {
 		return fmt.Errorf("nexus/mongo: update key: %w", err)
 	}
 	if res.MatchedCount() == 0 {
-		return fmt.Errorf("nexus/mongo: key not found")
+		return key.ErrNotFound
 	}
 	return nil
 }

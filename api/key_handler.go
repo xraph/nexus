@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -70,7 +71,12 @@ func (a *API) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := r.PathValue("id")
-	if err := a.gw.Keys().Revoke(r.Context(), id); err != nil {
+	err := a.gw.Keys().Revoke(r.Context(), id)
+	if errors.Is(err, key.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "key not found")
+		return
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
