@@ -155,6 +155,17 @@ func (u USD) IsPositive() bool { return u.d.IsPositive() }
 // IsNegative reports whether u is less than $0.
 func (u USD) IsNegative() bool { return u.d.IsNegative() }
 
+// Ratio is u divided by of, as a float64 for display (a percentage on a
+// dashboard, a hook argument). It is never used to compute money. It is 0
+// when of is zero.
+func (u USD) Ratio(of USD) float64 {
+	if of.d.IsZero() {
+		return 0
+	}
+	f, _ := u.d.Div(of.d).Float64()
+	return f
+}
+
 // String is the exact amount in plain decimal notation with no trailing
 // zeros: "0.15", "1284.370219", "0".
 func (u USD) String() string { return u.d.String() }

@@ -201,3 +201,12 @@ func TestPerMillionRoundsToMaxPlaces(t *testing.T) {
 		}
 	}
 }
+
+func TestRatio(t *testing.T) {
+	if got := money.MustParse("8").Ratio(money.MustParse("10")); got != 0.8 {
+		t.Errorf("8 / 10 = %v, want 0.8", got)
+	}
+	if got := money.MustParse("1").Ratio(money.Zero); got != 0 {
+		t.Errorf("1 / 0 = %v, want 0", got)
+	}
+}
