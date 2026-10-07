@@ -120,10 +120,20 @@ ALTER TABLE nexus_usage_records
     ADD COLUMN IF NOT EXISTS refusal_code TEXT NOT NULL DEFAULT '';
 
 -- Nothing computed a cost before this migration, so a stored 0 meant
--- "unknown", not "free".
+-- "unknown", not "free". A cache hit is the exception: it called no
+-- provider, so it cost exactly 0.
+UPDATE nexus_usage_records
+   SET cost_usd = 0, pricing_status = 'cached'
+ WHERE cached;
+
 UPDATE nexus_usage_records
    SET cost_usd = NULL, pricing_status = 'unpriced_model'
- WHERE cost_usd = 0;
+ WHERE cost_usd = 0 AND NOT cached;
+
+-- Rows from here on come from a writer that may omit pricing_status (an old
+-- binary). Such a row has no known price, so the default says so.
+ALTER TABLE nexus_usage_records
+    ALTER COLUMN pricing_status SET DEFAULT 'unpriced_model';
 
 UPDATE nexus_usage_records
    SET outcome = CASE WHEN cached THEN 'cached'

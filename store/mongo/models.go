@@ -292,6 +292,17 @@ func usageFromModel(m *usageModel) (*usage.Record, error) {
 	if err != nil {
 		return nil, err
 	}
+	// An old binary writes no pricing_status. With no cost, or a cost of 0,
+	// that means unknown, not free; with a cost, it was priced.
+	status := usage.PricingStatus(m.PricingStatus)
+	switch {
+	case status == "" && (cost == nil || cost.IsZero()):
+		status, cost = usage.PricingUnpricedModel, nil
+	case status == "":
+		status = usage.PricingPriced
+	case status == usage.PricingUnpricedModel:
+		cost = nil
+	}
 	return &usage.Record{
 		ID:               uid,
 		TenantID:         tid,
@@ -303,7 +314,7 @@ func usageFromModel(m *usageModel) (*usage.Record, error) {
 		CompletionTokens: m.CompletionTokens,
 		TotalTokens:      m.TotalTokens,
 		CostUSD:          cost,
-		PricingStatus:    usage.PricingStatus(m.PricingStatus),
+		PricingStatus:    status,
 		Outcome:          usage.Outcome(m.Outcome),
 		BlockedBy:        m.BlockedBy,
 		RefusalCode:      m.RefusalCode,

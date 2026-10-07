@@ -117,7 +117,7 @@ CREATE TABLE usage_records_next (
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens      INTEGER NOT NULL DEFAULT 0,
     cost_usd          TEXT,
-    pricing_status    TEXT NOT NULL DEFAULT 'priced',
+    pricing_status    TEXT NOT NULL DEFAULT 'unpriced_model',
     outcome           TEXT NOT NULL DEFAULT 'ok',
     blocked_by        TEXT NOT NULL DEFAULT '',
     refusal_code      TEXT NOT NULL DEFAULT '',
@@ -128,17 +128,23 @@ CREATE TABLE usage_records_next (
 );
 
 -- Nothing computed a cost before this migration, so a stored 0 meant
--- "unknown", not "free". created_at is copied as is; Store.Migrate rewrites
+-- "unknown", not "free". A cache hit is the exception: it called no provider,
+-- so it cost exactly 0. created_at is copied as is; Store.Migrate rewrites
 -- it to fixed-width UTC text in Go, because SQLite cannot parse the formats
--- the old store wrote.
+-- the old store wrote. The pricing_status default is 'unpriced_model' so a
+-- writer that omits the column (an old binary) never makes a priced $0 row.
 INSERT INTO usage_records_next
     (id, tenant_id, key_id, request_id, provider, model, prompt_tokens,
      completion_tokens, total_tokens, cost_usd, pricing_status, outcome,
      latency_ns, cached, status_code, created_at)
 SELECT id, NULLIF(tenant_id, ''), NULLIF(key_id, ''), NULLIF(request_id, ''),
        provider, model, prompt_tokens, completion_tokens, total_tokens,
-       CASE WHEN cost_usd = 0 THEN NULL ELSE printf('%.18f', cost_usd) END,
-       CASE WHEN cost_usd = 0 THEN 'unpriced_model' ELSE 'priced' END,
+       CASE WHEN cached = 1 THEN '0'
+            WHEN cost_usd = 0 THEN NULL
+            ELSE printf('%.18f', cost_usd) END,
+       CASE WHEN cached = 1 THEN 'cached'
+            WHEN cost_usd = 0 THEN 'unpriced_model'
+            ELSE 'priced' END,
        CASE WHEN cached = 1 THEN 'cached' WHEN status_code >= 400 THEN 'error' ELSE 'ok' END,
        latency_ns, cached, status_code,
        created_at

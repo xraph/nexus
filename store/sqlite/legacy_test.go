@@ -10,6 +10,7 @@ import (
 	"github.com/xraph/grove/drivers/sqlitedriver"
 
 	"github.com/xraph/nexus/id"
+	"github.com/xraph/nexus/money"
 	sqlitestore "github.com/xraph/nexus/store/sqlite"
 	"github.com/xraph/nexus/store/storetest"
 	"github.com/xraph/nexus/usage"
@@ -93,5 +94,58 @@ func TestLegacyUsageRowWithJunkTimeFailsMigrate(t *testing.T) {
 	err := sqlitestore.New(db).Migrate()
 	if err == nil || !strings.Contains(err.Error(), rowID) || !strings.Contains(err.Error(), "last tuesday") {
 		t.Fatalf("migrate error = %v, want one naming %s and the value", err, rowID)
+	}
+}
+
+// A cache hit called no provider, so a legacy cached row is exactly $0, not
+// unknown.
+func TestLegacyCacheHitMigratesToCachedZero(t *testing.T) {
+	db := storetest.OpenSQLiteDB(t)
+	if _, err := sqlitedriver.Unwrap(db).Exec(context.Background(), legacyUsageSchema); err != nil {
+		t.Fatalf("legacy schema: %v", err)
+	}
+	cachedID := id.NewUsageID().String()
+	_, err := sqlitedriver.Unwrap(db).Exec(context.Background(),
+		`INSERT INTO usage_records (id, provider, model, total_tokens, cost_usd, cached, created_at)
+         VALUES (?, 'openai', 'gpt-4o', 10, 0, 1, '2026-10-01 10:00:00')`, cachedID)
+	if err != nil {
+		t.Fatalf("insert legacy cache hit: %v", err)
+	}
+	uncachedID := id.NewUsageID().String()
+	insertLegacyRow(t, db, uncachedID, "2026-10-01 10:00:00", 0)
+
+	s := sqlitestore.New(db)
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	got := storetest.FindRecord(t, s, id.MustParseUsageID(cachedID))
+	if got.CostUSD == nil || !got.CostUSD.Equal(money.Zero) || got.PricingStatus != usage.PricingCached || got.Outcome != usage.OutcomeCached {
+		t.Fatalf("legacy cache hit = cost %v, status %s, outcome %s; want $0, cached, cached", got.CostUSD, got.PricingStatus, got.Outcome)
+	}
+	got = storetest.FindRecord(t, s, id.MustParseUsageID(uncachedID))
+	if got.CostUSD != nil || got.PricingStatus != usage.PricingUnpricedModel {
+		t.Fatalf("legacy row = cost %v, status %s; want unknown and unpriced_model", got.CostUSD, got.PricingStatus)
+	}
+}
+
+// A binary from before exact money may still be running when the new one
+// migrates. It omits pricing_status and writes cost_usd = 0 (a REAL). That
+// row must read as unknown, not as a priced $0.
+func TestRowFromAnOldBinaryReadsAsUnpriced(t *testing.T) {
+	db := storetest.OpenSQLiteDB(t)
+	s := sqlitestore.New(db)
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	usageID := id.NewUsageID().String()
+	_, err := sqlitedriver.Unwrap(db).Exec(context.Background(),
+		`INSERT INTO usage_records (id, tenant_id, key_id, request_id, provider, model, total_tokens, cost_usd, cached, created_at)
+         VALUES (?, '', '', '', 'openai', 'gpt-4o', 10, 0.0, 0, '2026-10-01T10:00:00.000000000Z')`, usageID)
+	if err != nil {
+		t.Fatalf("insert as the old binary: %v", err)
+	}
+	got := storetest.FindRecord(t, s, id.MustParseUsageID(usageID))
+	if got.CostUSD != nil || got.PricingStatus != usage.PricingUnpricedModel {
+		t.Fatalf("old binary row = cost %v, status %s; want unknown and unpriced_model", got.CostUSD, got.PricingStatus)
 	}
 }

@@ -205,6 +205,11 @@ func usageFromModel(m *usageModel) (*usage.Record, error) {
 	if err != nil {
 		return nil, err
 	}
+	// An old binary writes cost_usd = 0 and leaves pricing_status to its
+	// default, unpriced_model. That 0 never meant free.
+	if m.PricingStatus == string(usage.PricingUnpricedModel) {
+		cost = nil
+	}
 	return &usage.Record{
 		ID:               uid,
 		TenantID:         tid,

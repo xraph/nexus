@@ -69,11 +69,20 @@ func (s *Store) Migrate() error {
 
 	// Documents written before exact money have no pricing_status. Nothing
 	// computed a cost then, so their stored 0 means "unknown", not "free".
-	_, err := s.mdb.Collection(colUsage).UpdateMany(ctx,
+	// A cache hit is the exception: it called no provider, so it cost
+	// exactly 0.
+	zero, err := bson.ParseDecimal128("0")
+	if err != nil {
+		return fmt.Errorf("nexus/mongo: decimal128 zero: %w", err)
+	}
+	unknown := bson.M{"$eq": bson.A{"$cost_usd", 0}}
+	_, err = s.mdb.Collection(colUsage).UpdateMany(ctx,
 		bson.M{"pricing_status": bson.M{"$exists": false}},
 		bson.A{bson.M{"$set": bson.M{
-			"pricing_status": bson.M{"$cond": bson.A{bson.M{"$eq": bson.A{"$cost_usd", 0}}, "unpriced_model", "priced"}},
-			"cost_usd":       bson.M{"$cond": bson.A{bson.M{"$eq": bson.A{"$cost_usd", 0}}, nil, bson.M{"$toDecimal": "$cost_usd"}}},
+			"pricing_status": bson.M{"$cond": bson.A{"$cached", "cached",
+				bson.M{"$cond": bson.A{unknown, "unpriced_model", "priced"}}}},
+			"cost_usd": bson.M{"$cond": bson.A{"$cached", zero,
+				bson.M{"$cond": bson.A{unknown, nil, bson.M{"$toDecimal": "$cost_usd"}}}}},
 			"outcome": bson.M{"$cond": bson.A{"$cached", "cached",
 				bson.M{"$cond": bson.A{bson.M{"$gte": bson.A{"$status_code", 400}}, "error", "ok"}}}},
 			"blocked_by":   "",
