@@ -47,22 +47,22 @@ func TestOpenAIModels_PositivePricing(t *testing.T) {
 	models := openAIModels()
 	for _, m := range models {
 		t.Run(m.ID, func(t *testing.T) {
-			hasChatPricing := m.Pricing.InputPerMillion > 0 || m.Pricing.OutputPerMillion > 0
-			hasEmbedPricing := m.Pricing.EmbeddingPerMillion > 0
+			hasChatPricing := m.Pricing.InputPerMillion.IsPositive() || m.Pricing.OutputPerMillion.IsPositive()
+			hasEmbedPricing := m.Pricing.EmbeddingPerMillion.IsPositive()
 
 			if !hasChatPricing && !hasEmbedPricing {
 				t.Errorf("model %q must have pricing set (chat or embedding)", m.ID)
 			}
 
 			// Ensure no negative pricing values.
-			if m.Pricing.InputPerMillion < 0 {
-				t.Errorf("model %q InputPerMillion = %f, must not be negative", m.ID, m.Pricing.InputPerMillion)
+			if m.Pricing.InputPerMillion.IsNegative() {
+				t.Errorf("model %q InputPerMillion = %s, must not be negative", m.ID, m.Pricing.InputPerMillion)
 			}
-			if m.Pricing.OutputPerMillion < 0 {
-				t.Errorf("model %q OutputPerMillion = %f, must not be negative", m.ID, m.Pricing.OutputPerMillion)
+			if m.Pricing.OutputPerMillion.IsNegative() {
+				t.Errorf("model %q OutputPerMillion = %s, must not be negative", m.ID, m.Pricing.OutputPerMillion)
 			}
-			if m.Pricing.EmbeddingPerMillion < 0 {
-				t.Errorf("model %q EmbeddingPerMillion = %f, must not be negative", m.ID, m.Pricing.EmbeddingPerMillion)
+			if m.Pricing.EmbeddingPerMillion.IsNegative() {
+				t.Errorf("model %q EmbeddingPerMillion = %s, must not be negative", m.ID, m.Pricing.EmbeddingPerMillion)
 			}
 		})
 	}
@@ -115,7 +115,7 @@ func TestOpenAIModels_EmbeddingModelsHaveEmbeddingCapability(t *testing.T) {
 		if m.Capabilities.Embeddings {
 			embeddingCount++
 			t.Run(m.ID, func(t *testing.T) {
-				if m.Pricing.EmbeddingPerMillion <= 0 {
+				if !m.Pricing.EmbeddingPerMillion.IsPositive() {
 					t.Errorf("embedding model %q should have EmbeddingPerMillion > 0", m.ID)
 				}
 			})

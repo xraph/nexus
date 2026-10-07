@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/provider"
 )
 
@@ -55,9 +56,9 @@ templ ModelTable(models []provider.Model) {
 	}
 }
 
-func formatPricing(v float64) string {
-	if v == 0 {
+func formatPricing(v money.USD) string {
+	if v.IsZero() {
 		return "-"
 	}
-	return formatCost(v)
+	return "$" + v.String()
 }

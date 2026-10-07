@@ -1,5 +1,7 @@
 package provider
 
+import "github.com/xraph/nexus/money"
+
 // Model describes an available LLM model.
 type Model struct {
 	ID            string       `json:"id"`       // e.g., "gpt-4o"
@@ -11,9 +13,10 @@ type Model struct {
 	Pricing       Pricing      `json:"pricing"`
 }
 
-// Pricing per million tokens in USD.
+// Pricing is a model's list price per million tokens. A zero price means the
+// model has no price for that kind of token, not that the tokens are free.
 type Pricing struct {
-	InputPerMillion     float64 `json:"input_per_million"`
-	OutputPerMillion    float64 `json:"output_per_million"`
-	EmbeddingPerMillion float64 `json:"embedding_per_million,omitempty"`
+	InputPerMillion     money.USD `json:"input_per_million"`
+	OutputPerMillion    money.USD `json:"output_per_million"`
+	EmbeddingPerMillion money.USD `json:"embedding_per_million,omitzero"`
 }

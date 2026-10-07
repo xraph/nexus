@@ -11,7 +11,7 @@ import (
 	"github.com/a-h/templ"
 	templruntime "github.com/a-h/templ/runtime"
 	"github.com/xraph/forgeui/components/table"
-
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/provider"
 )
 
@@ -317,7 +317,7 @@ func ModelTable(models []provider.Model) templ.Component {
 								var templ_7745c5c3_Var15 string
 								templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(m.ID)
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/model_table.templ`, Line: 31, Col: 72}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/model_table.templ`, Line: 32, Col: 72}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 								if templ_7745c5c3_Err != nil {
@@ -356,7 +356,7 @@ func ModelTable(models []provider.Model) templ.Component {
 								var templ_7745c5c3_Var17 string
 								templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(m.Provider)
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/model_table.templ`, Line: 34, Col: 45}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/model_table.templ`, Line: 35, Col: 45}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 								if templ_7745c5c3_Err != nil {
@@ -391,7 +391,7 @@ func ModelTable(models []provider.Model) templ.Component {
 								var templ_7745c5c3_Var19 string
 								templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(m.Name)
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/model_table.templ`, Line: 37, Col: 15}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/model_table.templ`, Line: 38, Col: 15}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 								if templ_7745c5c3_Err != nil {
@@ -422,7 +422,7 @@ func ModelTable(models []provider.Model) templ.Component {
 								var templ_7745c5c3_Var21 string
 								templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(m.ContextWindow))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/model_table.templ`, Line: 40, Col: 38}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/model_table.templ`, Line: 41, Col: 38}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 								if templ_7745c5c3_Err != nil {
@@ -453,7 +453,7 @@ func ModelTable(models []provider.Model) templ.Component {
 								var templ_7745c5c3_Var23 string
 								templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(m.MaxOutput))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/model_table.templ`, Line: 43, Col: 34}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/model_table.templ`, Line: 44, Col: 34}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 								if templ_7745c5c3_Err != nil {
@@ -484,7 +484,7 @@ func ModelTable(models []provider.Model) templ.Component {
 								var templ_7745c5c3_Var25 string
 								templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(formatPricing(m.Pricing.InputPerMillion))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/model_table.templ`, Line: 46, Col: 49}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/model_table.templ`, Line: 47, Col: 49}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 								if templ_7745c5c3_Err != nil {
@@ -515,7 +515,7 @@ func ModelTable(models []provider.Model) templ.Component {
 								var templ_7745c5c3_Var27 string
 								templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(formatPricing(m.Pricing.OutputPerMillion))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/model_table.templ`, Line: 49, Col: 50}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/components/model_table.templ`, Line: 50, Col: 50}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 								if templ_7745c5c3_Err != nil {
@@ -551,11 +551,11 @@ func ModelTable(models []provider.Model) templ.Component {
 	})
 }
 
-func formatPricing(v float64) string {
-	if v == 0 {
+func formatPricing(v money.USD) string {
+	if v.IsZero() {
 		return "-"
 	}
-	return formatCost(v)
+	return "$" + v.String()
 }
 
 var _ = templruntime.GeneratedTemplate
