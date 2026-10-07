@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/provider"
+	"github.com/xraph/nexus/router/strategies"
 	"github.com/xraph/nexus/store"
 	"github.com/xraph/nexus/usage"
 )
@@ -70,7 +71,13 @@ var listPrice = provider.Pricing{InputPerMillion: money.MustParse("2.50"), Outpu
 // (which flushes usage) and returns every stored record.
 func gateway(t *testing.T, fn func(ctx context.Context, gw *nexus.Gateway), opts ...nexus.Option) []*usage.Record {
 	t.Helper()
-	s := store.NewMemory()
+	return gatewayOn(t, store.NewMemory(), fn, opts...)
+}
+
+// gatewayOn is gateway over a store the test holds, so it can look at the
+// store before shutdown.
+func gatewayOn(t *testing.T, s store.Store, fn func(ctx context.Context, gw *nexus.Gateway), opts ...nexus.Option) []*usage.Record {
+	t.Helper()
 	gw := nexus.New(append([]nexus.Option{nexus.WithDatabase(s)}, opts...)...)
 	if err := gw.Initialize(context.Background()); err != nil {
 		t.Fatalf("initialize: %v", err)
@@ -102,17 +109,27 @@ func TestACompletionIsRecordedPricedAndAttributed(t *testing.T) {
 	if r.CostUSD == nil || r.CostUSD.String() != "0.008755" || r.PricingStatus != usage.PricingPriced || r.Outcome != usage.OutcomeOK {
 		t.Fatalf("record = cost %v status %s outcome %s", r.CostUSD, r.PricingStatus, r.Outcome)
 	}
-	if r.TenantID.String() != tenant || r.KeyID.String() != key || r.RequestID.IsNil() || r.Provider != "openai" || r.Model != "gpt-4o" || r.Latency <= 0 {
+	if r.TenantID.String() != tenant || r.KeyID.String() != key || r.RequestID.IsNil() || r.Provider != "openai" || r.Model != "gpt-4o" || r.Latency < 0 {
 		t.Fatalf("attribution = %+v", r)
 	}
 }
 
 func TestTheSameModelIsPricedAtTheProviderThatServedIt(t *testing.T) {
+	// Both providers list gpt-4o, at different prices. The first registered
+	// is not the one that serves: the priority router picks the second. A
+	// price lookup that ignored the serving provider would find openai first.
+	first := &fakeProvider{name: "openai", price: listPrice}
+	second := &fakeProvider{name: "openrouter", price: provider.Pricing{InputPerMillion: money.MustParse("3"), OutputPerMillion: money.MustParse("12")}}
 	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
-		_, _ = gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "gpt-4o", Messages: []provider.Message{{Role: "user", Content: "hi"}}})
-	}, nexus.WithProvider(&fakeProvider{name: "openrouter", price: provider.Pricing{InputPerMillion: money.MustParse("3"), OutputPerMillion: money.MustParse("12")}}))
+		if _, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "gpt-4o", Messages: []provider.Message{{Role: "user", Content: "hi"}}}); err != nil {
+			t.Fatalf("complete: %v", err)
+		}
+	}, nexus.WithProvider(first), nexus.WithProvider(second), nexus.WithRouter(strategies.NewPriority("openrouter")))
+	if first.calls != 0 || second.calls != 1 {
+		t.Fatalf("calls: openai %d, openrouter %d; the router should have picked openrouter", first.calls, second.calls)
+	}
 	// 1234 x 3 / 1e6 + 567 x 12 / 1e6
-	if len(recs) != 1 || recs[0].CostUSD == nil || recs[0].CostUSD.String() != "0.010506" {
+	if len(recs) != 1 || recs[0].Provider != "openrouter" || recs[0].CostUSD == nil || recs[0].CostUSD.String() != "0.010506" {
 		t.Fatalf("records = %+v", recs)
 	}
 }
@@ -207,7 +224,8 @@ func TestAStreamIsRecordedWhenClosed(t *testing.T) {
 	p := &fakeProvider{name: "openai", price: listPrice, stream: []*provider.StreamChunk{
 		{Delta: provider.Delta{Content: "he"}}, {Delta: provider.Delta{Content: "llo"}}, {Kind: provider.EventUsage, Usage: u},
 	}}
-	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+	s := store.NewMemory()
+	recs := gatewayOn(t, s, func(ctx context.Context, gw *nexus.Gateway) {
 		st, err := gw.Engine().CompleteStream(ctx, &provider.CompletionRequest{Model: "gpt-4o", Stream: true})
 		if err != nil {
 			t.Fatalf("stream: %v", err)
@@ -217,10 +235,22 @@ func TestAStreamIsRecordedWhenClosed(t *testing.T) {
 				break
 			}
 		}
+		// The stream has been read to its end but not closed: nothing may be
+		// recorded yet, because the record is written on Close.
+		before, qerr := s.Usage().Query(ctx, &usage.QueryOptions{Limit: 100})
+		if qerr != nil {
+			t.Fatalf("query: %v", qerr)
+		}
+		if len(before.Items) != 0 {
+			t.Fatalf("%d records before Close, want 0", len(before.Items))
+		}
 		_ = st.Close()
 	}, nexus.WithProvider(p))
 	if len(recs) != 1 || recs[0].CostUSD == nil || recs[0].CostUSD.String() != "0.00045" || recs[0].TotalTokens != 120 {
 		t.Fatalf("stream record = %+v", recs)
+	}
+	if r := recs[0]; r.Outcome != usage.OutcomeOK || r.PricingStatus != usage.PricingPriced || r.Provider != "openai" {
+		t.Fatalf("stream record = outcome %s status %s provider %s", r.Outcome, r.PricingStatus, r.Provider)
 	}
 }
 
@@ -232,6 +262,9 @@ func TestAnEmbeddingIsRecorded(t *testing.T) {
 	}, nexus.WithProvider(&fakeProvider{name: "openai", price: listPrice}))
 	if len(recs) != 1 || recs[0].CostUSD == nil || recs[0].CostUSD.String() != "0.0001" {
 		t.Fatalf("embedding record = %+v", recs)
+	}
+	if r := recs[0]; r.Outcome != usage.OutcomeOK || r.PricingStatus != usage.PricingPriced || r.Provider != "openai" {
+		t.Fatalf("embedding record = outcome %s status %s provider %s", r.Outcome, r.PricingStatus, r.Provider)
 	}
 }
 

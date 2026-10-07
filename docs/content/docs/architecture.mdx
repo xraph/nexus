@@ -32,19 +32,19 @@ Nexus is organized as a set of composable Go packages. The `Gateway` is the root
 
 Every request flows through the pipeline middleware chain, sorted by priority:
 
-1. **Request ID** (5) — Assign the request id
-2. **Tracing** (10) — OpenTelemetry span creation
-3. **Usage** (15) — Record, price and attribute every request
-4. **Timeout** (20) — Request deadline enforcement
-5. **Identity** (30) — Tenant and key ids, so the cache and usage agree on who asked
-6. **Stream Lifecycle** (60) — Extension hooks for streams
-7. **Guardrails** (150) — Input content validation
-8. **Transforms** (200) — Input modifications (system prompt, RAG)
-9. **Alias Resolution** (250) — Virtual model → concrete provider/model
-10. **Cache** (280) — Check for cached response
-11. **Retry** (340) — Retry logic with backoff
-12. **Custom middleware** — Yours, by priority
-13. **Provider Call** — Route and call the selected provider. Always last.
+1. **Request ID** (5): assign the request id
+2. **Tracing** (10): OpenTelemetry span creation
+3. **Usage** (15): record, price and attribute every request
+4. **Timeout** (20): request deadline enforcement
+5. **Identity** (30): tenant and key ids, so the cache and usage agree on who asked
+6. **Stream Lifecycle** (60): extension hooks for streams
+7. **Guardrails** (150): input content validation
+8. **Transforms** (200): input modifications (system prompt, RAG)
+9. **Alias Resolution** (250): virtual model to concrete provider/model
+10. **Cache** (280): check for a cached response
+11. **Retry** (340): retry logic with backoff
+12. **Custom middleware**: yours, sorted into this list by its own priority
+13. **Provider Call**: route and call the selected provider. Always last.
 
 The usage stage sits above everything that can refuse, replay or retry a request, so one request produces one usage record whatever happens below it. The gateway sets no response headers.
 
