@@ -42,7 +42,7 @@ func (m *ProviderCallMiddleware) Process(ctx context.Context, req *pipeline.Requ
 	case pipeline.RequestEmbedding:
 		return m.handleEmbedding(ctx, req)
 	default:
-		return nil, fmt.Errorf("nexus: unknown request type: %s", req.Type)
+		return nil, pipeline.Permanent(fmt.Errorf("nexus: unknown request type: %s", req.Type))
 	}
 }
 
@@ -92,7 +92,7 @@ func (m *ProviderCallMiddleware) handleEmbedding(ctx context.Context, req *pipel
 	// For embeddings, pick the first provider that supports embeddings
 	allProviders := m.providers.WithCapability("embeddings")
 	if len(allProviders) == 0 {
-		return nil, errors.New("nexus: no providers support embeddings")
+		return nil, pipeline.Permanent(errors.New("nexus: no providers support embeddings"))
 	}
 
 	p := allProviders[0]
@@ -110,13 +110,13 @@ func (m *ProviderCallMiddleware) handleEmbedding(ctx context.Context, req *pipel
 func (m *ProviderCallMiddleware) selectProvider(ctx context.Context, req *pipeline.Request) (provider.Provider, error) {
 	allProviders := m.providers.All()
 	if len(allProviders) == 0 {
-		return nil, errors.New("nexus: no providers registered")
+		return nil, pipeline.Permanent(errors.New("nexus: no providers registered"))
 	}
 
 	if m.router != nil {
 		p, err := m.router.Route(ctx, req.Completion, allProviders)
 		if err != nil {
-			return nil, fmt.Errorf("nexus: routing: %w", err)
+			return nil, pipeline.Permanent(fmt.Errorf("nexus: routing: %w", err))
 		}
 		return p, nil
 	}

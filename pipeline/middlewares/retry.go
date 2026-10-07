@@ -2,6 +2,7 @@ package middlewares
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/xraph/nexus/pipeline"
@@ -45,7 +46,23 @@ func (m *RetryMiddleware) Process(ctx context.Context, _ *pipeline.Request, next
 			return resp, nil
 		}
 		lastErr = err
+		if !retryable(err) {
+			return nil, err
+		}
 	}
 
 	return nil, lastErr
+}
+
+// retryable reports whether another attempt could succeed. A refusal or a
+// guard block will refuse again, a permanent error will fail again, and a
+// canceled or expired context has no time left.
+func retryable(err error) bool {
+	var refused pipeline.Refusal
+	switch {
+	case errors.As(err, &refused), pipeline.IsPermanent(err),
+		errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return false
+	}
+	return true
 }

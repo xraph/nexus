@@ -208,9 +208,10 @@ func (m *UsageMiddleware) classify(ctx context.Context, rec *usage.Record, req *
 	case errors.As(err, &refused):
 		rec.Outcome, rec.RefusalCode, rec.StatusCode = usage.OutcomeRefused, refused.RefusalCode(), refused.StatusCode()
 		notCharged(rec)
-		// A request whose identities disagree or do not parse is charged to
-		// neither: it is recorded unattributed.
-		if errors.Is(err, ErrInvalidIdentity) {
+		// Some refusals are charged to no one: identities that disagree, a
+		// tenant that does not exist.
+		var re *pipeline.RefusalError
+		if errors.As(err, &re) && re.Unattributed {
 			rec.TenantID, rec.KeyID = id.TenantID{}, id.KeyID{}
 		}
 	case err != nil:

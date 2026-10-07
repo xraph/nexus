@@ -108,6 +108,37 @@ func TestUsageClassifiesEveryOutcome(t *testing.T) {
 	}
 }
 
+func TestUsageRecordsAnUnattributedRefusalUnderNeitherTenantNorKey(t *testing.T) {
+	tenant, key := id.NewTenantID(), id.NewKeyID()
+	for name, c := range map[string]struct {
+		unattributed bool
+		wantTenant   id.TenantID
+		wantKey      id.KeyID
+	}{
+		"unattributed": {true, id.TenantID{}, id.KeyID{}},
+		"attributed":   {false, tenant, key},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := newRecordingUsage()
+			mw := middlewares.NewUsage(rec, gpt4o, nil)
+			req := &pipeline.Request{Type: pipeline.RequestCompletion, Completion: &provider.CompletionRequest{Model: "gpt-4o", TenantID: tenant.String(), KeyID: key.String()}, State: map[string]any{}}
+			ctx := pipeline.WithRequestID(context.Background(), id.NewRequestID().String())
+			refused := &pipeline.RefusalError{Code: pipeline.CodeForbidden, Status: 403, Message: "no", Unattributed: c.unattributed}
+			_, _ = mw.Process(ctx, req, func(context.Context) (*pipeline.Response, error) { return nil, refused })
+			if err := mw.Flush(context.Background()); err != nil {
+				t.Fatalf("flush: %v", err)
+			}
+			got := rec.only(t)
+			if got.Outcome != usage.OutcomeRefused || got.RefusalCode != "forbidden" || got.StatusCode != 403 {
+				t.Fatalf("record = %s %q %d", got.Outcome, got.RefusalCode, got.StatusCode)
+			}
+			if got.TenantID != c.wantTenant || got.KeyID != c.wantKey {
+				t.Fatalf("attribution = %s / %s, want %s / %s", got.TenantID, got.KeyID, c.wantTenant, c.wantKey)
+			}
+		})
+	}
+}
+
 func TestUsageRecordsEmbeddings(t *testing.T) {
 	rec := newRecordingUsage()
 	mw := middlewares.NewUsage(rec, prices{"openai/text-embedding-3-small": {EmbeddingPerMillion: money.MustParse("0.02")}}, nil)

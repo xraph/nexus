@@ -62,13 +62,15 @@ func (p *pipelineImpl) Stages() []Stage {
 }
 
 func (p *pipelineImpl) Execute(ctx context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
+	// A request that asks for a stream cannot be answered with one response.
+	// ExecuteStream is the way in for those.
+	if req.Stream {
+		return nil, &RefusalError{Code: CodeInvalidRequest, Status: 400, Message: "a stream request needs CompleteStream"}
+	}
 	pReq := &Request{
 		Completion: req,
 		Type:       RequestCompletion,
 		State:      make(map[string]any),
-	}
-	if req.Stream {
-		pReq.Type = RequestStream
 	}
 
 	resp, err := p.run(ctx, pReq, 0)
