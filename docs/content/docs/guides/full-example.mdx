@@ -8,6 +8,7 @@ package main
 
 import (
     "context"
+    "fmt"
     "log/slog"
     "net/http"
     "os"
@@ -17,6 +18,7 @@ import (
     "github.com/xraph/nexus/audit_hook"
     "github.com/xraph/nexus/cache/stores"
     "github.com/xraph/nexus/guard/guards"
+    "github.com/xraph/nexus/key"
     "github.com/xraph/nexus/model"
     "github.com/xraph/nexus/observability"
     "github.com/xraph/nexus/providers/anthropic"
@@ -24,6 +26,7 @@ import (
     "github.com/xraph/nexus/proxy"
     "github.com/xraph/nexus/router/strategies"
     "github.com/xraph/nexus/store/memory"
+    "github.com/xraph/nexus/tenant"
 )
 
 func main() {
@@ -82,8 +85,21 @@ func main() {
     }
     defer gw.Shutdown(ctx)
 
+    // The proxy refuses a request without a gateway key, so create a tenant
+    // and a key to call it with.
+    t, err := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Demo", Slug: "demo"})
+    if err != nil {
+        panic(err)
+    }
+    _, raw, err := gw.Keys().Create(ctx, &key.CreateInput{TenantID: t.ID.String(), Name: "demo"})
+    if err != nil {
+        panic(err)
+    }
+    // Shown once; only the hash is stored. Never log a key in a real service.
+    fmt.Println("gateway key:", raw)
+
     // Run as OpenAI-compatible proxy
-    p := proxy.New(gw)
+    p := proxy.New(gw.Engine())
     slog.Info("nexus gateway listening", "addr", ":8080")
     http.ListenAndServe(":8080", p)
 }
@@ -96,4 +112,4 @@ This gateway:
 - Maps `"fast"` to Claude Haiku, `"smart"` to GPT-4o
 - Records audit events and tracks metrics
 - Retries failed requests up to 3 times
-- Serves as an OpenAI-compatible proxy on port 8080
+- Serves as an OpenAI-compatible proxy on port 8080, for clients that send the `nxs_` key it printed

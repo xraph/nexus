@@ -43,6 +43,7 @@ extensions:
     default_timeout: "30s"
     default_max_retries: 2
     global_rate_limit: 1000
+    require_api_key: true
     log_level: "info"
     enable_usage: true
     enable_cache: false
@@ -59,6 +60,7 @@ extensions:
 | `DefaultTimeout` | `default_timeout` | `duration` | `30s` | Default timeout for provider requests |
 | `DefaultMaxRetries` | `default_max_retries` | `int` | `2` | Default retries per request |
 | `GlobalRateLimit` | `global_rate_limit` | `int` | `0` | Global rate limit in RPM (0 = unlimited) |
+| `RequireAPIKey` | `require_api_key` | `bool` | `true` | Require a gateway key on the `/v1` routes. The `/admin` routes always need an `admin` key. |
 | `LogLevel` | `log_level` | `string` | `"info"` | Gateway log level |
 | `EnableUsage` | `enable_usage` | `bool` | `true` | Enable usage tracking |
 | `EnableCache` | `enable_cache` | `bool` | `false` | Enable response caching |
@@ -75,7 +77,7 @@ File-based and programmatic configuration are merged with these rules:
 | Boolean flags (`disable_routes`, `disable_migrate`, `enable_cache`) | Programmatic `true` wins |
 | String fields (`base_path`, `log_level`, `grove_database`) | YAML takes precedence; programmatic fills gaps |
 | Duration/int fields (`default_timeout`, `default_max_retries`, `global_rate_limit`) | YAML takes precedence; programmatic fills gaps |
-| Pointer fields (`enable_usage`) | YAML takes precedence; programmatic fills gaps |
+| Pointer fields (`enable_usage`, `require_api_key`) | YAML takes precedence; programmatic fills gaps |
 
 Any remaining zero-valued fields are filled from `DefaultConfig()`.
 

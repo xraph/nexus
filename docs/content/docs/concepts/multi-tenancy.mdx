@@ -15,7 +15,7 @@ All downstream operations (routing, caching, usage, guardrails) automatically re
 
 ## Quotas
 
-A tenant carries a `Quota`. Every field is enforced, and a field left at zero means no limit.
+A tenant carries a `Quota`. A field left at zero means no limit. The quota stage reads `DailyRequests` and `MonthlyBudgetUSD` from the usage store, so with usage tracking off (`enable_usage: false`) no rows are written, those two limits never trip, and the stage still runs the rest.
 
 ```go
 type Quota struct {
@@ -103,4 +103,4 @@ OnBudgetWarning(ctx, tenantID, usedPct)
 OnBudgetExceeded(ctx, tenantID)
 ```
 
-Each fires once per tenant per month per replica. Without that, every request above the line would fire it again. Two replicas can each fire once, and a restart forgets what was already sent. A single request that jumps a tenant from under 80% to over 100% fires `OnBudgetExceeded` only, since a warning about a limit already passed adds nothing.
+Each fires once per tenant per month per replica, while the next request after spend crosses the line is being evaluated. The event does not fire at the moment of the spend. Without the once-only rule, every request above the line would fire it again. Two replicas can each fire once, and a restart forgets what was already sent. A single request that jumps a tenant from under 80% to over 100% fires `OnBudgetExceeded` only, since a warning about a limit already passed adds nothing.

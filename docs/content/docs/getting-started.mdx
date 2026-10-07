@@ -74,23 +74,43 @@ gw := nexus.New(
 
 ## Run as OpenAI-Compatible Proxy
 
-```go
-import "github.com/xraph/nexus/proxy"
+The proxy wants a gateway key on every `/v1` request, so make a tenant and a key first:
 
-p := proxy.New(gw)
+```go
+import (
+    "github.com/xraph/nexus/key"
+    "github.com/xraph/nexus/proxy"
+    "github.com/xraph/nexus/tenant"
+)
+
+t, err := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Demo", Slug: "demo"})
+if err != nil {
+    panic(err)
+}
+_, raw, err := gw.Keys().Create(ctx, &key.CreateInput{TenantID: t.ID.String(), Name: "demo"})
+if err != nil {
+    panic(err)
+}
+// The raw key exists only here. Only its hash is stored. Printing it is fine
+// for a demo; in a real service, hand it to its owner and never log it.
+fmt.Println("gateway key:", raw)
+
+p := proxy.New(gw.Engine())
 http.ListenAndServe(":8080", p)
 ```
 
-Any OpenAI SDK can now connect to `http://localhost:8080`:
+Any OpenAI SDK can now connect to `http://localhost:8080`, with the `nxs_` key as its API key:
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://localhost:8080/v1", api_key="any")
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="nxs_...")
 response = client.chat.completions.create(
     model="gpt-4o-mini",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 ```
+
+A request with no key, or any key but a gateway key, gets a 401. See [Authentication](/docs/api-reference/http-api#authentication). For local work you can open the `/v1` routes with `nexus.WithRequireAPIKey(false)`.
 
 ## Add Guardrails
 

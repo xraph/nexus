@@ -35,6 +35,8 @@ type Config struct {
 
 `DefaultConfig()` returns sensible defaults. `RequireAPIKey` is true by default, which means the `api` and `proxy` routes refuse a request without a valid gateway key. Set it to false for local work and the `/v1` routes open up. The `/admin` routes stay closed. See [Authentication](/docs/api-reference/http-api#authentication).
 
+`EnableUsage` is true by default. Turn it off and the gateway writes no usage rows, which also makes a tenant's `DailyRequests` and `MonthlyBudgetUSD` limits inert, since both are counted from those rows. RPM, TPM and the token cap still apply.
+
 `GlobalRateLimit` is requests per minute across the whole gateway, every tenant and every unattributed request included. Zero means no limit. It is enforced: the quota stage charges one request against it before it looks at the tenant's own limits, and a request over it gets a 429 `rate_limited`.
 
 ## Available Options
