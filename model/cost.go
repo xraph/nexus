@@ -10,12 +10,16 @@ import (
 // input price plus completion tokens at the output price, or prompt tokens
 // at the embedding price for an embedding. When the model has no price for
 // the tokens used it returns nil and PricingUnpricedModel, so an unknown
-// cost is never reported as $0.
+// cost is never reported as $0. A Free price list costs exactly $0.
 //
 // The result is only as good as the token counts the provider reported.
 // Providers do not report cache or thinking tokens today, so those are not
 // priced.
 func Cost(u provider.Usage, p provider.Pricing, embedding bool) (*money.USD, usage.PricingStatus) {
+	if p.Free {
+		zero := money.Zero
+		return &zero, usage.PricingPriced
+	}
 	if embedding {
 		if p.EmbeddingPerMillion.IsZero() {
 			return nil, usage.PricingUnpricedModel

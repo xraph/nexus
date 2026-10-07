@@ -1,7 +1,6 @@
 package ollama
 
 import (
-	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/provider"
 )
 
@@ -13,25 +12,25 @@ func ollamaModels() []provider.Model {
 			ID: "llama3.1:8b", Provider: "ollama", Name: "Llama 3.1 8B (local)",
 			Capabilities:  provider.Capabilities{Chat: true, Streaming: true, Tools: true, JSON: true},
 			ContextWindow: 131072, MaxOutput: 4096,
-			Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.00001"), OutputPerMillion: money.MustParse("0.00001")},
+			Pricing: provider.Pricing{Free: true},
 		},
 		{
 			ID: "llama3.1:70b", Provider: "ollama", Name: "Llama 3.1 70B (local)",
 			Capabilities:  provider.Capabilities{Chat: true, Streaming: true, Tools: true, JSON: true},
 			ContextWindow: 131072, MaxOutput: 4096,
-			Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.00001"), OutputPerMillion: money.MustParse("0.00001")},
+			Pricing: provider.Pricing{Free: true},
 		},
 		{
 			ID: "mistral:7b", Provider: "ollama", Name: "Mistral 7B (local)",
 			Capabilities:  provider.Capabilities{Chat: true, Streaming: true, JSON: true},
 			ContextWindow: 32768, MaxOutput: 4096,
-			Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.00001"), OutputPerMillion: money.MustParse("0.00001")},
+			Pricing: provider.Pricing{Free: true},
 		},
 		{
 			ID: "nomic-embed-text", Provider: "ollama", Name: "Nomic Embed Text (local)",
 			Capabilities:  provider.Capabilities{Embeddings: true},
 			ContextWindow: 8192,
-			Pricing:       provider.Pricing{EmbeddingPerMillion: money.MustParse("0.00001")},
+			Pricing:       provider.Pricing{Free: true},
 		},
 	}
 }

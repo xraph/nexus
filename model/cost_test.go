@@ -38,3 +38,12 @@ func TestEmbeddingCostUsesTheEmbeddingPrice(t *testing.T) {
 		t.Fatalf("an embedding on a chat-only price list should be unpriced, got %v %s", cost, status)
 	}
 }
+
+func TestFreeModelsCostExactlyZero(t *testing.T) {
+	for _, embedding := range []bool{false, true} {
+		cost, status := model.Cost(provider.Usage{PromptTokens: 5000, CompletionTokens: 7000}, provider.Pricing{Free: true}, embedding)
+		if status != usage.PricingPriced || cost == nil || !cost.IsZero() {
+			t.Fatalf("embedding=%v: cost %v, status %s; want exactly 0, priced", embedding, cost, status)
+		}
+	}
+}

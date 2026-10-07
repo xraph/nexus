@@ -57,7 +57,7 @@ func TestProviderContract(t *testing.T, p provider.Provider) {
 			// Models should have pricing set (except embeddings-only which use EmbeddingPerMillion).
 			hasChatPricing := m.Pricing.InputPerMillion.IsPositive() || m.Pricing.OutputPerMillion.IsPositive()
 			hasEmbedPricing := m.Pricing.EmbeddingPerMillion.IsPositive()
-			if !hasChatPricing && !hasEmbedPricing {
+			if !hasChatPricing && !hasEmbedPricing && !m.Pricing.Free {
 				t.Errorf("model %q must have pricing set", m.ID)
 			}
 		}
