@@ -47,3 +47,11 @@ func TestFreeModelsCostExactlyZero(t *testing.T) {
 		}
 	}
 }
+
+func TestAnEmbeddingThatReportsOnlyATotalIsPricedFromIt(t *testing.T) {
+	p := provider.Pricing{EmbeddingPerMillion: money.MustParse("0.02")}
+	cost, status := model.Cost(provider.Usage{TotalTokens: 5000}, p, true)
+	if status != usage.PricingPriced || cost == nil || cost.String() != "0.0001" {
+		t.Fatalf("cost = %v, status = %s; want 0.0001 priced", cost, status)
+	}
+}

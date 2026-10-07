@@ -62,6 +62,7 @@ func TestUsageClassifiesEveryOutcome(t *testing.T) {
 		{"output block without usage", true, false, nil, &guard.BlockedError{Guard: "leak", Phase: guard.PhaseOutput}, "gpt-4o", usage.OutcomeBlocked, usage.PricingUnknown, "", "leak", ""},
 		{"block with no phase", true, false, nil, &guard.BlockedError{Guard: "odd"}, "gpt-4o", usage.OutcomeBlocked, usage.PricingUnknown, "", "odd", ""},
 		{"block with no phase, with usage", true, false, nil, &guard.BlockedError{Guard: "odd", Usage: &served.Usage, Model: "gpt-4o", Provider: "openai"}, "gpt-4o", usage.OutcomeBlocked, usage.PricingPriced, "0.008755", "odd", ""},
+		{"served, only a total reported", true, false, &pipeline.Response{Completion: &provider.CompletionResponse{Model: "gpt-4o", Usage: provider.Usage{TotalTokens: 1801}}}, nil, "gpt-4o", usage.OutcomeOK, usage.PricingUnknown, "", "", ""},
 		{"served, no tokens reported", true, false, &pipeline.Response{Completion: &provider.CompletionResponse{Model: "gpt-4o"}}, nil, "gpt-4o", usage.OutcomeOK, usage.PricingUnknown, "", "", ""},
 		{"refused", false, false, nil, refusal{}, "gpt-4o", usage.OutcomeRefused, usage.PricingNotCharged, "0", "", "budget_exceeded"},
 		{"failed before a provider", false, false, nil, errors.New("no providers registered"), "gpt-4o", usage.OutcomeError, usage.PricingNotCharged, "0", "", ""},
@@ -152,6 +153,22 @@ func TestUsageZeroTokensOnAFreeModelCostExactlyZero(t *testing.T) {
 	got := rec.only(t)
 	if got.Outcome != usage.OutcomeOK || got.PricingStatus != usage.PricingPriced || got.CostUSD == nil || !got.CostUSD.IsZero() {
 		t.Fatalf("free model, no tokens = %s/%s cost %v; want ok/priced/0", got.Outcome, got.PricingStatus, got.CostUSD)
+	}
+}
+
+func TestUsageRecordsAnEmbeddingThatReportsOnlyATotal(t *testing.T) {
+	rec := newRecordingUsage()
+	mw := middlewares.NewUsage(rec, prices{"voyageai/voyage-3": {EmbeddingPerMillion: money.MustParse("0.06")}}, nil)
+	req := &pipeline.Request{Type: pipeline.RequestEmbedding, Embedding: &provider.EmbeddingRequest{Model: "voyage-3"}, State: map[string]any{}}
+	_, _ = mw.Process(context.Background(), req, func(context.Context) (*pipeline.Response, error) {
+		req.State[pipeline.StateProviderName] = "voyageai"
+		return &pipeline.Response{Embedding: &provider.EmbeddingResponse{Model: "voyage-3", Usage: provider.Usage{TotalTokens: 5000}}}, nil
+	})
+	_ = mw.Flush(context.Background())
+	got := rec.only(t)
+	// 5000 x 0.06 / 1e6
+	if got.Outcome != usage.OutcomeOK || got.PricingStatus != usage.PricingPriced || got.CostUSD == nil || got.CostUSD.String() != "0.0003" {
+		t.Fatalf("total-only embedding = %s/%s cost %v; want ok/priced/0.0003", got.Outcome, got.PricingStatus, got.CostUSD)
 	}
 }
 

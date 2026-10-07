@@ -227,10 +227,9 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 		Provider:   "gemini",
 		Model:      req.Model,
 		Embeddings: embeddings,
-		Usage: provider.Usage{
-			PromptTokens: len(req.Input), // Gemini doesn't return token counts for embeddings
-			TotalTokens:  len(req.Input),
-		},
+		// Gemini returns no token counts for embeddings. Zero tokens records
+		// the cost as unknown; the number of inputs is not a token count.
+		Usage: provider.Usage{},
 	}, nil
 }
 

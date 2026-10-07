@@ -8,7 +8,9 @@ import (
 
 // Cost prices usage at a model's list prices, exactly: prompt tokens at the
 // input price plus completion tokens at the output price, or prompt tokens
-// at the embedding price for an embedding. When the model has no price for
+// at the embedding price for an embedding. An embedding provider that
+// reports only a total (Voyage does) is priced from the total, since every
+// token of an embedding is input. When the model has no price for
 // the tokens used it returns nil and PricingUnpricedModel, so an unknown
 // cost is never reported as $0. A Free price list costs exactly $0.
 //
@@ -24,7 +26,11 @@ func Cost(u provider.Usage, p provider.Pricing, embedding bool) (*money.USD, usa
 		if p.EmbeddingPerMillion.IsZero() {
 			return nil, usage.PricingUnpricedModel
 		}
-		c := p.EmbeddingPerMillion.PerMillion(int64(u.PromptTokens))
+		tokens := u.PromptTokens
+		if tokens == 0 {
+			tokens = u.TotalTokens
+		}
+		c := p.EmbeddingPerMillion.PerMillion(int64(tokens))
 		return &c, usage.PricingPriced
 	}
 	if p.InputPerMillion.IsZero() && p.OutputPerMillion.IsZero() {

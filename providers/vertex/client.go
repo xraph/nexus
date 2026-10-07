@@ -251,10 +251,10 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 		Provider:   "vertex",
 		Model:      req.Model,
 		Embeddings: embeddings,
-		Usage: provider.Usage{
-			PromptTokens: len(req.Input),
-			TotalTokens:  len(req.Input),
-		},
+		// This client does not decode Vertex's token statistics yet. Zero
+		// tokens records the cost as unknown; the number of inputs is not a
+		// token count.
+		Usage: provider.Usage{},
 	}, nil
 }
 

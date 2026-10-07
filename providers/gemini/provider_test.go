@@ -107,6 +107,10 @@ func TestEmbed(t *testing.T) {
 	if len(resp.Embeddings) == 0 {
 		t.Error("response must have at least one embedding")
 	}
+	// Gemini reports no token counts for embeddings, so none are invented.
+	if resp.Usage != (provider.Usage{}) {
+		t.Errorf("Usage = %+v, want zero: the number of inputs is not a token count", resp.Usage)
+	}
 }
 
 func TestHealthy(t *testing.T) {

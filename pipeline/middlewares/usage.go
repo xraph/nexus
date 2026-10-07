@@ -192,15 +192,27 @@ func (m *UsageMiddleware) price(ctx context.Context, rec *usage.Record, u provid
 		rec.CostUSD, rec.PricingStatus = nil, usage.PricingUnpricedModel
 		return
 	}
-	// A request that reports no tokens at all (a client that left before the
-	// usage chunk, a stream that ended without one) was served, but what it
-	// consumed is unknown. That is not $0. A free model costs $0 whatever it
+	// A request whose priced token kinds are all zero was served, but what it
+	// consumed is unknown: a client that left before the usage chunk, a
+	// stream that ended without one, a provider that reports only a total
+	// for a completion. That is not $0. A free model costs $0 whatever it
 	// consumed.
-	if !p.Free && u.PromptTokens == 0 && u.CompletionTokens == 0 && u.TotalTokens == 0 {
+	if !p.Free && !hasPricedTokens(u, embedding) {
 		rec.CostUSD, rec.PricingStatus = nil, usage.PricingUnknown
 		return
 	}
 	rec.CostUSD, rec.PricingStatus = model.Cost(u, p, embedding)
+}
+
+// hasPricedTokens reports whether u counts any of the tokens a price applies
+// to. An embedding is priced from its prompt tokens, or its total when that
+// is all the provider reported. A completion is priced from its prompt and
+// completion tokens; a total alone cannot be split between the two prices.
+func hasPricedTokens(u provider.Usage, embedding bool) bool {
+	if embedding {
+		return u.PromptTokens > 0 || u.TotalTokens > 0
+	}
+	return u.PromptTokens > 0 || u.CompletionTokens > 0
 }
 
 func (m *UsageMiddleware) record(rec *usage.Record) {
