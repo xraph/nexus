@@ -2,7 +2,7 @@ package tenant
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"time"
 
 	"github.com/xraph/nexus/id"
@@ -24,10 +24,10 @@ func NewService(store Store, opts ...Option) Service {
 
 func (s *service) Create(ctx context.Context, input *CreateInput) (*Tenant, error) {
 	if input.Name == "" {
-		return nil, errors.New("nexus: tenant name is required")
+		return nil, fmt.Errorf("%w: name is required", ErrInvalid)
 	}
 	if input.Slug == "" {
-		return nil, errors.New("nexus: tenant slug is required")
+		return nil, fmt.Errorf("%w: slug is required", ErrInvalid)
 	}
 
 	t := &Tenant{

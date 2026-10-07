@@ -140,6 +140,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key")
+	// A browser page can read only the response headers CORS exposes, and
+	// X-Request-Id is how a client error is matched to its usage row.
+	w.Header().Set("Access-Control-Expose-Headers", "X-Request-Id")
 
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)

@@ -3,9 +3,11 @@ package httpstream
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/xraph/nexus/provider"
@@ -26,7 +28,23 @@ type RunOptions struct {
 	// OnError is called once when the stream terminates with an error
 	// (after the encoder has emitted the typed error event but before
 	// End is called). Useful for recording mid-stream failures upstream.
+	// A failed write to the client is passed wrapped in ErrClientWrite;
+	// use ClientGone to tell it from a provider failure.
 	OnError func(error)
+}
+
+// ErrClientWrite wraps an error writing an event to the client. It means
+// the client went away (it closed the tab, hit stop, lost its network),
+// which is not a gateway failure.
+var ErrClientWrite = errors.New("httpstream: write to the client failed")
+
+// ClientGone reports whether a stream error means only that the client left:
+// the request context is done, the error wraps ErrClientWrite, or it is a
+// broken pipe. A stream hook skips logging these, because operators alert on
+// errors and a client pressing stop is not one. A connection reset is not
+// matched on its own: a provider's reset looks the same and must be logged.
+func ClientGone(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || errors.Is(err, ErrClientWrite) || errors.Is(err, syscall.EPIPE)
 }
 
 // Run is the single shared streaming event loop used by both /v1/chat/
@@ -121,7 +139,7 @@ func Run(ctx context.Context, w http.ResponseWriter, stream provider.Stream, enc
 				ev := FromChunk(res.chunk, opts.RequestID)
 				if err := encoder.EncodeEvent(w, ev); err != nil {
 					if opts.OnError != nil {
-						opts.OnError(err)
+						opts.OnError(fmt.Errorf("%w: %w", ErrClientWrite, err))
 					}
 					return
 				}

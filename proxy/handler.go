@@ -348,7 +348,11 @@ func (p *Proxy) writePipelineError(w http.ResponseWriter, r *http.Request, err e
 }
 
 // onStreamError logs the cause of a stream that failed after the response
-// began, where the client was told only the sanitized envelope.
+// began, where the client was told only the sanitized envelope. A client
+// that left is not a failure and is not logged.
 func (p *Proxy) onStreamError(ctx context.Context, err error) {
+	if httpstream.ClientGone(ctx, err) {
+		return
+	}
 	auth.LogServerError(ctx, p.engine.Gateway().Logger(), "", err)
 }

@@ -547,3 +547,11 @@ func TestAKeyOfADisabledTenantIsRefusedAtTheEdge(t *testing.T) {
 		t.Fatalf("%d usage records; want none, the edge refuses before the pipeline", n)
 	}
 }
+
+func TestTheRequestIdIsReadableFromABrowser(t *testing.T) {
+	srv, _, _ := newProxy(t)
+	got := send(t, srv, "GET", "/health", "", "")
+	if !strings.Contains(got.header.Get("Access-Control-Expose-Headers"), "X-Request-Id") {
+		t.Fatalf("Access-Control-Expose-Headers = %q; a browser page cannot read X-Request-Id", got.header.Get("Access-Control-Expose-Headers"))
+	}
+}

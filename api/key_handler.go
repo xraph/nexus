@@ -30,7 +30,7 @@ func (a *API) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 
 	k, rawKey, err := a.gw.Keys().Create(r.Context(), &input)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writeAdminError(w, r, err)
 		return
 	}
 
@@ -55,7 +55,7 @@ func (a *API) handleListKeys(w http.ResponseWriter, r *http.Request) {
 
 	keys, err := a.gw.Keys().List(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writeAdminError(w, r, err)
 		return
 	}
 
@@ -77,7 +77,7 @@ func (a *API) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writeAdminError(w, r, err)
 		return
 	}
 

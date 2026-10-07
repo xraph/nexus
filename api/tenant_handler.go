@@ -31,7 +31,7 @@ func (a *API) handleCreateTenant(w http.ResponseWriter, r *http.Request) {
 
 	t, err := a.gw.Tenants().Create(r.Context(), &input)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writeAdminError(w, r, err)
 		return
 	}
 
@@ -54,7 +54,7 @@ func (a *API) handleListTenants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writeAdminError(w, r, err)
 		return
 	}
 
@@ -77,7 +77,7 @@ func (a *API) handleGetTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writeAdminError(w, r, err)
 		return
 	}
 
@@ -111,7 +111,7 @@ func (a *API) handleUpdateTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writeAdminError(w, r, err)
 		return
 	}
 
@@ -126,7 +126,7 @@ func (a *API) handleDeleteTenant(w http.ResponseWriter, r *http.Request) {
 
 	id := r.PathValue("id")
 	if err := a.gw.Tenants().Delete(r.Context(), id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writeAdminError(w, r, err)
 		return
 	}
 

@@ -3,10 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/xraph/nexus/auth"
+	"github.com/xraph/nexus/httpstream"
+	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/pipeline"
+	"github.com/xraph/nexus/tenant"
 )
 
 // writeJSON writes a JSON response.
@@ -73,13 +77,34 @@ func (a *API) writePipelineError(w http.ResponseWriter, r *http.Request, err err
 	auth.WriteFailure(w, r, a.gw.Logger(), err)
 }
 
+// writeAdminError answers an error from the key, tenant or usage service.
+// Bad input is a 400 with the service's own message, a tenant or key that
+// does not exist is a 404, and anything else goes through
+// writePipelineError: a fixed 500, with the cause logged.
+func (a *API) writeAdminError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, key.ErrInvalid), errors.Is(err, tenant.ErrInvalid):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, tenant.ErrNotFound):
+		writeError(w, http.StatusNotFound, "tenant not found")
+	case errors.Is(err, key.ErrNotFound):
+		writeError(w, http.StatusNotFound, "key not found")
+	default:
+		a.writePipelineError(w, r, err)
+	}
+}
+
 // onAuthError is the OnError of the auth middleware.
 func (a *API) onAuthError(w http.ResponseWriter, r *http.Request, err error) {
 	a.writePipelineError(w, r, err)
 }
 
 // onStreamError logs the cause of a stream that failed after the response
-// began, where the client was told only the sanitized envelope.
+// began, where the client was told only the sanitized envelope. A client
+// that left is not a failure and is not logged.
 func (a *API) onStreamError(ctx context.Context, err error) {
+	if httpstream.ClientGone(ctx, err) {
+		return
+	}
 	auth.LogServerError(ctx, a.gw.Logger(), "", err)
 }
