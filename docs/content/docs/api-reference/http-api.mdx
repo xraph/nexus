@@ -3,6 +3,40 @@ title: HTTP API
 description: OpenAI-compatible endpoints and admin API reference.
 ---
 
+## Authentication
+
+Every `/v1` and `/admin` route wants a gateway key. Send it as a Bearer token or in `x-api-key`:
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer nxs_..." \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+A gateway key is `nxs_` followed by 64 lowercase hex characters. Anything else gets a 401 without touching the store. The word `Bearer` is case-insensitive, and when both headers are present `x-api-key` wins. `GET /health` is open.
+
+Each key carries scopes. `completions` and `embeddings` let it call those routes, `models` lets it list models, and `admin` opens the `/admin` API. A key made without scopes gets `completions`, `embeddings` and `models`. A route the key has no scope for answers 403.
+
+Set `require_api_key: false` (or `nexus.WithRequireAPIKey(false)`) to open the `/v1` routes for local work. It opens nothing else. The admin routes always need a key with the `admin` scope, and `GET /v1/models` only asks for the `models` scope when keys are required. Even on an open gateway, any non-empty `Authorization` header counts as a key you presented, so a Basic credential or a Bearer JWT forwarded by an auth proxy gets a 401 instead of being ignored.
+
+A WebSocket client to `/v1/realtime` authenticates with the same headers on the upgrade request. A refused one is closed with code 1008. Browsers cannot set headers on a WebSocket, so a browser client needs a proxy that adds the key.
+
+### Your first admin key
+
+With keys required, no HTTP route can make the first admin key, because making one takes an admin key. Create it in Go, once, from the process that owns the gateway:
+
+```go
+t, _ := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Ops", Slug: "ops"})
+_, raw, err := gw.Keys().Create(ctx, &key.CreateInput{
+    TenantID: t.ID.String(),
+    Name:     "ops",
+    Scopes:   []string{"admin"},
+})
+```
+
+The raw key comes back this once. Only its hash is stored, so if you lose it you rotate or revoke the key and make another. You can also create it from the dashboard. An `admin` key administers every tenant, whichever tenant it belongs to, so keep it out of application code and logs.
+
 ## OpenAI-Compatible Endpoints
 
 ### Chat Completions
@@ -25,7 +59,7 @@ POST /v1/embeddings
 GET /v1/models
 ```
 
-Returns all models from all registered providers, plus model aliases.
+Returns all models from all registered providers, plus model aliases. It needs the `models` scope when keys are required.
 
 ## Admin Endpoints
 
@@ -36,7 +70,7 @@ Returns all models from all registered providers, plus model aliases.
 | `GET` | `/admin/tenants` | List all tenants |
 | `POST` | `/admin/tenants` | Create a tenant |
 | `GET` | `/admin/tenants/:id` | Get a tenant |
-| `PUT` | `/admin/tenants/:id` | Update a tenant |
+| `PATCH` | `/admin/tenants/:id` | Update a tenant |
 | `DELETE` | `/admin/tenants/:id` | Delete a tenant |
 
 ### API Keys
@@ -51,8 +85,7 @@ Returns all models from all registered providers, plus model aliases.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/admin/usage` | Query usage records |
-| `GET` | `/admin/usage/summary` | Aggregated usage summary |
+| `GET` | `/admin/usage?tenant_id=...&period=month` | Usage summary for one tenant |
 
 ### Providers
 
@@ -64,8 +97,17 @@ Returns all models from all registered providers, plus model aliases.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | Gateway health check |
+| `GET` | `/health` | Gateway health check, open to everyone |
 
 ## Response Headers
 
-The gateway does not set `X-Nexus-*` response headers. It records the request id, the provider that served the request, whether the response came from the cache, and the latency on the request's usage record instead. Read them from the usage store, not from the response.
+Every `/v1` and `/admin` response carries `X-Request-Id`. It is the id on the request's usage record, so you can match a client error to a row in the usage store. The gateway makes its own id and ignores one the client sends.
+
+Other headers show up when they apply:
+
+| Header | When |
+|--------|------|
+| `Retry-After` | A 429 that says how long to wait. Whole seconds, rounded up. |
+| `WWW-Authenticate: Bearer` | Every 401. |
+
+The gateway sets no `X-Nexus-*` headers. The provider that served the request, whether the response came from the cache, and the latency are on the usage record. See [Errors](/docs/concepts/errors) for the error body and the refusal codes.

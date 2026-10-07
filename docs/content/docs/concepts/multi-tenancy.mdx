@@ -13,16 +13,64 @@ ctx = nexus.WithTenant(ctx, "tenant-1")
 
 All downstream operations (routing, caching, usage, guardrails) automatically respect the tenant scope.
 
-## Tenant Configuration
+## Quotas
 
-Each tenant can have custom settings:
+A tenant carries a `Quota`. Every field is enforced, and a field left at zero means no limit.
 
 ```go
-type TenantConfig struct {
-    RateLimit     int
-    BudgetLimit   float64
-    AllowedModels []string
-    Metadata      map[string]any
+type Quota struct {
+    RPM               int           // requests per minute
+    TPM               int           // tokens per minute
+    DailyRequests     int           // requests per UTC day
+    MonthlyBudgetUSD  money.USD     // spend per UTC month
+    MaxTokensPerReq   int           // cap on one request's max_tokens
+    MaxStreamDuration time.Duration // wall-clock cap on one stream
+    MaxStreamTokens   int           // output-token cap on one stream
+}
+```
+
+The checks run in the quota stage, after the access stage has confirmed the tenant is active and the key holds the scope the route needs.
+
+| Field | What it does | Refusal |
+|-------|--------------|---------|
+| `MaxTokensPerReq` | Refuses a `max_tokens` above the cap. A request that sets none gets the cap. | 400 `invalid_request` |
+| `DailyRequests` | Counts the tenant's requests since midnight UTC. | 429 `quota_exceeded` |
+| `MonthlyBudgetUSD` | Compares the month's spend, in exact decimals, with the budget. Only a positive budget limits. | 429 `budget_exceeded` |
+| `RPM` | Counts requests in a one minute window. | 429 `rate_limited` |
+| `TPM` | Counts the tokens that finished requests used in a one minute window. | 429 `rate_limited` |
+| `MaxStreamDuration`, `MaxStreamTokens` | Cut a stream that runs too long or writes too much. | 429 `quota_exceeded`, in the stream |
+
+The daily count leaves out refused requests. If it did not, a tenant held at its RPM would burn through its daily quota on the refusals. TPM is charged when a response ends, or when a stream closes, so the request that crosses the line completes and the next one is refused. A cache hit used no tokens and is never charged. A failed request is not charged to TPM either, though it still counts against RPM.
+
+The budget is soft for the same reason: a request's cost is only known after it ends. The request that crosses the budget finishes and the next one gets `budget_exceeded`. Cost is read from the usage store, so every replica sees the same total.
+
+Stream limits come from the tenant's own quota. A stream cut at either limit is recorded as an `error` with status 429 and code `quota_exceeded`, and it is priced from the tokens it used, because the client got part of it.
+
+### When a check cannot run
+
+The two kinds of check fail in opposite directions on purpose.
+
+The rate limiter fails open. If it errors (Redis is down, say), the request goes through, the gateway logs it, and `gw.LimiterErrors()` counts it. A limiter outage should not take your gateway down with it, so watch that counter.
+
+The usage store fails closed. If the daily count or the month's spend cannot be read, the request is refused with 503 `unavailable`. Letting it through would mean spending past a budget you cannot see.
+
+### Windows and replicas
+
+The default limiter lives in the process, so each replica keeps its own RPM and TPM windows. Use `WithLimiter(redislimit.New(client))` to share them. The daily count and the budget come from the usage store and are shared already. `GlobalRateLimit` goes through the same limiter under one key, so with the memory limiter it is a per-replica limit too. See [Configuration](/docs/concepts/configuration#sharing-rate-limit-windows-between-replicas).
+
+## Tenant Configuration
+
+Each tenant can also have custom settings:
+
+```go
+type Config struct {
+    AllowedModels   []string
+    BlockedModels   []string
+    DefaultModel    string
+    RoutingStrategy string
+    GuardrailPolicy string
+    CacheEnabled    *bool
+    Metadata        map[string]string
 }
 ```
 
@@ -45,12 +93,14 @@ summary, _ := usageService.Summary(ctx, tenantID, timeRange)
 // summary.TotalTokens, summary.TotalCost
 ```
 
-## Budget Enforcement
+## Budget events
 
-Set budget limits per tenant. Nexus fires lifecycle events at 80% (warning) and 100% (exceeded):
+Nexus fires a lifecycle event when a tenant's spend reaches 80% of its budget and another when it reaches 100%:
 
 ```go
 // Plugin hooks
 OnBudgetWarning(ctx, tenantID, usedPct)
 OnBudgetExceeded(ctx, tenantID)
 ```
+
+Each fires once per tenant per month per replica. Without that, every request above the line would fire it again. Two replicas can each fire once, and a restart forgets what was already sent. A single request that jumps a tenant from under 80% to over 100% fires `OnBudgetExceeded` only, since a warning about a limit already passed adds nothing.

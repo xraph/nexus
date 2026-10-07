@@ -26,12 +26,16 @@ type Config struct {
     GlobalRateLimit   int
     DefaultTimeout    time.Duration
     DefaultMaxRetries int
+    EnableUsage       bool
     EnableCache       bool
+    RequireAPIKey     bool
     LogLevel          string
 }
 ```
 
-`DefaultConfig()` returns sensible defaults.
+`DefaultConfig()` returns sensible defaults. `RequireAPIKey` is true by default, which means the `api` and `proxy` routes refuse a request without a valid gateway key. Set it to false for local work and the `/v1` routes open up. The `/admin` routes stay closed. See [Authentication](/docs/api-reference/http-api#authentication).
+
+`GlobalRateLimit` is requests per minute across the whole gateway, every tenant and every unattributed request included. Zero means no limit. It is enforced: the quota stage charges one request against it before it looks at the tenant's own limits, and a request over it gets a 429 `rate_limited`.
 
 ## Available Options
 
@@ -50,11 +54,31 @@ type Config struct {
 | `WithLogger(logger)` | Set a custom logger |
 | `WithBasePath(path)` | Set the HTTP base path |
 | `WithRateLimit(rpm)` | Set global rate limit |
+| `WithRequireAPIKey(on)` | Require a gateway key on the `/v1` routes (default true) |
+| `WithLimiter(l)` | Set the RPM and TPM limiter (default: in-process memory) |
 | `WithTracer(tracer)` | Set the request tracer |
 | `WithTransforms(registry)` | Set input/output transforms |
 | `WithTimeout(duration)` | Set default request timeout |
 | `WithMaxRetries(n)` | Set default max retries |
 | `WithTenantAlias(tid, name, targets...)` | Per-tenant alias override |
+
+## Sharing rate limit windows between replicas
+
+The default limiter keeps its windows in the process, so each replica counts on its own: three replicas with a tenant RPM of 60 let that tenant make 180 requests a minute. If replicas should share one window, hand the gateway a Redis limiter:
+
+```go
+import (
+    "github.com/redis/go-redis/v9"
+    "github.com/xraph/nexus/ratelimit/redislimit"
+)
+
+client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+gw := nexus.New(
+    nexus.WithLimiter(redislimit.New(client)),
+)
+```
+
+Windows are fixed and aligned to the clock of the replica that charges them, so keep replica clocks in sync. If Redis goes down the limiter fails open: requests go through, `gw.LimiterErrors()` counts each failure, and the gateway logs it. The daily request count and the monthly budget do not come from the limiter. They come from the usage store, so every replica already shares them.
 
 ## File-based configuration (Forge extension)
 
@@ -70,6 +94,7 @@ extensions:
     default_timeout: "30s"
     default_max_retries: 2
     global_rate_limit: 1000
+    require_api_key: true
     log_level: "info"
     enable_usage: true
     enable_cache: false

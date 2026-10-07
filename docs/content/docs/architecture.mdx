@@ -37,16 +37,20 @@ Every request flows through the pipeline middleware chain, sorted by priority:
 3. **Usage** (15): record, price and attribute every request
 4. **Timeout** (20): request deadline enforcement
 5. **Identity** (30): tenant and key ids, so the cache and usage agree on who asked
-6. **Stream Lifecycle** (60): extension hooks for streams
-7. **Guardrails** (150): input content validation
-8. **Transforms** (200): input modifications (system prompt, RAG)
-9. **Alias Resolution** (250): virtual model to concrete provider/model
-10. **Cache** (280): check for a cached response
-11. **Retry** (340): retry logic with backoff
-12. **Custom middleware**: yours, sorted into this list by its own priority
-13. **Provider Call**: route and call the selected provider. Always last.
+6. **Access** (40): the tenant must be active and the key must hold the scope the route needs
+7. **Quota** (50): token cap, daily requests, monthly budget, RPM and TPM, and the gateway-wide rate limit
+8. **Stream Lifecycle** (60): extension hooks for streams, and the tenant's stream duration and token caps
+9. **Guardrails** (150): input content validation
+10. **Transforms** (200): input modifications (system prompt, RAG)
+11. **Alias Resolution** (250): virtual model to concrete provider/model
+12. **Cache** (280): check for a cached response
+13. **Retry** (340): retry logic with backoff
+14. **Custom middleware**: yours, sorted into this list by its own priority
+15. **Provider Call**: route and call the selected provider. Always last.
 
-The usage stage sits above everything that can refuse, replay or retry a request, so one request produces one usage record whatever happens below it. The gateway sets no response headers.
+The usage stage sits above everything that can refuse, replay or retry a request, so one request produces one usage record whatever happens below it. That includes a request the access or quota stage refuses, which is recorded as `refused` at $0.
+
+The HTTP edge runs before this chain. It reads the gateway key, checks it, and puts the tenant, the key id and the key's scopes into the context, so the pipeline starts with an identity it can trust. A request with no valid key never reaches the chain, which is why those 401s are not in the usage store. See [Errors](/docs/concepts/errors).
 
 ## Key Packages
 

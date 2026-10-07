@@ -26,17 +26,45 @@ var (
 )
 ```
 
-## HTTP Mapping
+## Refusals
 
-The API layer maps these errors to standard HTTP responses:
+The gateway does not answer with the sentinels above. When a stage turns a request away before any provider is called, it returns a `*nexus.RefusalError` with a code and an HTTP status. You can match one with `errors.As`, or read the code and status through the `pipeline.Refusal` interface.
 
-| Error | HTTP Status |
-|-------|-------------|
-| `ErrAuthRequired` | 401 Unauthorized |
-| `ErrForbidden` | 403 Forbidden |
-| `ErrProviderNotFound` | 404 Not Found |
-| `ErrTenantNotFound` | 404 Not Found |
-| `ErrGuardrailBlocked` | 400 Bad Request |
-| `ErrRateLimited` | 429 Too Many Requests |
-| `ErrBudgetExceeded` | 402 Payment Required |
-| `ErrTokenOverflow` | 413 Payload Too Large |
+| Code | Status | Raised when |
+|------|--------|-------------|
+| `unauthenticated` | 401 | No key, an unknown key, or a revoked or expired key |
+| `forbidden` | 403 | The tenant is disabled, suspended or unknown, the key belongs to another tenant, or the key lacks the scope the route needs |
+| `invalid_request` | 400 | `max_tokens` is above the tenant's cap, the tenant and key ids do not parse or name different tenants, or a streaming request went to `Engine.Complete` |
+| `rate_limited` | 429 | The tenant's RPM or TPM, or the gateway-wide `global_rate_limit`, is used up for this minute |
+| `quota_exceeded` | 429 | The tenant's daily request quota is used up, or a stream was cut at its duration or token cap |
+| `budget_exceeded` | 429 | The tenant has spent its monthly budget |
+| `unavailable` | 503 | A store the check needs (tenant, key, daily count, monthly spend) could not be read |
+| `content_blocked` | 400 | A guardrail blocked the input or the output |
+
+Over HTTP the body is the OpenAI error shape with the code added:
+
+```json
+{
+  "error": {
+    "message": "nexus: 60 requests a minute",
+    "type": "rate_limit_error",
+    "code": "rate_limited"
+  }
+}
+```
+
+A 429 that knows how long to wait carries `Retry-After` in whole seconds, rounded up. The wait is the rest of the minute for a rate limit, until midnight UTC for the daily quota, and until the first of the next month for the budget. A 401 carries `WWW-Authenticate: Bearer`.
+
+Anything that is not a refusal is a 500 with the message `internal error`. A provider error can carry a URL, a response body or a connection string, so none of it reaches the client. The cause goes to the gateway log, and the `X-Request-Id` on the response matches the usage record.
+
+### Errors inside a stream
+
+Once a stream has started the status is already sent, so the error travels in the stream as an event. A refusal has `type: refused` and `code` set to the refusal code, and it is marked retryable when it is a 429. Any other failure reads `upstream error` and nothing more. A WebSocket refusal closes the connection with code 1008.
+
+### Which refusals are recorded
+
+Every refusal raised inside the pipeline writes a usage record with outcome `refused`, at exactly $0, under its code. That covers quota, budget, scope and tenant refusals.
+
+Two refusals are not recorded. The 401 from the HTTP edge (no key, a malformed key, a key that does not validate) and the 403 from a route scope check (`admin`, `models`) happen before the pipeline, with no tenant to charge, and recording them would let anyone write rows into your usage store. Watch your reverse proxy or the gateway log for those.
+
+A stream cut at `max_stream_duration` or `max_stream_tokens` is a different case. The client already got part of it, so it is recorded as an `error` with status 429 and code `quota_exceeded`, and it is priced from the tokens it used.
