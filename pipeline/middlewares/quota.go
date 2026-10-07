@@ -27,10 +27,13 @@ type BudgetEvents interface {
 	EmitBudgetExceeded(ctx context.Context, tenantID id.TenantID)
 }
 
-// QuotaConfig configures the quota stage.
+// QuotaConfig configures the quota stage. Usage and Limiter are required.
+// The TPM charge after a request is synchronous, with a 2 second timeout, so
+// a slow limiter delays the end of a completion or the Close of a stream by
+// up to that long.
 type QuotaConfig struct {
-	Usage     UsageCounter
-	Limiter   ratelimit.Limiter
+	Usage     UsageCounter      // required
+	Limiter   ratelimit.Limiter // required
 	Events    BudgetEvents
 	GlobalRPM int
 	Log       UsageLogger
@@ -41,6 +44,10 @@ type QuotaConfig struct {
 // requests and monthly budget (read from the store of record, failing
 // closed), and its RPM and TPM (through the limiter, failing open). It
 // also enforces the gateway-wide GlobalRPM for every request.
+//
+// The checks run in order and a refused request is not refunded: one
+// refused by a later check has already been charged against GlobalRPM and
+// RPM if those ran before it.
 type QuotaMiddleware struct {
 	cfg           QuotaConfig
 	limiterErrors atomic.Int64
@@ -51,6 +58,12 @@ type QuotaMiddleware struct {
 
 // NewQuota returns the quota stage.
 func NewQuota(cfg QuotaConfig) *QuotaMiddleware {
+	if cfg.Usage == nil {
+		panic("middlewares: NewQuota needs QuotaConfig.Usage")
+	}
+	if cfg.Limiter == nil {
+		panic("middlewares: NewQuota needs QuotaConfig.Limiter")
+	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -133,12 +146,17 @@ func (m *QuotaMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	}
 
 	resp, err := next(ctx)
+	// Only a request that succeeded is charged to TPM. A failed one is not:
+	// an output guard refusal, or the tokens spent on attempts the retry
+	// stage threw away, never reach this point. RPM still bounds them.
 	if q.TPM > 0 && err == nil && resp != nil {
 		switch {
+		case stateBool(req, pipeline.StateCacheHit):
+			// A cache hit called no provider, streamed or not: it uses no
+			// tokens a minute. This case comes first so a replayed stream is
+			// never wrapped, and its Usage() is never charged.
 		case resp.Stream != nil:
 			resp.Stream = &tpmStream{inner: resp.Stream, charge: func(n int) { m.charge(tpmKey, n, int64(q.TPM)) }}
-		case stateBool(req, pipeline.StateCacheHit):
-			// A cache hit called no provider: it uses no tokens a minute.
 		case resp.Completion != nil:
 			m.charge(tpmKey, resp.Completion.Usage.TotalTokens, int64(q.TPM))
 		case resp.Embedding != nil:
@@ -172,7 +190,7 @@ func (m *QuotaMiddleware) try(ctx context.Context, key string, n, limit int64) (
 	if err != nil {
 		m.limiterErrors.Add(1)
 		if m.cfg.Log != nil {
-			m.cfg.Log.Error("nexus: rate limiter failed, request allowed", "limiter", m.cfg.Limiter.Kind(), "error", err)
+			m.cfg.Log.Error("nexus: rate limiter failed", "limiter", m.cfg.Limiter.Kind(), "key", key, "error", err)
 		}
 		return ratelimit.Decision{}, false
 	}
