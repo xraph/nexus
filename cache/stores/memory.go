@@ -53,10 +53,12 @@ func NewMemory(opts ...MemoryOption) *MemoryCache {
 }
 
 func (c *MemoryCache) Get(_ context.Context, key string) (*provider.CompletionResponse, error) {
-	c.mu.RLock()
-	elem, ok := c.items[key]
-	c.mu.RUnlock()
+	// One lock for the whole lookup: Set replaces an entry's value and
+	// expiry in place, so reading them unlocked races a concurrent Set.
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
+	elem, ok := c.items[key]
 	if !ok {
 		return nil, nil
 	}
@@ -68,16 +70,12 @@ func (c *MemoryCache) Get(_ context.Context, key string) (*provider.CompletionRe
 
 	// Check TTL
 	if time.Now().After(entry.expiresAt) {
-		c.mu.Lock()
 		c.removeElement(elem)
-		c.mu.Unlock()
 		return nil, nil
 	}
 
 	// Move to front (most recently used)
-	c.mu.Lock()
 	c.eviction.MoveToFront(elem)
-	c.mu.Unlock()
 
 	return entry.value, nil
 }

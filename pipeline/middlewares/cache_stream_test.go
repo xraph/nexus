@@ -127,6 +127,51 @@ func TestCacheMiddleware_HitSetsCacheHitFlag(t *testing.T) {
 	}
 }
 
+func TestCacheMiddleware_NeverHandsOutTheStoredResponse(t *testing.T) {
+	t.Parallel()
+
+	mw := middlewares.NewCache(cache.NewService(stores.NewMemory()))
+	newReq := func() *pipeline.Request {
+		return &pipeline.Request{
+			Completion: &provider.CompletionRequest{Model: "m", Messages: []provider.Message{{Role: "user", Content: "hi"}}},
+			Type:       pipeline.RequestCompletion,
+			State:      map[string]any{},
+		}
+	}
+	miss, err := mw.Process(context.Background(), newReq(), func(context.Context) (*pipeline.Response, error) {
+		return &pipeline.Response{Completion: &provider.CompletionResponse{Model: "m",
+			Choices: []provider.Choice{{Message: provider.Message{Role: "assistant", Content: "original"}}}}}, nil
+	})
+	if err != nil {
+		t.Fatalf("miss: %v", err)
+	}
+	// An output guard redacts the response the miss is still carrying.
+	miss.Completion.Choices[0].Message = provider.Message{Role: "assistant", Content: "redacted"}
+
+	hit, err := mw.Process(context.Background(), newReq(), func(context.Context) (*pipeline.Response, error) {
+		t.Fatal("expected a cache hit")
+		return nil, nil //nolint:nilnil // unreachable
+	})
+	if err != nil || hit == nil || hit.Completion == nil {
+		t.Fatalf("hit = %+v, %v", hit, err)
+	}
+	if miss.Completion.Cached {
+		t.Fatal("the hit marked the miss's response as cached")
+	}
+	if got := hit.Completion.Choices[0].Message.Content; got != "original" {
+		t.Fatalf("the hit served %v: the miss's redaction reached the stored entry", got)
+	}
+	// And a stage rewriting the hit must not reach the next hit.
+	hit.Completion.Choices[0].Message = provider.Message{Role: "assistant", Content: "changed"}
+	again, _ := mw.Process(context.Background(), newReq(), func(context.Context) (*pipeline.Response, error) {
+		t.Fatal("expected a cache hit")
+		return nil, nil //nolint:nilnil // unreachable
+	})
+	if got := again.Completion.Choices[0].Message.Content; got != "original" {
+		t.Fatalf("the second hit served %v", got)
+	}
+}
+
 func TestCacheMiddleware_StreamMaxFramesAbandonsRecording(t *testing.T) {
 	t.Parallel()
 

@@ -126,13 +126,20 @@ func (m *UsageMiddleware) classify(ctx context.Context, rec *usage.Record, req *
 		rec.Outcome, rec.BlockedBy, rec.StatusCode = usage.OutcomeBlocked, blocked.Guard, 400
 		// A block is classified by its phase, not by whether it carries usage.
 		// An input block happens before any provider is called: not charged.
-		// An output block happens after the provider answered, so it was
-		// charged: at the tokens the blocked response consumed when we know
-		// them, at an unknown cost when we do not (a stream guard blocks
-		// mid-stream, without the response's usage).
+		// An output guard that blocks a cache hit blocked a replay: no
+		// provider was called, so it is cached at $0 whatever usage the
+		// replayed response carries. Any other output block happens after
+		// the provider answered, so it was charged: at the tokens the blocked
+		// response consumed when we know them, at an unknown cost when we do
+		// not (a stream guard blocks mid-stream, without the response's usage).
 		switch {
 		case blocked.Phase == guard.PhaseInput:
 			notCharged(rec)
+		case cacheHit:
+			if blocked.Usage != nil {
+				setTokens(rec, *blocked.Usage)
+			}
+			cached(rec)
 		case blocked.Usage != nil:
 			if blocked.Provider != "" {
 				rec.Provider = blocked.Provider
@@ -156,7 +163,9 @@ func (m *UsageMiddleware) classify(ctx context.Context, rec *usage.Record, req *
 		rec.Outcome, rec.StatusCode = usage.OutcomeOK, 200
 		setTokens(rec, resp.Embedding.Usage)
 		m.price(ctx, rec, resp.Embedding.Usage, true, resp.Embedding.Model)
-	case resp != nil && resp.Completion != nil && (cacheHit || resp.Completion.Cached):
+	// A cache hit is known only from this request's state. The response's
+	// Cached flag lives on an object a cache may share between requests.
+	case resp != nil && resp.Completion != nil && cacheHit:
 		rec.Outcome, rec.StatusCode = usage.OutcomeCached, 200
 		setTokens(rec, resp.Completion.Usage)
 		cached(rec)

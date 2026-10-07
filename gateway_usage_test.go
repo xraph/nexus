@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	nexus "github.com/xraph/nexus"
 	"github.com/xraph/nexus/cache/stores"
@@ -159,6 +162,119 @@ func TestACacheHitIsRecordedAndTenantsDoNotShare(t *testing.T) {
 	}
 	if len(recs) != 3 || hits != 1 {
 		t.Fatalf("records %d, cache hits %d", len(recs), hits)
+	}
+}
+
+func TestABlockedCacheHitIsNotCharged(t *testing.T) {
+	p := &fakeProvider{name: "openai", price: listPrice}
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		for range 2 {
+			_, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "gpt-4o", Messages: []provider.Message{{Role: "user", Content: "same"}}})
+			var blocked *guard.BlockedError
+			if !errors.As(err, &blocked) {
+				t.Fatalf("err = %v, want a block", err)
+			}
+		}
+	}, nexus.WithProvider(p), nexus.WithCache(stores.NewMemory()), nexus.WithGuard(blockAll{guard.PhaseOutput}))
+	if p.calls != 1 {
+		t.Fatalf("provider called %d times; the second request should be a cache hit", p.calls)
+	}
+	var priced, replayed int
+	for _, r := range recs {
+		if r.Outcome != usage.OutcomeBlocked || r.BlockedBy != "policy" {
+			t.Fatalf("record = %+v", r)
+		}
+		switch {
+		case r.PricingStatus == usage.PricingPriced && r.CostUSD != nil && r.CostUSD.String() == "0.008755":
+			priced++
+		case r.PricingStatus == usage.PricingCached && r.Cached && r.CostUSD != nil && r.CostUSD.IsZero():
+			replayed++
+		default:
+			t.Fatalf("record = %s cost %v cached %v", r.PricingStatus, r.CostUSD, r.Cached)
+		}
+	}
+	if len(recs) != 2 || priced != 1 || replayed != 1 {
+		t.Fatalf("records %d: priced %d, cached %d; want 2: 1 and 1", len(recs), priced, replayed)
+	}
+}
+
+// slowProvider answers after a delay and counts its calls safely, so many
+// requests can be in flight at once.
+type slowProvider struct {
+	*fakeProvider
+	delay time.Duration
+	n     atomic.Int64
+}
+
+func (s *slowProvider) Complete(_ context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
+	s.n.Add(1)
+	time.Sleep(s.delay)
+	return &provider.CompletionResponse{Provider: s.name, Model: req.Model,
+		Choices: []provider.Choice{{Message: provider.Message{Role: "assistant", Content: "my card is 4111"}}},
+		Usage:   provider.Usage{PromptTokens: 1234, CompletionTokens: 567, TotalTokens: 1801}}, nil
+}
+
+// slowRedactor is an output guard that takes its time and rewrites every
+// message, the way a PII redactor does. While it runs, other requests for
+// the same prompt can hit the cache.
+type slowRedactor struct{ delay time.Duration }
+
+func (slowRedactor) Name() string       { return "redact" }
+func (slowRedactor) Phase() guard.Phase { return guard.PhaseOutput }
+func (g slowRedactor) Check(_ context.Context, in *guard.CheckInput) (*guard.CheckResult, error) {
+	time.Sleep(g.delay)
+	out := make([]provider.Message, len(in.Messages))
+	for i, m := range in.Messages {
+		out[i] = provider.Message{Role: m.Role, Content: "my card is [redacted]"}
+	}
+	return &guard.CheckResult{Passed: true, Action: guard.ActionRedact, Modified: true, Messages: out}, nil
+}
+
+func TestConcurrentRequestsAreChargedOncePerProviderCall(t *testing.T) {
+	// The provider answers in 5ms and the output guard takes 40ms, so while
+	// the first request is still in the guard, the ones that start after it
+	// hit the cache. A hit must never mark or rewrite the response the first
+	// request is still carrying, and must never read as a charge.
+	const requests = 20
+	p := &slowProvider{fakeProvider: &fakeProvider{name: "openai", price: listPrice}, delay: 5 * time.Millisecond}
+	tenant := id.NewTenantID().String()
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		var wg sync.WaitGroup
+		for i := range requests {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				time.Sleep(time.Duration(i) * 2 * time.Millisecond)
+				resp, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "gpt-4o", TenantID: tenant, Messages: []provider.Message{{Role: "user", Content: "same"}}})
+				if err != nil {
+					t.Errorf("complete: %v", err)
+					return
+				}
+				if got := resp.Choices[0].Message.Content; got != "my card is [redacted]" {
+					t.Errorf("content = %v, want it redacted", got)
+				}
+			}()
+		}
+		wg.Wait()
+	}, nexus.WithProvider(p), nexus.WithCache(stores.NewMemory()), nexus.WithGuard(slowRedactor{40 * time.Millisecond}))
+
+	calls := int(p.n.Load())
+	var priced, hits int
+	for _, r := range recs {
+		switch {
+		case r.PricingStatus == usage.PricingPriced && r.Outcome == usage.OutcomeOK && r.CostUSD != nil && r.CostUSD.String() == "0.008755":
+			priced++
+		case r.PricingStatus == usage.PricingCached && r.Outcome == usage.OutcomeCached && r.CostUSD != nil && r.CostUSD.IsZero():
+			hits++
+		default:
+			t.Fatalf("record = %s/%s cost %v", r.Outcome, r.PricingStatus, r.CostUSD)
+		}
+	}
+	if len(recs) != requests || priced != calls || hits != requests-calls {
+		t.Fatalf("%d records, %d priced, %d cached; the provider was called %d times", len(recs), priced, hits, calls)
+	}
+	if hits == 0 {
+		t.Fatalf("no request hit the cache, so the test proved nothing")
 	}
 }
 

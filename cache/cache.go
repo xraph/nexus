@@ -3,6 +3,7 @@ package cache
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/xraph/nexus/provider"
 )
@@ -37,17 +38,17 @@ func NewService(c Cache) Service {
 
 type cacheService struct {
 	cache  Cache
-	hits   int64
-	misses int64
+	hits   atomic.Int64 // requests run concurrently
+	misses atomic.Int64
 }
 
 func (s *cacheService) Get(ctx context.Context, key string) (*provider.CompletionResponse, error) {
 	resp, err := s.cache.Get(ctx, key)
 	if err != nil || resp == nil {
-		s.misses++
+		s.misses.Add(1)
 		return resp, err
 	}
-	s.hits++
+	s.hits.Add(1)
 	return resp, nil
 }
 
@@ -64,14 +65,15 @@ func (s *cacheService) Clear(ctx context.Context) error {
 }
 
 func (s *cacheService) Stats(_ context.Context) (*Stats, error) {
-	total := s.hits + s.misses
+	hits, misses := s.hits.Load(), s.misses.Load()
+	total := hits + misses
 	var hitRate float64
 	if total > 0 {
-		hitRate = float64(s.hits) / float64(total)
+		hitRate = float64(hits) / float64(total)
 	}
 	return &Stats{
-		Hits:    s.hits,
-		Misses:  s.misses,
+		Hits:    hits,
+		Misses:  misses,
 		HitRate: hitRate,
 	}, nil
 }

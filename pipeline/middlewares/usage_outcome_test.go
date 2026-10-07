@@ -55,6 +55,8 @@ func TestUsageClassifiesEveryOutcome(t *testing.T) {
 		{"served and priced", true, false, &pipeline.Response{Completion: served}, nil, "gpt-4o", usage.OutcomeOK, usage.PricingPriced, "0.008755", "", ""},
 		{"served, no price", true, false, &pipeline.Response{Completion: &provider.CompletionResponse{Model: "o9", Usage: served.Usage}}, nil, "o9", usage.OutcomeOK, usage.PricingUnpricedModel, "", "", ""},
 		{"cache hit", false, true, &pipeline.Response{Completion: &provider.CompletionResponse{Cached: true, Usage: served.Usage}}, nil, "gpt-4o", usage.OutcomeCached, usage.PricingCached, "0", "", ""},
+		{"a miss whose response a cache marked cached", true, false, &pipeline.Response{Completion: &provider.CompletionResponse{Cached: true, Model: "gpt-4o", Usage: served.Usage}}, nil, "gpt-4o", usage.OutcomeOK, usage.PricingPriced, "0.008755", "", ""},
+		{"output block of a cache hit", false, true, nil, &guard.BlockedError{Guard: "leak", Phase: guard.PhaseOutput, Usage: &served.Usage, Model: "gpt-4o", Provider: "openai"}, "gpt-4o", usage.OutcomeBlocked, usage.PricingCached, "0", "leak", ""},
 		{"input block", false, false, nil, &guard.BlockedError{Guard: "pii", Phase: guard.PhaseInput, Reason: "ssn"}, "gpt-4o", usage.OutcomeBlocked, usage.PricingNotCharged, "0", "pii", ""},
 		{"output block", true, false, nil, &guard.BlockedError{Guard: "leak", Phase: guard.PhaseOutput, Usage: &served.Usage, Model: "gpt-4o", Provider: "openai"}, "gpt-4o", usage.OutcomeBlocked, usage.PricingPriced, "0.008755", "leak", ""},
 		{"output block without usage", true, false, nil, &guard.BlockedError{Guard: "leak", Phase: guard.PhaseOutput}, "gpt-4o", usage.OutcomeBlocked, usage.PricingUnknown, "", "leak", ""},

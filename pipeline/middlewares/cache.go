@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -70,11 +72,14 @@ func (m *CacheMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	key := cache.Key(req.Completion)
 
 	// Check cache
+	// The store may hand every caller the same object, so a hit gets its own
+	// copy before anything marks or redacts it.
 	cached, err := m.cache.Get(ctx, key)
 	if err == nil && cached != nil {
-		cached.Cached = true
+		hit := copyCompletion(cached)
+		hit.Cached = true
 		req.State[pipeline.StateCacheHit] = true
-		return &pipeline.Response{Completion: cached}, nil
+		return &pipeline.Response{Completion: hit}, nil
 	}
 
 	// Cache miss — continue pipeline
@@ -83,12 +88,26 @@ func (m *CacheMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 		return resp, err
 	}
 
-	// Store successful response
+	// Store a copy of the successful response, so the stages this response
+	// still passes through (an output guard's redaction, output transforms)
+	// never write into the stored entry.
 	if resp != nil && resp.Completion != nil {
-		_ = m.cache.Set(ctx, key, resp.Completion) //nolint:errcheck // best-effort cache store
+		_ = m.cache.Set(ctx, key, copyCompletion(resp.Completion)) //nolint:errcheck // best-effort cache store
 	}
 
 	return resp, nil
+}
+
+// copyCompletion returns a copy of r that later stages can change without
+// touching r. Choices and State are copied too: output guards and output
+// transforms replace a choice's message or content in place, and stages add
+// to State. A message's content is replaced, never edited, so copying the
+// choices by value is enough.
+func copyCompletion(r *provider.CompletionResponse) *provider.CompletionResponse {
+	cp := *r
+	cp.Choices = slices.Clone(r.Choices)
+	cp.State = maps.Clone(r.State)
+	return &cp
 }
 
 func (m *CacheMiddleware) handleStream(ctx context.Context, req *pipeline.Request, next pipeline.NextFunc) (*pipeline.Response, error) {
