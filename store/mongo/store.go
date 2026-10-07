@@ -398,7 +398,9 @@ func (s *usageStore) DailyRequests(ctx context.Context, tenantID string) (int, e
 	if err != nil {
 		return 0, err
 	}
-	n, err := s.mdb.Collection(colUsage).CountDocuments(ctx, tenantMatch(tenantID, since))
+	m := tenantMatch(tenantID, since)
+	m["outcome"] = bson.M{"$ne": string(usage.OutcomeRefused)}
+	n, err := s.mdb.Collection(colUsage).CountDocuments(ctx, m)
 	if err != nil {
 		return 0, fmt.Errorf("nexus/mongo: daily requests: %w", err)
 	}

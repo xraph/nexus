@@ -93,6 +93,8 @@ type QueryResult struct {
 
 // Service tracks and queries usage data. Wherever a method takes a tenant
 // id, "" means every tenant, including requests attributed to none.
+// DailyRequests counts every request recorded since midnight UTC except
+// refused ones, so refusals never use up the quota.
 type Service interface {
 	Record(ctx context.Context, rec *Record) error
 	MonthlySpend(ctx context.Context, tenantID string) (money.USD, error)
@@ -104,8 +106,9 @@ type Service interface {
 
 // Store is the persistence interface for usage records. Wherever a method
 // takes a tenant id, "" means every tenant, including requests attributed
-// to none. Summary returns ErrInvalidPeriod for a period other than day,
-// week or month.
+// to none. DailyRequests counts every request recorded since midnight UTC
+// except refused ones, so refusals never use up the quota. Summary returns
+// ErrInvalidPeriod for a period other than day, week or month.
 type Store interface {
 	Insert(ctx context.Context, rec *Record) error
 	MonthlySpend(ctx context.Context, tenantID string) (money.USD, error)

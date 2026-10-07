@@ -321,10 +321,13 @@ func (s *usageStore) MonthlySpend(ctx context.Context, tenantID string) (money.U
 	if err != nil {
 		return money.Zero, err
 	}
-	rows, err := s.sdb.Query(ctx,
-		`SELECT cost_usd FROM usage_records
-		  WHERE (? = '' OR tenant_id = ?) AND created_at >= ? AND cost_usd IS NOT NULL`,
-		tenantID, tenantID, conv.TimeText(since))
+	q := `SELECT cost_usd FROM usage_records WHERE created_at >= ? AND cost_usd IS NOT NULL`
+	args := []any{conv.TimeText(since)}
+	if tenantID != "" {
+		q += ` AND tenant_id = ?`
+		args = append(args, tenantID)
+	}
+	rows, err := s.sdb.Query(ctx, q, args...)
 	if err != nil {
 		return money.Zero, fmt.Errorf("nexus/sqlite: monthly spend: %w", err)
 	}
@@ -349,11 +352,14 @@ func (s *usageStore) DailyRequests(ctx context.Context, tenantID string) (int, e
 	if err != nil {
 		return 0, err
 	}
+	q := `SELECT COUNT(*) FROM usage_records WHERE created_at >= ? AND outcome <> 'refused'`
+	args := []any{conv.TimeText(since)}
+	if tenantID != "" {
+		q += ` AND tenant_id = ?`
+		args = append(args, tenantID)
+	}
 	var count int
-	err = s.sdb.QueryRow(ctx,
-		`SELECT COUNT(*) FROM usage_records WHERE (? = '' OR tenant_id = ?) AND created_at >= ?`,
-		tenantID, tenantID, conv.TimeText(since)).Scan(&count)
-	if err != nil {
+	if err = s.sdb.QueryRow(ctx, q, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("nexus/sqlite: daily requests: %w", err)
 	}
 	return count, nil

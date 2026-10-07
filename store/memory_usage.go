@@ -63,7 +63,13 @@ func (s *memoryUsageStore) DailyRequests(_ context.Context, tenantID string) (in
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.inWindow(tenantID, since)), nil
+	n := 0
+	for _, r := range s.inWindow(tenantID, since) {
+		if r.Outcome != usage.OutcomeRefused {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (s *memoryUsageStore) Summary(_ context.Context, tenantID, period string) (*usage.Summary, error) {

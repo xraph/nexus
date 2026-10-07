@@ -313,12 +313,14 @@ func (s *usageStore) MonthlySpend(ctx context.Context, tenantID string) (money.U
 	if err != nil {
 		return money.Zero, err
 	}
+	q := `SELECT SUM(cost_usd) FROM nexus_usage_records WHERE created_at >= $1`
+	args := []any{since}
+	if tenantID != "" {
+		q += ` AND tenant_id = $2`
+		args = append(args, tenantID)
+	}
 	var total numeric
-	err = s.pgdb.QueryRow(ctx,
-		`SELECT SUM(cost_usd) FROM nexus_usage_records
-		  WHERE ($1 = '' OR tenant_id = $1) AND created_at >= $2`,
-		tenantID, since).Scan(&total)
-	if err != nil {
+	if err = s.pgdb.QueryRow(ctx, q, args...).Scan(&total); err != nil {
 		return money.Zero, fmt.Errorf("nexus/postgres: monthly spend: %w", err)
 	}
 	u, err := total.usd()
@@ -333,12 +335,14 @@ func (s *usageStore) DailyRequests(ctx context.Context, tenantID string) (int, e
 	if err != nil {
 		return 0, err
 	}
+	q := `SELECT COUNT(*) FROM nexus_usage_records WHERE created_at >= $1 AND outcome <> 'refused'`
+	args := []any{since}
+	if tenantID != "" {
+		q += ` AND tenant_id = $2`
+		args = append(args, tenantID)
+	}
 	var count int
-	err = s.pgdb.QueryRow(ctx,
-		`SELECT COUNT(*) FROM nexus_usage_records
-		  WHERE ($1 = '' OR tenant_id = $1) AND created_at >= $2`,
-		tenantID, since).Scan(&count)
-	if err != nil {
+	if err = s.pgdb.QueryRow(ctx, q, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("nexus/postgres: daily requests: %w", err)
 	}
 	return count, nil
