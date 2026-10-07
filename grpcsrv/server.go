@@ -16,13 +16,23 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
+	"net/http"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
+	"github.com/xraph/nexus/auth"
+	"github.com/xraph/nexus/httpstream"
+	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/provider"
 
 	nexusv1 "github.com/xraph/nexus/grpcsrv/proto/nexus/v1"
 )
+
+// method names the RPC in the log.
+const method = "/nexus.v1.Completions/CompleteStream"
 
 // CompletionStreamer is the minimal engine surface the server uses.
 // nexus.Engine satisfies it implicitly.
@@ -34,14 +44,28 @@ type CompletionStreamer interface {
 type Server struct {
 	nexusv1.UnimplementedCompletionsServer
 	engine CompletionStreamer
+	log    auth.Logger
 }
 
+// Option configures the Server.
+type Option func(*Server)
+
+// WithLogger sets where the cause of a failed stream is logged. The default
+// is slog.Default(). nexus.Logger satisfies auth.Logger.
+func WithLogger(l auth.Logger) Option { return func(s *Server) { s.log = l } }
+
 // NewServer wraps a CompletionStreamer (typically *nexus.Engine).
-func NewServer(engine CompletionStreamer) *Server { return &Server{engine: engine} }
+func NewServer(engine CompletionStreamer, opts ...Option) *Server {
+	s := &Server{engine: engine, log: slog.Default()}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
 
 // Register installs the Server on a grpc.ServiceRegistrar.
-func Register(reg grpc.ServiceRegistrar, engine CompletionStreamer) {
-	nexusv1.RegisterCompletionsServer(reg, NewServer(engine))
+func Register(reg grpc.ServiceRegistrar, engine CompletionStreamer, opts ...Option) {
+	nexusv1.RegisterCompletionsServer(reg, NewServer(engine, opts...))
 }
 
 // CompleteStream handles a server-streaming completion. Translates each
@@ -59,15 +83,22 @@ func Register(reg grpc.ServiceRegistrar, engine CompletionStreamer) {
 //
 // Both signals fire for the same underlying failure. Clients should drain
 // pending events first, then inspect the Recv() error.
+//
+// Both carry only what an HTTP client would see: a refusal's own code and
+// text, or a fixed message for anything else. The gRPC status code follows
+// the refusal (Unauthenticated, PermissionDenied, InvalidArgument,
+// ResourceExhausted, Unavailable), and anything that is not a refusal is
+// Internal with "internal error". The real error goes to the server's
+// logger, never to the client.
 func (s *Server) CompleteStream(req *nexusv1.CompletionRequest, srv nexusv1.Completions_CompleteStreamServer) error {
 	if req == nil || req.Model == "" {
-		return errors.New("grpcsrv: model is required")
+		return status.Error(codes.InvalidArgument, "model is required")
 	}
 
 	completionReq := requestFromProto(req)
 	stream, err := s.engine.CompleteStream(srv.Context(), completionReq)
 	if err != nil {
-		return sendErr(srv, err)
+		return s.fail(srv, err)
 	}
 	defer func() { _ = stream.Close() }()
 
@@ -82,8 +113,7 @@ func (s *Server) CompleteStream(req *nexusv1.CompletionRequest, srv nexusv1.Comp
 			return srv.Send(&nexusv1.StreamEvent{Type: nexusv1.StreamEvent_DONE})
 		}
 		if err != nil {
-			_ = sendErr(srv, err) //nolint:errcheck // best-effort: connection may already be torn
-			return err
+			return s.fail(srv, err)
 		}
 		if chunk == nil {
 			continue
@@ -94,15 +124,48 @@ func (s *Server) CompleteStream(req *nexusv1.CompletionRequest, srv nexusv1.Comp
 	}
 }
 
-func sendErr(srv nexusv1.Completions_CompleteStreamServer, err error) error {
-	we := &nexusv1.WireError{
-		Message: err.Error(),
-		Type:    "upstream",
-	}
-	return srv.Send(&nexusv1.StreamEvent{
-		Type:  nexusv1.StreamEvent_ERROR,
-		Error: we,
+// fail logs err, sends the sanitized ERROR event (best effort: the
+// connection may already be torn) and returns the matching gRPC status.
+func (s *Server) fail(srv nexusv1.Completions_CompleteStreamServer, err error) error {
+	ctx := srv.Context()
+	auth.LogServerError(ctx, s.log, method, err)
+	we := httpstream.SanitizeError(err, pipeline.RequestID(ctx))
+	_ = srv.Send(&nexusv1.StreamEvent{ //nolint:errcheck // best-effort: connection may already be torn
+		Type: nexusv1.StreamEvent_ERROR,
+		Error: &nexusv1.WireError{
+			Message: we.Message, Type: we.Type, Code: we.Code,
+			Retryable: we.Retryable, RequestId: we.RequestID,
+		},
 	})
+	return statusOf(err)
+}
+
+// statusOf maps err to the gRPC status a client sees. Only a refusal's own
+// text, or a cancel's, is ever put in it.
+func statusOf(err error) error {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return status.Error(codes.Canceled, "request canceled")
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, "request timed out")
+	}
+	var ref pipeline.Refusal
+	if !errors.As(err, &ref) {
+		return status.Error(codes.Internal, "internal error")
+	}
+	switch ref.StatusCode() {
+	case http.StatusUnauthorized:
+		return status.Error(codes.Unauthenticated, ref.Error())
+	case http.StatusForbidden:
+		return status.Error(codes.PermissionDenied, ref.Error())
+	case http.StatusBadRequest:
+		return status.Error(codes.InvalidArgument, ref.Error())
+	case http.StatusTooManyRequests:
+		return status.Error(codes.ResourceExhausted, ref.Error())
+	case http.StatusServiceUnavailable:
+		return status.Error(codes.Unavailable, ref.Error())
+	}
+	return status.Error(codes.Internal, "internal error")
 }
 
 func requestFromProto(req *nexusv1.CompletionRequest) *provider.CompletionRequest {

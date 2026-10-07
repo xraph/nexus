@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -64,5 +65,37 @@ func TestLogServerErrorLogsOnlyWhatTheClientIsNotTold(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLogServerErrorRedactsCredentialsInURLs(t *testing.T) {
+	const secret = "AIzaSECRET123"
+	transport := &url.Error{Op: "Post", URL: "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent?alt=sse&key=" + secret, Err: errors.New("connection reset by peer")}
+	cases := map[string]error{
+		"a *url.Error, wrapped":     fmt.Errorf("gemini: request failed: %w", transport),
+		"a URL formatted as text":   errors.New("dial wss://example.test/ws?api_key=" + secret + " failed"),
+		"the cause of a 503":        &pipeline.RefusalError{Code: pipeline.CodeUnavailable, Status: 503, Message: "down", Cause: errors.New("GET /x?access_token=" + secret + "&token=" + secret)},
+		"an uppercase name, apikey": errors.New("POST https://h.test/p?APIKEY=" + secret),
+	}
+	for name, err := range cases {
+		t.Run(name, func(t *testing.T) {
+			l := &lines{}
+			auth.LogServerError(context.Background(), l, "/v1/x", err)
+			if len(l.got) != 1 {
+				t.Fatalf("logged %d lines, want 1", len(l.got))
+			}
+			if strings.Contains(l.got[0], secret) {
+				t.Fatal("the logged line carries the credential")
+			}
+			if !strings.Contains(l.got[0], "REDACTED") {
+				t.Fatal("the logged line does not say what it redacted")
+			}
+		})
+	}
+	// Everything else in the URL is kept, so the log still says what failed.
+	l := &lines{}
+	auth.LogServerError(context.Background(), l, "", fmt.Errorf("gemini: request failed: %w", transport))
+	if !strings.Contains(l.got[0], "alt=sse") || !strings.Contains(l.got[0], "generateContent") || !strings.Contains(l.got[0], "connection reset") {
+		t.Fatalf("the redacted line lost the rest of the error: %s", strings.ReplaceAll(l.got[0], secret, "<key>"))
 	}
 }

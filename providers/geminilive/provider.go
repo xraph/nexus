@@ -122,9 +122,14 @@ type wsConn interface {
 
 type dialFunc func(ctx context.Context, baseURL, apiKey string) (wsConn, error)
 
+// dialDefault opens the Live session with the API key in the
+// x-goog-api-key handshake header, as Google's own Go SDK does. The key never
+// goes in the URL: a failed dial's error carries the URL, and that text
+// reaches logs.
 func dialDefault(ctx context.Context, baseURL, apiKey string) (wsConn, error) {
-	url := fmt.Sprintf("%s?key=%s", baseURL, apiKey)
-	conn, dialResp, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: http.Header{}})
+	h := http.Header{}
+	h.Set("x-goog-api-key", apiKey)
+	conn, dialResp, err := websocket.Dial(ctx, baseURL, &websocket.DialOptions{HTTPHeader: h})
 	if dialResp != nil && dialResp.Body != nil {
 		_ = dialResp.Body.Close()
 	}

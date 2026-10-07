@@ -28,6 +28,11 @@ func newClient(apiKey, baseURL string) *client {
 	}
 }
 
+// authorize puts the API key in the x-goog-api-key header. It never goes in
+// the URL: a failed request's *url.Error carries the full URL, and that text
+// reaches logs.
+func (c *client) authorize(r *http.Request) { r.Header.Set("x-goog-api-key", c.apiKey) }
+
 // Gemini request types.
 type geminiRequest struct {
 	Contents          []geminiContent    `json:"contents"`
@@ -120,12 +125,13 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 		return nil, fmt.Errorf("gemini: marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s", c.baseURL, req.Model, c.apiKey)
+	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent", c.baseURL, req.Model)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("gemini: create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	c.authorize(httpReq)
 
 	start := time.Now()
 	httpResp, err := c.http.Do(httpReq)
@@ -156,12 +162,13 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 		return nil, fmt.Errorf("gemini: marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse&key=%s", c.baseURL, req.Model, c.apiKey)
+	url := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse", c.baseURL, req.Model)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("gemini: create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	c.authorize(httpReq)
 
 	httpResp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -195,12 +202,13 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 		return nil, fmt.Errorf("gemini: marshal embed request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1beta/models/%s:batchEmbedContents?key=%s", c.baseURL, req.Model, c.apiKey)
+	url := fmt.Sprintf("%s/v1beta/models/%s:batchEmbedContents", c.baseURL, req.Model)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("gemini: create embed request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	c.authorize(httpReq)
 
 	httpResp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -234,11 +242,12 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 }
 
 func (c *client) ping(ctx context.Context) error {
-	url := fmt.Sprintf("%s/v1beta/models?key=%s", c.baseURL, c.apiKey)
+	url := fmt.Sprintf("%s/v1beta/models", c.baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
 	if err != nil {
 		return err
 	}
+	c.authorize(httpReq)
 
 	httpResp, err := c.http.Do(httpReq)
 	if err != nil {
