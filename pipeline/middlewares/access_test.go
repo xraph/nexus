@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/key"
@@ -99,7 +100,9 @@ func TestScopesComeFromTheEdgeOrTheKey(t *testing.T) {
 	if _, err := f.run(pipeline.WithScopes(withKey, []string{"completions"}), pipeline.RequestStream); err != nil {
 		t.Fatalf("edge scopes win: %v", err)
 	}
-	_ = f.keys.Revoke(ctx, k.ID.String())
+	if err := f.keys.Revoke(ctx, k.ID.String()); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.run(withKey, pipeline.RequestEmbedding); code(err) != pipeline.CodeUnauthenticated {
 		t.Fatalf("revoked key named in process = %v", err)
 	}
@@ -109,5 +112,150 @@ func TestAnUnattributedRequestIsNotChecked(t *testing.T) {
 	f := newAccessFixture(t)
 	if _, err := f.run(context.Background(), pipeline.RequestCompletion); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type stubTenants struct {
+	t   *tenant.Tenant
+	err error
+}
+
+func (s stubTenants) Get(context.Context, string) (*tenant.Tenant, error) { return s.t, s.err }
+
+type stubKeys struct {
+	k   *key.APIKey
+	err error
+}
+
+func (s stubKeys) Get(context.Context, string) (*key.APIKey, error) { return s.k, s.err }
+
+func wantRefusal(t *testing.T, err error, wantCode string, wantStatus int) {
+	t.Helper()
+	var re *pipeline.RefusalError
+	if !errorsAs(err, &re) {
+		t.Fatalf("err = %v; want a RefusalError", err)
+	}
+	if re.Code != wantCode || re.Status != wantStatus {
+		t.Fatalf("refusal = %s/%d; want %s/%d", re.Code, re.Status, wantCode, wantStatus)
+	}
+}
+
+func TestAKeyThatCannotBeUsedIsRefused(t *testing.T) {
+	f := newAccessFixture(t)
+	ctx := pipeline.WithTenantID(context.Background(), f.active.ID.String())
+
+	other, err := f.tenants.Create(context.Background(), &tenant.CreateInput{Name: "Other", Slug: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, _, err := f.keys.Create(ctx, &key.CreateInput{TenantID: other.ID.String(), Name: "theirs", Scopes: []string{"completions"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("another tenant's key is forbidden", func(t *testing.T) {
+		_, err := f.run(pipeline.WithKeyID(ctx, foreign.ID.String()), pipeline.RequestCompletion)
+		wantRefusal(t, err, pipeline.CodeForbidden, 403)
+	})
+	t.Run("an unknown key is unauthenticated", func(t *testing.T) {
+		_, err := f.run(pipeline.WithKeyID(ctx, id.NewKeyID().String()), pipeline.RequestCompletion)
+		wantRefusal(t, err, pipeline.CodeUnauthenticated, 401)
+	})
+	t.Run("a key with no matching scope is forbidden", func(t *testing.T) {
+		k, _, err := f.keys.Create(ctx, &key.CreateInput{TenantID: f.active.ID.String(), Name: "models-only", Scopes: []string{"models"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = f.run(pipeline.WithKeyID(ctx, k.ID.String()), pipeline.RequestCompletion)
+		wantRefusal(t, err, pipeline.CodeForbidden, 403)
+	})
+}
+
+func TestAnExpiredKeyIsUnauthenticated(t *testing.T) {
+	s := store.NewMemory()
+	ts := tenant.NewService(s.Tenants())
+	now := time.Now()
+	ks := key.NewService(s.Keys(), key.WithTenants(s.Tenants()), key.WithClock(func() time.Time { return now }))
+	tn, err := ts.Create(context.Background(), &tenant.CreateInput{Name: "Acme", Slug: "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exp := now.Add(time.Hour)
+	k, _, err := ks.Create(context.Background(), &key.CreateInput{TenantID: tn.ID.String(), Name: "short", Scopes: []string{"completions"}, ExpiresAt: &exp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &accessFixture{mw: middlewares.NewAccess(ts, ks), tenants: ts, keys: ks, active: tn}
+	ctx := pipeline.WithKeyID(pipeline.WithTenantID(context.Background(), tn.ID.String()), k.ID.String())
+	if _, err = f.run(ctx, pipeline.RequestCompletion); err != nil {
+		t.Fatalf("before expiry = %v", err)
+	}
+	now = now.Add(2 * time.Hour)
+	_, err = f.run(ctx, pipeline.RequestCompletion)
+	wantRefusal(t, err, pipeline.CodeUnauthenticated, 401)
+}
+
+func TestALookupThatFailsIsUnavailableAndKeepsItsCause(t *testing.T) {
+	f := newAccessFixture(t)
+	sentinel := errors.New("store down")
+	ctx := pipeline.WithTenantID(context.Background(), f.active.ID.String())
+	withKey := pipeline.WithKeyID(ctx, id.NewKeyID().String())
+
+	t.Run("tenant", func(t *testing.T) {
+		mw := middlewares.NewAccess(stubTenants{err: sentinel}, f.keys)
+		_, err := (&accessFixture{mw: mw}).run(ctx, pipeline.RequestCompletion)
+		wantRefusal(t, err, pipeline.CodeUnavailable, 503)
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("the cause is lost: %v", err)
+		}
+	})
+	t.Run("key", func(t *testing.T) {
+		mw := middlewares.NewAccess(f.tenants, stubKeys{err: sentinel})
+		_, err := (&accessFixture{mw: mw}).run(withKey, pipeline.RequestCompletion)
+		wantRefusal(t, err, pipeline.CodeUnavailable, 503)
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("the cause is lost: %v", err)
+		}
+	})
+}
+
+func TestANilLookupFailsClosed(t *testing.T) {
+	f := newAccessFixture(t)
+	ctx := pipeline.WithTenantID(context.Background(), f.active.ID.String())
+	withKey := pipeline.WithKeyID(ctx, id.NewKeyID().String())
+
+	t.Run("tenant", func(t *testing.T) {
+		mw := middlewares.NewAccess(stubTenants{}, f.keys)
+		_, err := (&accessFixture{mw: mw}).run(ctx, pipeline.RequestCompletion)
+		wantRefusal(t, err, pipeline.CodeUnavailable, 503)
+	})
+	t.Run("key", func(t *testing.T) {
+		mw := middlewares.NewAccess(f.tenants, stubKeys{})
+		_, err := (&accessFixture{mw: mw}).run(withKey, pipeline.RequestCompletion)
+		wantRefusal(t, err, pipeline.CodeUnavailable, 503)
+	})
+}
+
+func TestEdgeScopesAreEnforcedEvenWithoutAKeyID(t *testing.T) {
+	f := newAccessFixture(t)
+	ctx := pipeline.WithTenantID(context.Background(), f.active.ID.String())
+	_, err := f.run(pipeline.WithScopes(ctx, []string{"embeddings"}), pipeline.RequestCompletion)
+	wantRefusal(t, err, pipeline.CodeForbidden, 403)
+	if _, err := f.run(pipeline.WithScopes(ctx, []string{"embeddings"}), pipeline.RequestEmbedding); err != nil {
+		t.Fatalf("matching edge scope with no key id = %v", err)
+	}
+}
+
+func TestEmptyEdgeScopesGrantNothing(t *testing.T) {
+	f := newAccessFixture(t)
+	ctx := pipeline.WithTenantID(context.Background(), f.active.ID.String())
+	k, _, err := f.keys.Create(ctx, &key.CreateInput{TenantID: f.active.ID.String(), Name: "full", Scopes: []string{"completions", "embeddings"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withKey := pipeline.WithKeyID(ctx, k.ID.String())
+	for _, typ := range []pipeline.RequestType{pipeline.RequestCompletion, pipeline.RequestStream, pipeline.RequestEmbedding} {
+		_, err := f.run(pipeline.WithScopes(withKey, []string{}), typ)
+		wantRefusal(t, err, pipeline.CodeForbidden, 403)
 	}
 }

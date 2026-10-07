@@ -66,27 +66,34 @@ func (m *AccessMiddleware) Process(ctx context.Context, req *pipeline.Request, n
 		r := refuse(pipeline.CodeUnavailable, 503, "tenant lookup failed")
 		r.Cause = err
 		return nil, r
+	case t == nil:
+		return nil, refuse(pipeline.CodeUnavailable, 503, "tenant lookup returned nothing")
 	case t.Status != tenant.StatusActive:
 		return nil, refuse(pipeline.CodeForbidden, 403, "tenant is "+string(t.Status))
 	}
-	if keyID := pipeline.KeyID(ctx); keyID != "" {
-		scopes, ok := pipeline.Scopes(ctx)
-		if !ok {
-			k, err := m.keys.Get(ctx, keyID)
-			switch {
-			case errors.Is(err, key.ErrNotFound):
-				return nil, refuse(pipeline.CodeUnauthenticated, 401, "unknown api key")
-			case err != nil:
-				r := refuse(pipeline.CodeUnavailable, 503, "key lookup failed")
-				r.Cause = err
-				return nil, r
-			case k.TenantID.String() != tenantID:
-				return nil, refuse(pipeline.CodeForbidden, 403, "the key belongs to another tenant")
-			case k.Status != key.KeyActive:
-				return nil, refuse(pipeline.CodeUnauthenticated, 401, "api key "+string(k.Status))
-			}
-			scopes = k.Scopes
+	// Edge scopes are enforced whenever the edge set them, key id or not.
+	// The key lookup is only for an in-process caller that named a key.
+	scopes, edge := pipeline.Scopes(ctx)
+	keyID := pipeline.KeyID(ctx)
+	if !edge && keyID != "" {
+		k, err := m.keys.Get(ctx, keyID)
+		switch {
+		case errors.Is(err, key.ErrNotFound):
+			return nil, refuse(pipeline.CodeUnauthenticated, 401, "unknown api key")
+		case err != nil:
+			r := refuse(pipeline.CodeUnavailable, 503, "key lookup failed")
+			r.Cause = err
+			return nil, r
+		case k == nil:
+			return nil, refuse(pipeline.CodeUnavailable, 503, "key lookup returned nothing")
+		case k.TenantID.String() != tenantID:
+			return nil, refuse(pipeline.CodeForbidden, 403, "the key belongs to another tenant")
+		case k.Status != key.KeyActive:
+			return nil, refuse(pipeline.CodeUnauthenticated, 401, "api key "+string(k.Status))
 		}
+		scopes, edge = k.Scopes, true
+	}
+	if edge {
 		need := "completions"
 		if req.Type == pipeline.RequestEmbedding {
 			need = "embeddings"
