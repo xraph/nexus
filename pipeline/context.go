@@ -10,6 +10,7 @@ type ctxKey string
 const (
 	ctxTenantID  ctxKey = "nexus.tenant_id"
 	ctxKeyID     ctxKey = "nexus.key_id"
+	ctxScopes    ctxKey = "nexus.scopes"
 	ctxRequestID ctxKey = "nexus.request_id"
 	ctxProvider  ctxKey = "nexus.provider"
 	ctxCacheHit  ctxKey = "nexus.cache_hit"
@@ -42,6 +43,18 @@ func KeyID(ctx context.Context) string {
 // WithKeyID sets the key ID in context.
 func WithKeyID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, ctxKeyID, id)
+}
+
+// Scopes returns the authenticated key's scopes, and false when no edge set
+// them (an in-process caller).
+func Scopes(ctx context.Context) ([]string, bool) {
+	s, ok := ctx.Value(ctxScopes).([]string)
+	return s, ok
+}
+
+// WithScopes records the scopes of the key the edge authenticated.
+func WithScopes(ctx context.Context, scopes []string) context.Context {
+	return context.WithValue(ctx, ctxScopes, scopes)
 }
 
 // RequestID returns the request ID from context.
