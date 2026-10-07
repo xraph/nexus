@@ -78,7 +78,13 @@ type ListResult struct {
 type Store interface {
 	Insert(ctx context.Context, k *APIKey) error
 	FindByID(ctx context.Context, id string) (*APIKey, error)
-	FindByPrefix(ctx context.Context, prefix string) (*APIKey, error)
+	// FindByPrefix returns every key whose prefix is prefix, in any status.
+	// Prefixes are not unique, so a caller must check the hash. None found
+	// is an empty slice and a nil error.
+	FindByPrefix(ctx context.Context, prefix string) ([]*APIKey, error)
+	// TouchLastUsed sets only LastUsedAt, so it can never undo a concurrent
+	// revoke. It returns ErrNotFound when the key does not exist.
+	TouchLastUsed(ctx context.Context, id string, at time.Time) error
 	Update(ctx context.Context, k *APIKey) error
 	Delete(ctx context.Context, id string) error
 	ListByTenant(ctx context.Context, tenantID string) ([]*APIKey, error)

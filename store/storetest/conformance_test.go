@@ -60,9 +60,6 @@ func TestMissingRowsAreErrNotFound(t *testing.T) {
 		if _, err := s.Keys().FindByID(ctx, id.NewKeyID().String()); !errors.Is(err, key.ErrNotFound) {
 			t.Errorf("key FindByID = %v, want key.ErrNotFound", err)
 		}
-		if _, err := s.Keys().FindByPrefix(ctx, "nxs_00000000"); !errors.Is(err, key.ErrNotFound) {
-			t.Errorf("key FindByPrefix = %v, want key.ErrNotFound", err)
-		}
 		tn := storetest.InsertTenant(t, s)
 		if err := s.Keys().Update(ctx, storetest.Key(tn.ID, "ghost")); !errors.Is(err, key.ErrNotFound) {
 			t.Errorf("key Update of a missing key = %v, want key.ErrNotFound", err)

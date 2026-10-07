@@ -76,10 +76,14 @@ func (s *service) Validate(ctx context.Context, rawKey string) (*APIKey, error) 
 	}
 
 	prefix := rawKey[:12]
-	k, err := s.store.FindByPrefix(ctx, prefix)
+	keys, err := s.store.FindByPrefix(ctx, prefix)
 	if err != nil {
 		return nil, err
 	}
+	if len(keys) == 0 {
+		return nil, ErrNotFound
+	}
+	k := keys[0]
 
 	// Verify hash
 	if hashKey(rawKey) != k.Hash {

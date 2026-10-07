@@ -234,18 +234,32 @@ func (s *keyStore) FindByID(ctx context.Context, kid string) (*key.APIKey, error
 	return apiKeyFromModel(&m)
 }
 
-func (s *keyStore) FindByPrefix(ctx context.Context, prefix string) (*key.APIKey, error) {
-	var m apiKeyModel
-	err := s.mdb.NewFind(&m).
-		Filter(bson.M{"prefix": prefix, "status": "active"}).
-		Scan(ctx)
-	if err != nil {
-		if isNoDocuments(err) {
-			return nil, key.ErrNotFound
-		}
-		return nil, fmt.Errorf("nexus/mongo: find key by prefix: %w", err)
+func (s *keyStore) FindByPrefix(ctx context.Context, prefix string) ([]*key.APIKey, error) {
+	var models []apiKeyModel
+	err := s.mdb.NewFind(&models).Filter(bson.M{"prefix": prefix}).Scan(ctx)
+	if err != nil && !isNoDocuments(err) {
+		return nil, fmt.Errorf("nexus/mongo: find keys by prefix: %w", err)
 	}
-	return apiKeyFromModel(&m)
+	out := make([]*key.APIKey, 0, len(models))
+	for i := range models {
+		k, err := apiKeyFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("nexus/mongo: convert key model: %w", err)
+		}
+		out = append(out, k)
+	}
+	return out, nil
+}
+
+func (s *keyStore) TouchLastUsed(ctx context.Context, kid string, at time.Time) error {
+	res, err := s.mdb.Collection(colKeys).UpdateOne(ctx, bson.M{"_id": kid}, bson.M{"$set": bson.M{"last_used_at": at}})
+	if err != nil {
+		return fmt.Errorf("nexus/mongo: touch key: %w", err)
+	}
+	if res.MatchedCount == 0 {
+		return key.ErrNotFound
+	}
+	return nil
 }
 
 func (s *keyStore) Update(ctx context.Context, k *key.APIKey) error {

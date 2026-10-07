@@ -194,19 +194,32 @@ func (s *keyStore) FindByID(ctx context.Context, kid string) (*key.APIKey, error
 	return apiKeyFromModel(m)
 }
 
-func (s *keyStore) FindByPrefix(ctx context.Context, prefix string) (*key.APIKey, error) {
-	m := new(apiKeyModel)
-	err := s.sdb.NewSelect(m).
-		Where("prefix = ?", prefix).
-		Where("status = ?", "active").
-		Scan(ctx)
-	if err != nil {
-		if isNoRows(err) {
-			return nil, key.ErrNotFound
-		}
-		return nil, fmt.Errorf("nexus/sqlite: find key by prefix: %w", err)
+func (s *keyStore) FindByPrefix(ctx context.Context, prefix string) ([]*key.APIKey, error) {
+	var models []apiKeyModel
+	if err := s.sdb.NewSelect(&models).Where("prefix = ?", prefix).Scan(ctx); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("nexus/sqlite: find keys by prefix: %w", err)
 	}
-	return apiKeyFromModel(m)
+	out := make([]*key.APIKey, 0, len(models))
+	for i := range models {
+		k, err := apiKeyFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("nexus/sqlite: convert key model: %w", err)
+		}
+		out = append(out, k)
+	}
+	return out, nil
+}
+
+func (s *keyStore) TouchLastUsed(ctx context.Context, kid string, at time.Time) error {
+	m := &apiKeyModel{ID: kid, LastUsedAt: &at}
+	res, err := s.sdb.NewUpdate(m).Column("last_used_at").WherePK().Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("nexus/sqlite: touch key: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return key.ErrNotFound
+	}
+	return nil
 }
 
 func (s *keyStore) Update(ctx context.Context, k *key.APIKey) error {

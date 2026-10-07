@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/key"
@@ -33,15 +34,28 @@ func (s *memoryKeyStore) FindByID(_ context.Context, keyID string) (*key.APIKey,
 	return cloneKey(k), nil
 }
 
-func (s *memoryKeyStore) FindByPrefix(_ context.Context, prefix string) (*key.APIKey, error) {
+func (s *memoryKeyStore) FindByPrefix(_ context.Context, prefix string) ([]*key.APIKey, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	out := []*key.APIKey{}
 	for _, k := range s.data {
 		if k.Prefix == prefix {
-			return cloneKey(k), nil
+			out = append(out, cloneKey(k))
 		}
 	}
-	return nil, key.ErrNotFound
+	return out, nil
+}
+
+func (s *memoryKeyStore) TouchLastUsed(_ context.Context, keyID string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k, ok := s.data[keyID]
+	if !ok {
+		return key.ErrNotFound
+	}
+	t := at
+	k.LastUsedAt = &t
+	return nil
 }
 
 func (s *memoryKeyStore) Update(_ context.Context, k *key.APIKey) error {
