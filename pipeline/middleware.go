@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 
 	"github.com/xraph/nexus/provider"
 )
@@ -12,13 +13,14 @@ type Middleware interface {
 	// Name returns a unique identifier for this middleware.
 	Name() string
 
-	// Priority returns execution order (lower = earlier). Suggested ranges:
-	//   0-99:    Auth, rate limiting, budget
-	//   100-199: Guardrails (input)
-	//   200-299: Cache, transform
-	//   300-399: Routing, provider call (core)
-	//   400-499: Guardrails (output), transform
-	//   500-599: Usage, audit, metrics
+	// Priority returns execution order among non-terminal middleware
+	// (lower = earlier = further out). The terminal always runs last.
+	// Built-in bands:
+	//   0-19:    request id, tracing, usage (they wrap everything)
+	//   20-99:   timeout, identity, access, quota, stream lifecycle
+	//   100-199: guardrails
+	//   200-299: transform, alias, cache
+	//   300-399: retry; custom middleware here runs once per attempt
 	Priority() int
 
 	// Process handles the request. Call next(ctx) to continue.
@@ -53,3 +55,31 @@ type Response struct {
 	Stream     provider.Stream
 	Embedding  *provider.EmbeddingResponse
 }
+
+// Terminal marks the middleware that ends the chain by calling a provider.
+// A pipeline has exactly one, and it always runs last whatever its
+// priority, so a stage that wraps the call (usage, tracing, retry, custom
+// middleware) can never be sorted behind it and silently skipped.
+type Terminal interface {
+	Terminal()
+}
+
+// Stage describes one stage of a built pipeline.
+type Stage struct {
+	Name     string `json:"name"`
+	Priority int    `json:"priority"`
+	Terminal bool   `json:"terminal"`
+}
+
+// Inspector is implemented by a pipeline that can list its stages in the
+// order they run.
+type Inspector interface {
+	Stages() []Stage
+}
+
+var (
+	// ErrNoTerminal reports a pipeline with nothing that calls a provider.
+	ErrNoTerminal = errors.New("nexus: pipeline has no terminal stage")
+	// ErrManyTerminals reports a pipeline with more than one terminal stage.
+	ErrManyTerminals = errors.New("nexus: pipeline has more than one terminal stage")
+)

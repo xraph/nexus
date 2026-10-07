@@ -129,7 +129,11 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 
 	// Build default pipeline if not set
 	if gw.pipeline == nil {
-		gw.pipeline = gw.buildDefaultPipeline()
+		p, err := gw.buildDefaultPipeline()
+		if err != nil {
+			return err
+		}
+		gw.pipeline = p
 	}
 
 	gw.initialized = true
@@ -144,7 +148,7 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 // buildDefaultPipeline creates the standard middleware chain.
 // Middleware is sorted by priority (lower = earlier), so the order
 // of b.Use() calls here doesn't matter — priority determines execution order.
-func (gw *Gateway) buildDefaultPipeline() pipeline.Service {
+func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 	b := pipeline.NewBuilder()
 
 	// Priority 10: Tracing (if configured)

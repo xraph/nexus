@@ -13,7 +13,7 @@ import (
 )
 
 // ProviderCallMiddleware is the core middleware that routes to a provider and
-// executes the request. It sits at priority 350 (middle of the routing range).
+// executes the request. It is the pipeline's terminal stage and always runs last.
 type ProviderCallMiddleware struct {
 	router    router.Service
 	providers provider.Registry
@@ -29,6 +29,9 @@ func NewProviderCall(r router.Service, providers provider.Registry) *ProviderCal
 
 func (m *ProviderCallMiddleware) Name() string  { return "provider_call" }
 func (m *ProviderCallMiddleware) Priority() int { return 350 }
+
+// Terminal marks the provider call as the end of the chain.
+func (m *ProviderCallMiddleware) Terminal() {}
 
 func (m *ProviderCallMiddleware) Process(ctx context.Context, req *pipeline.Request, _ pipeline.NextFunc) (*pipeline.Response, error) {
 	switch req.Type {

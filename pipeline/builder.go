@@ -23,20 +23,42 @@ func (b *Builder) Use(m ...Middleware) *Builder {
 	return b
 }
 
-// Build creates a pipeline Service from the registered middleware,
-// sorted by priority (lower = earlier).
-func (b *Builder) Build() Service {
-	sorted := make([]Middleware, len(b.middlewares))
-	copy(sorted, b.middlewares)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Priority() < sorted[j].Priority()
-	})
-	return &pipelineImpl{middlewares: sorted}
+// Build creates a pipeline Service. Non-terminal middleware runs in
+// priority order (lower = earlier, ties keep the order they were added);
+// the one Terminal runs last.
+func (b *Builder) Build() (Service, error) {
+	var rest []Middleware
+	var term Middleware
+	for _, m := range b.middlewares {
+		if _, ok := m.(Terminal); ok {
+			if term != nil {
+				return nil, ErrManyTerminals
+			}
+			term = m
+			continue
+		}
+		rest = append(rest, m)
+	}
+	if term == nil {
+		return nil, ErrNoTerminal
+	}
+	sort.SliceStable(rest, func(i, j int) bool { return rest[i].Priority() < rest[j].Priority() })
+	return &pipelineImpl{middlewares: append(rest, term)}, nil
 }
 
 // pipelineImpl executes middleware in priority order.
 type pipelineImpl struct {
 	middlewares []Middleware
+}
+
+// Stages lists the stages in the order they run.
+func (p *pipelineImpl) Stages() []Stage {
+	out := make([]Stage, len(p.middlewares))
+	for i, m := range p.middlewares {
+		_, term := m.(Terminal)
+		out[i] = Stage{Name: m.Name(), Priority: m.Priority(), Terminal: term}
+	}
+	return out
 }
 
 func (p *pipelineImpl) Execute(ctx context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
