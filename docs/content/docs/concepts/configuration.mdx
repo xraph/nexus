@@ -80,7 +80,7 @@ gw := nexus.New(
 )
 ```
 
-Windows are fixed and aligned to the clock of the replica that charges them, so keep replica clocks in sync. If Redis goes down the limiter fails open: requests go through, `gw.LimiterErrors()` counts each failure, and the gateway logs it. The daily request count and the monthly budget do not come from the limiter. They come from the usage store, so every replica already shares them.
+Windows are fixed and aligned to the clock of the replica that charges them, so keep replica clocks in sync. If Redis goes down the limiter fails open: requests go through, `gw.LimiterErrors()` counts each failure, and the gateway logs it. The monthly budget does not come from the limiter. It comes from the usage store, so every replica already shares it. The daily request cap uses both: the store count, which every replica shares, and a charge to a UTC-day window in the limiter, which makes it hard when requests arrive together. With the memory limiter that charge is per replica.
 
 ## File-based configuration (Forge extension)
 

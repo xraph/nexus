@@ -3,6 +3,8 @@ package nexus_test
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -232,4 +234,97 @@ func TestTheTenantsStreamLimitCutsAStreamByDefault(t *testing.T) {
 	if r := recs[0]; r.StatusCode != 429 || r.RefusalCode != pipeline.CodeQuotaExceeded || r.TenantID != tn.ID {
 		t.Fatalf("record = status %d code %q tenant %s; want 429 quota_exceeded for the tenant", r.StatusCode, r.RefusalCode, r.TenantID)
 	}
+}
+
+// pausingProvider answers every completion after a pause, so requests sent
+// together are all in flight at once. It is safe for concurrent use.
+type pausingProvider struct {
+	fakeProvider
+	delay  time.Duration
+	served atomic.Int64
+}
+
+func (p *pausingProvider) Complete(_ context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
+	time.Sleep(p.delay)
+	p.served.Add(1)
+	return &provider.CompletionResponse{Provider: p.name, Model: req.Model,
+		Choices: []provider.Choice{{Message: provider.Message{Role: "assistant", Content: "hello"}}},
+		Usage:   provider.Usage{PromptTokens: 1234, CompletionTokens: 567, TotalTokens: 1801}}, nil
+}
+
+// burst sends n completions at the same moment and returns how many were
+// served and the refusal code of each one that was not.
+func burst(gw *nexus.Gateway, tn *tenant.Tenant, k *key.APIKey, n int) (served int, codes []string) {
+	var (
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		start = make(chan struct{})
+	)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			err := complete(gw, tn, k)
+			mu.Lock()
+			defer mu.Unlock()
+			if err == nil {
+				served++
+				return
+			}
+			codes = append(codes, refusedCode(err))
+		}()
+	}
+	close(start)
+	wg.Wait()
+	return served, codes
+}
+
+// slowGateway is enforced over a pausingProvider with a 20ms pause and the
+// fixed-clock limiter.
+func slowGateway(t *testing.T, q tenant.Quota) (*nexus.Gateway, *tenant.Tenant, *key.APIKey, *pausingProvider) {
+	t.Helper()
+	p := &pausingProvider{fakeProvider: fakeProvider{name: "openai", price: listPrice}, delay: 20 * time.Millisecond}
+	gw := nexus.New(nexus.WithDatabase(store.NewMemory()), nexus.WithProvider(p), nexus.WithLimiter(fixedClock()))
+	if err := gw.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = gw.Shutdown(context.Background()) })
+	tn, err := gw.Tenants().Create(context.Background(), &tenant.CreateInput{Name: "Acme", Slug: "acme", Quota: &q})
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, _, err := gw.Keys().Create(context.Background(), &key.CreateInput{TenantID: tn.ID.String(), Name: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gw, tn, k, p
+}
+
+func TestTheDailyCapHoldsUnderConcurrency(t *testing.T) {
+	gw, tn, k, p := slowGateway(t, tenant.Quota{DailyRequests: 5})
+	served, codes := burst(gw, tn, k, 50)
+	if served != 5 || p.served.Load() != 5 {
+		t.Fatalf("served %d (provider saw %d) of 50 parallel requests; a 5 a day cap serves exactly 5", served, p.served.Load())
+	}
+	for _, c := range codes {
+		if c != pipeline.CodeQuotaExceeded {
+			t.Fatalf("refusal code %q; want quota_exceeded for every request over the cap", c)
+		}
+	}
+}
+
+// The budget is soft. Nothing is reserved before a request runs, so every
+// request admitted while the stored spend is under the budget is served.
+// This pins the bound the docs state: more than one, and never more than the
+// requests in flight. It documents the behaviour; it is not a cap.
+func TestTheBudgetOvershootIsBoundedByTheRequestsInFlight(t *testing.T) {
+	const inFlight = 20
+	// One completion costs 0.008755, so a 0.01 budget serves two in a row.
+	gw, tn, k, _ := slowGateway(t, tenant.Quota{MonthlyBudgetUSD: money.MustParse("0.01")})
+	served, _ := burst(gw, tn, k, inFlight)
+	if served <= 1 || served > inFlight {
+		t.Fatalf("served %d of %d parallel requests on a $0.01 budget; want more than 1 and at most %d", served, inFlight, inFlight)
+	}
+	t.Logf("served %d of %d parallel requests on a $0.01 budget", served, inFlight)
 }

@@ -91,7 +91,7 @@ Over HTTP the body is the OpenAI error shape with the code added:
 }
 ```
 
-A 429 that knows how long to wait carries `Retry-After` in whole seconds, rounded up. The wait is the rest of the minute for a rate limit, until midnight UTC for the daily quota, and until the first of the next month for the budget. A 401 carries `WWW-Authenticate: Bearer`.
+A 429 that knows how long to wait carries `Retry-After` in whole seconds, rounded up. The wait is the rest of the minute for a rate limit, until midnight UTC for the daily quota, and until the first of the next month for the budget. `quota_exceeded` for the daily quota is a hard cap, even for requests that arrive together. `budget_exceeded` is not: requests already in flight when the spend crosses the budget are still served, so the overshoot can reach every request in flight times its cost. [Multi-Tenancy](/docs/concepts/multi-tenancy#quotas) has the full bound. A 401 carries `WWW-Authenticate: Bearer`.
 
 Anything that is not a refusal is a 500 with the message `internal error`. A provider error can carry a URL, a response body or a connection string, so none of it reaches the client. The cause goes to the gateway log, and the `X-Request-Id` on the response matches the usage record.
 

@@ -34,7 +34,7 @@ The checks run in the quota stage, after the access stage has confirmed the tena
 | Field | What it does | Refusal |
 |-------|--------------|---------|
 | `MaxTokensPerReq` | Refuses a `max_tokens` above the cap. A request that sets none gets the cap. | 400 `invalid_request` |
-| `DailyRequests` | Counts the tenant's requests since midnight UTC. | 429 `quota_exceeded` |
+| `DailyRequests` | Counts the tenant's requests since midnight UTC, in the usage store and in the limiter. A hard cap. | 429 `quota_exceeded` |
 | `MonthlyBudgetUSD` | Compares the month's spend, in exact decimals, with the budget. Only a positive budget limits. | 429 `budget_exceeded` |
 | `RPM` | Counts requests in a one minute window. | 429 `rate_limited` |
 | `TPM` | Counts the tokens that finished requests used in a one minute window. | 429 `rate_limited` |
@@ -42,7 +42,15 @@ The checks run in the quota stage, after the access stage has confirmed the tena
 
 The daily count leaves out refused requests. If it did not, a tenant held at its RPM would burn through its daily quota on the refusals. TPM is charged when a response ends, or when a stream closes, so the request that crosses the line completes and the next one is refused. A cache hit used no tokens and is never charged. A failed request is not charged to TPM either, though it still counts against RPM.
 
-The budget is soft for the same reason: a request's cost is only known after it ends. The request that crosses the budget finishes and the next one gets `budget_exceeded`. Cost is read from the usage store, so every replica sees the same total.
+The daily cap is hard. Each request is charged to a UTC-day window in the limiter as the last check before the provider call, and it is refused when either the limiter or the usage store says the day is full. Send 50 requests at once to a tenant with `DailyRequests: 5` and exactly 5 are served. With the memory limiter that holds per replica, and with Redis it holds across all of them. A request refused by an earlier check never reaches the charge, so it does not use up the day.
+
+The budget is soft, and softer than it looks. A request's cost is only known once it ends and nothing is reserved up front, so every request admitted while the stored spend is under the budget gets served. Sent one at a time, the request that crosses the budget finishes and the next one gets `budget_exceeded`. Sent together, they all pass the check, and the overshoot can reach every request in flight times its cost. Some spend is late or never counted at all:
+
+- a stream is counted when it closes, so a long realtime session is invisible to the budget until it ends;
+- a model with no price records no cost, so a budget never binds a tenant that only uses unpriced models;
+- a record whose insert failed adds nothing (watch `gw.UsageInsertErrors()`).
+
+If the budget has to hold, pair it with `RPM` and `MaxTokensPerReq`. Those two bound how many requests can be in flight and what each one can cost. Cost is read from the usage store, so every replica sees the same total.
 
 Stream limits come from the tenant's own quota. A stream cut at either limit is recorded as an `error` with status 429 and code `quota_exceeded`, and it is priced from the tokens it used, because the client got part of it.
 
@@ -56,7 +64,7 @@ The usage store fails closed. If the daily count or the month's spend cannot be 
 
 ### Windows and replicas
 
-The default limiter lives in the process, so each replica keeps its own RPM and TPM windows. Use `WithLimiter(redislimit.New(client))` to share them. The daily count and the budget come from the usage store and are shared already. `GlobalRateLimit` goes through the same limiter under one key, so with the memory limiter it is a per-replica limit too. See [Configuration](/docs/concepts/configuration#sharing-rate-limit-windows-between-replicas).
+The default limiter lives in the process, so each replica keeps its own RPM and TPM windows. Use `WithLimiter(redislimit.New(client))` to share them. The budget comes from the usage store and is shared already. The daily cap reads the store too, so it is never looser than the shared count, but the limiter charge that makes it hard is per replica unless you share the limiter. `GlobalRateLimit` goes through the same limiter under one key, so with the memory limiter it is a per-replica limit too. See [Configuration](/docs/concepts/configuration#sharing-rate-limit-windows-between-replicas).
 
 ## Tenant Configuration
 

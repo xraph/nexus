@@ -45,6 +45,16 @@ type QuotaConfig struct {
 // closed), and its RPM and TPM (through the limiter, failing open). It
 // also enforces the gateway-wide GlobalRPM for every request.
 //
+// The daily cap is hard: besides the store count, each request is charged
+// to a UTC-day window in the limiter, so requests in flight at the same time
+// cannot all slip under it. It holds per replica with the memory limiter and
+// across replicas with Redis. The budget is soft and has no such charge: a
+// request's cost is known only once it ends, so every request admitted while
+// the stored spend is under the budget is served. The overshoot can reach
+// every request in flight times its cost. A stream counts at Close, an
+// unpriced model counts nothing, and neither does a record whose insert
+// failed. Pair a budget with RPM and MaxTokensPerReq to bound it.
+//
 // The checks run in order and a refused request is not refunded: one
 // refused by a later check has already been charged against GlobalRPM and
 // RPM if those ran before it.
@@ -117,8 +127,9 @@ func (m *QuotaMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 			return nil, unavailable("monthly spend", err)
 		}
 		month := now.Format("2006-01")
-		// Soft limit: the request that crosses the budget completes, the
-		// next one is refused. Cost is only known after a request ends.
+		// Soft limit: cost is only known after a request ends, so every
+		// request admitted before the spend is stored completes. See the
+		// type's doc for the bound.
 		if spend.Cmp(q.MonthlyBudgetUSD) >= 0 {
 			if m.once(m.exceeded, tid, month) && m.cfg.Events != nil {
 				m.cfg.Events.EmitBudgetExceeded(ctx, t.ID)
@@ -141,6 +152,17 @@ func (m *QuotaMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	tpmKey := "tpm:" + tid
 	if q.TPM > 0 {
 		if r := m.allow(ctx, tpmKey, 0, int64(q.TPM), "tokens a minute"); r != nil {
+			return nil, r
+		}
+	}
+	// The daily cap is charged last, once every other check has passed, so a
+	// request refused for any other reason never uses up a day's allowance.
+	// The store count above covers what the limiter cannot see (a restart of
+	// the memory limiter); the charge here holds the cap when requests run
+	// at the same time, because the store only counts a request once it has
+	// been recorded.
+	if q.DailyRequests > 0 {
+		if r := m.chargeDay(ctx, tid, int64(q.DailyRequests)); r != nil {
 			return nil, r
 		}
 	}
@@ -182,11 +204,11 @@ func (m *QuotaMiddleware) once(seen map[string]string, tenant, month string) boo
 	return true
 }
 
-// try charges n against key's minute window. It reports false when the
-// limiter failed: the failure is counted and logged, and the caller lets
-// the request through.
-func (m *QuotaMiddleware) try(ctx context.Context, key string, n, limit int64) (ratelimit.Decision, bool) {
-	d, err := m.cfg.Limiter.Allow(ctx, key, n, limit, time.Minute)
+// try charges n against key's window. It reports false when the limiter
+// failed: the failure is counted and logged, and the caller lets the request
+// through.
+func (m *QuotaMiddleware) try(ctx context.Context, key string, n, limit int64, window time.Duration) (ratelimit.Decision, bool) {
+	d, err := m.cfg.Limiter.Allow(ctx, key, n, limit, window)
 	if err != nil {
 		m.limiterErrors.Add(1)
 		if m.cfg.Log != nil {
@@ -200,12 +222,25 @@ func (m *QuotaMiddleware) try(ctx context.Context, key string, n, limit int64) (
 // allow charges n and refuses when the window was already at limit. A
 // limiter failure lets the request through and is counted.
 func (m *QuotaMiddleware) allow(ctx context.Context, key string, n, limit int64, what string) *pipeline.RefusalError {
-	d, ok := m.try(ctx, key, n, limit)
+	d, ok := m.try(ctx, key, n, limit, time.Minute)
 	if !ok || d.Allowed {
 		return nil
 	}
 	l := strconv.FormatInt(limit, 10)
 	return &pipeline.RefusalError{Code: pipeline.CodeRateLimited, Status: 429, Message: l + " " + what, Limit: l, RetryAfter: d.RetryAfter}
+}
+
+// chargeDay charges one request against the tenant's UTC day. A 24 hour
+// window truncates to UTC midnight in both limiters, so the window is the
+// calendar day and RetryAfter runs to the next midnight. A limiter failure
+// lets the request through and is counted, as RPM does.
+func (m *QuotaMiddleware) chargeDay(ctx context.Context, tid string, limit int64) *pipeline.RefusalError {
+	d, ok := m.try(ctx, "daily:"+tid, 1, limit, 24*time.Hour)
+	if !ok || d.Allowed {
+		return nil
+	}
+	return &pipeline.RefusalError{Code: pipeline.CodeQuotaExceeded, Status: 429,
+		Message: "daily request quota reached", Limit: strconv.FormatInt(limit, 10), RetryAfter: d.RetryAfter}
 }
 
 // charge records tokens a request used. It runs after the request, on a
@@ -217,7 +252,7 @@ func (m *QuotaMiddleware) charge(key string, tokens int, limit int64) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	m.try(ctx, key, int64(tokens), limit)
+	m.try(ctx, key, int64(tokens), limit, time.Minute)
 }
 
 // tpmStream charges the tokens a stream reported, once, when it is closed.

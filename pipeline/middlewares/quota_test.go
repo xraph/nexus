@@ -406,3 +406,49 @@ func TestACacheHitIsNeverChargedToTPM(t *testing.T) {
 		})
 	}
 }
+
+func TestTheDailyChargeRefusesUntilUTCMidnight(t *testing.T) {
+	now := time.Date(2026, 10, 7, 23, 30, 0, 0, time.UTC)
+	lim := ratelimit.NewMemory(ratelimit.WithClock(fixedClock(now)))
+	// The store has recorded nothing yet, as when requests run together.
+	mw := middlewares.NewQuota(middlewares.QuotaConfig{Usage: &counter{}, Limiter: lim, Now: fixedClock(now)})
+	tn := quotaTenant(tenant.Quota{DailyRequests: 2})
+	for i := 1; i <= 2; i++ {
+		if err := runQuota(t, mw, tn, &provider.CompletionRequest{}); err != nil {
+			t.Fatalf("request %d of 2 = %v", i, err)
+		}
+	}
+	err := runQuota(t, mw, tn, &provider.CompletionRequest{})
+	if code(err) != pipeline.CodeQuotaExceeded || pipeline.RetryAfter(err) != 30*time.Minute {
+		t.Fatalf("third request with the store still at 0 = %v (retry after %v); want quota_exceeded, 30m to UTC midnight", err, pipeline.RetryAfter(err))
+	}
+}
+
+func TestADailyChargeTheLimiterCannotMakeLetsTheRequestThrough(t *testing.T) {
+	log := &errorLog{}
+	mw := middlewares.NewQuota(middlewares.QuotaConfig{Usage: &counter{}, Limiter: brokenLimiter{}, Log: log})
+	tn := quotaTenant(tenant.Quota{DailyRequests: 1})
+	for i := 0; i < 3; i++ {
+		if err := runQuota(t, mw, tn, &provider.CompletionRequest{}); err != nil {
+			t.Fatalf("request %d with the limiter down = %v; want allowed", i, err)
+		}
+	}
+	if got := mw.LimiterErrors(); got != 3 {
+		t.Fatalf("limiter errors = %d, want 3 (one daily charge per request)", got)
+	}
+}
+
+func TestARefusalBeforeTheDailyChargeDoesNotUseUpTheDay(t *testing.T) {
+	lim := ratelimit.NewMemory()
+	mw := middlewares.NewQuota(middlewares.QuotaConfig{Usage: &counter{}, Limiter: lim})
+	tn := quotaTenant(tenant.Quota{DailyRequests: 5, MaxTokensPerReq: 10})
+	for i := 0; i < 3; i++ {
+		if err := runQuota(t, mw, tn, &provider.CompletionRequest{MaxTokens: 11}); code(err) != pipeline.CodeInvalidRequest {
+			t.Fatalf("over the token cap = %v", err)
+		}
+	}
+	d, err := lim.Allow(context.Background(), "daily:"+tn.ID.String(), 0, 5, 24*time.Hour)
+	if err != nil || d.Count != 0 {
+		t.Fatalf("daily count after three refusals = %d, %v; want 0", d.Count, err)
+	}
+}

@@ -100,3 +100,18 @@ func TestErrorOnNegativeCharge(t *testing.T) {
 		t.Fatalf("n=-1 should return zero Decision, got %+v", d)
 	}
 }
+
+// The quota stage charges the daily cap to a 24 hour window. Truncating to
+// 24 hours lands on UTC midnight, so the window is the calendar day.
+func TestADayWindowEndsAtUTCMidnight(t *testing.T) {
+	now := time.Date(2026, 10, 7, 23, 30, 0, 0, time.UTC)
+	m := ratelimit.NewMemory(ratelimit.WithClock(func() time.Time { return now }))
+	d, err := m.Allow(context.Background(), "daily:t", 1, 1, 24*time.Hour)
+	if err != nil || !d.Allowed || d.RetryAfter != 30*time.Minute {
+		t.Fatalf("day window at 23:30 UTC = %+v, %v; want allowed, 30m to midnight", d, err)
+	}
+	now = time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	if d, _ := m.Allow(context.Background(), "daily:t", 1, 1, 24*time.Hour); !d.Allowed || d.Count != 1 {
+		t.Fatalf("after midnight = %+v; want a fresh day", d)
+	}
+}

@@ -93,3 +93,21 @@ func TestABadWindowOrChargeIsRefusedBeforeRedisIsTouched(t *testing.T) {
 		})
 	}
 }
+
+// The quota stage charges the daily cap to a 24 hour window. Truncating to
+// 24 hours lands on UTC midnight, so the window is the calendar day and its
+// wait runs to the next midnight, as in the memory limiter.
+func TestADayWindowEndsAtUTCMidnight(t *testing.T) {
+	c := client(t)
+	now := time.Date(2026, 10, 7, 23, 30, 0, 0, time.UTC)
+	prefix := "nexus:test:" + id.NewRequestID().String() + ":"
+	l := redislimit.New(c, redislimit.WithPrefix(prefix), redislimit.WithClock(func() time.Time { return now }))
+	d, err := l.Allow(context.Background(), "daily:t", 1, 5, 24*time.Hour)
+	if err != nil || !d.Allowed || d.RetryAfter != 30*time.Minute {
+		t.Fatalf("day window at 23:30 UTC = %+v, %v; want allowed, 30m to midnight", d, err)
+	}
+	midnight := strconv.FormatInt(time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).UnixMilli(), 10)
+	if n, err := c.Get(context.Background(), prefix+"daily:t:"+midnight).Int64(); err != nil || n != 1 {
+		t.Fatalf("window key at UTC midnight = %d, %v; want the day keyed by its midnight", n, err)
+	}
+}
