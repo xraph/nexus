@@ -77,7 +77,9 @@ type KeyAuthOptions struct {
 	Keys KeyValidator
 	// Required refuses a request without a key. When false, a request
 	// without one passes unauthenticated, and a key that is presented is
-	// still checked.
+	// still checked. Any non-empty Authorization header counts as presented,
+	// so an unrelated Basic or Bearer credential sent to an open gateway
+	// gets 401.
 	Required bool
 	// OnError writes a refusal. The default is WriteError.
 	OnError func(http.ResponseWriter, *http.Request, error)
@@ -160,6 +162,9 @@ func WriteError(w http.ResponseWriter, err error) {
 		if ra := pipeline.RetryAfter(err); ra > 0 {
 			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(ra.Seconds()))))
 		}
+	}
+	if status < 400 || status > 599 {
+		status = http.StatusInternalServerError // WriteHeader panics outside 100-999
 	}
 	if status == http.StatusUnauthorized {
 		w.Header().Set("WWW-Authenticate", "Bearer")

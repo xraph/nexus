@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/xraph/nexus/auth"
+	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/store"
@@ -209,20 +210,34 @@ func TestAnExpiredKeyIs401(t *testing.T) {
 	}
 }
 
+// sharedKey hands back the same *key.APIKey every time, as a validator with a
+// cache would, so the test sees Authenticate's copy and not a store's.
+type sharedKey struct{ k *key.APIKey }
+
+func (s sharedKey) Validate(_ context.Context, rawKey string) (*key.APIKey, error) {
+	if rawKey != "nxs_shared" {
+		return nil, key.ErrNotFound
+	}
+	return s.k, nil
+}
+
 func TestChangingTheScopesInTheContextDoesNotChangeTheKey(t *testing.T) {
-	ks, raw, _, k := keys(t)
-	ctx, err := auth.Authenticate(context.Background(), ks, raw)
+	k := &key.APIKey{ID: id.NewKeyID(), TenantID: id.NewTenantID(), Scopes: []string{"completions"}}
+	ctx, err := auth.Authenticate(context.Background(), sharedKey{k}, "nxs_shared")
 	if err != nil {
 		t.Fatal(err)
 	}
 	scopes, _ := pipeline.Scopes(ctx)
 	scopes[0] = "admin"
-	got, err := ks.Get(context.Background(), k.ID.String())
-	if err != nil {
-		t.Fatal(err)
+	if k.Scopes[0] != "completions" {
+		t.Fatal("a stage that edits the scopes in its context changed the key's scopes")
 	}
-	if got.Scopes[0] != "completions" {
-		t.Fatal("a stage that edits the scopes in its context changed the stored key")
+}
+
+func TestAuthenticateTrimsAPaddedKey(t *testing.T) {
+	k := &key.APIKey{ID: id.NewKeyID(), TenantID: id.NewTenantID(), Scopes: []string{"completions"}}
+	if _, err := auth.Authenticate(context.Background(), sharedKey{k}, "  nxs_shared\t\n"); err != nil {
+		t.Fatalf("padded key: %v", err)
 	}
 }
 
@@ -304,5 +319,15 @@ func TestA401CarriesWWWAuthenticate(t *testing.T) {
 	h := auth.KeyAuth(auth.KeyAuthOptions{Keys: ks, Required: true})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	if w := serve(h, "", ""); w.Header().Get("WWW-Authenticate") != "Bearer" {
 		t.Fatalf("WWW-Authenticate = %q", w.Header().Get("WWW-Authenticate"))
+	}
+}
+
+func TestWriteErrorClampsAnInvalidRefusalStatusTo500(t *testing.T) {
+	for _, status := range []int{0, 99, 200, 600, 1000, -1} {
+		w := httptest.NewRecorder()
+		auth.WriteError(w, &pipeline.RefusalError{Code: "x", Status: status})
+		if w.Code != 500 || !contains(w.Body.String(), `"type":"internal_error"`) {
+			t.Errorf("status %d: wrote %d %s", status, w.Code, w.Body)
+		}
 	}
 }
