@@ -69,3 +69,27 @@ func TestKeysAreIndependentAndSafeConcurrently(t *testing.T) {
 		t.Fatal(l.Kind())
 	}
 }
+
+func TestErrorOnInvalidWindow(t *testing.T) {
+	l := ratelimit.NewMemory()
+	ctx := context.Background()
+	d, err := l.Allow(ctx, "key", 1, 100, 0)
+	if err == nil {
+		t.Fatalf("window=0 should error, got decision %+v", d)
+	}
+	if d != (ratelimit.Decision{}) {
+		t.Fatalf("window=0 should return zero Decision, got %+v", d)
+	}
+}
+
+func TestErrorOnNegativeCharge(t *testing.T) {
+	l := ratelimit.NewMemory()
+	ctx := context.Background()
+	d, err := l.Allow(ctx, "key", -1, 100, time.Minute)
+	if err == nil {
+		t.Fatalf("n=-1 should error, got decision %+v", d)
+	}
+	if d != (ratelimit.Decision{}) {
+		t.Fatalf("n=-1 should return zero Decision, got %+v", d)
+	}
+}
