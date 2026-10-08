@@ -16,7 +16,7 @@ curl http://localhost:8080/v1/chat/completions \
 
 A gateway key is `nxs_` followed by 64 lowercase hex characters. Anything else gets a 401 without touching the store. The word `Bearer` is case-insensitive, and when both headers are present `x-api-key` wins. `GET /health` is open.
 
-Each key carries scopes. `completions` and `embeddings` let it call those routes, `models` lets it list models, and `admin` opens the `/admin` API. A key made without scopes gets `completions`, `embeddings` and `models`. A route the key has no scope for answers 403.
+Each key carries scopes. `completions` and `embeddings` let it call those routes, `models` lets it list models, and `admin` opens the `/admin` API. A key made without scopes gets `completions`, `embeddings` and `models`, and any other scope name is refused when the key is created. A route the key has no scope for answers 403. A key whose tenant is disabled, suspended or deleted answers 403 on every route, admin included, and 503 if the gateway cannot read the tenant.
 
 Set `require_api_key: false` (or `nexus.WithRequireAPIKey(false)`) to open the `/v1` routes for local work. It opens nothing else. The admin routes always need a key with the `admin` scope, and `GET /v1/models` only asks for the `models` scope when keys are required. Even on an open gateway, any non-empty `Authorization` header counts as a key you presented, so a Basic credential or a Bearer JWT forwarded by an auth proxy gets a 401 instead of being ignored.
 
@@ -69,6 +69,8 @@ GET /v1/models
 Returns all models from all registered providers, plus model aliases. It needs the `models` scope when keys are required.
 
 ## Admin Endpoints
+
+Bad input (a missing name, a tenant id that does not parse, an unknown scope) is a 400 `invalid_request` with the reason. A tenant or key that does not exist is a 404. Any other failure is a 500 that says only `internal error`, and the cause goes to the gateway log.
 
 ### Tenants
 

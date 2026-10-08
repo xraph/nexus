@@ -3,11 +3,17 @@ package auth
 import "context"
 
 // NoopProvider allows all requests (for development / single-tenant).
+//
+// Deprecated: nothing consults an auth.Provider, so this never allowed or
+// refused anything. For local work without keys, use
+// nexus.WithRequireAPIKey(false), which opens the /v1 routes only.
 type NoopProvider struct {
 	defaultTenant string
 }
 
 // NewNoop creates a noop auth provider that allows all requests.
+//
+// Deprecated: see NoopProvider.
 func NewNoop(defaultTenant ...string) *NoopProvider {
 	t := "default"
 	if len(defaultTenant) > 0 {

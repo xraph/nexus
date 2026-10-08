@@ -1,5 +1,11 @@
 // Package authsome provides an adapter that bridges an external Authsome
 // authentication service to the Nexus auth.Provider interface.
+//
+// Deprecated: nothing consults an auth.Provider, so wiring this adapter
+// through nexus.WithAuth authenticates nothing. The gateway checks its own
+// gateway keys (nxs_...), and an Authsome Bearer token sent to it counts as
+// a presented key and is refused 401. The package stays only so existing
+// code compiles, and goes in the v1 break.
 package authsome
 
 import (
@@ -21,7 +27,7 @@ type Adapter struct {
 }
 
 // Compile-time check.
-var _ auth.Provider = (*Adapter)(nil)
+var _ auth.Provider = (*Adapter)(nil) //nolint:staticcheck // the deprecated adapter still satisfies the deprecated interface
 
 // New creates an Authsome auth adapter.
 func New(authenticator Authenticator) *Adapter {

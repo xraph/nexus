@@ -3,15 +3,28 @@ title: Multi-Tenancy
 description: Tenant-scoped requests, per-tenant configuration, quotas, and usage isolation.
 ---
 
-Every request in Nexus is scoped to a tenant via context. This provides complete isolation for API keys, rate limits, usage tracking, and model aliases.
+A request in Nexus is attributed to a tenant, and the tenant decides what it may do: whether it is served at all, its quotas, its budget and its aliases. Over HTTP the gateway key does this for you, because a key belongs to one tenant (see [Identity & Auth](/docs/concepts/identity)).
 
-## Setting Tenant Context
+## Attributing an in-process request
+
+When you call the engine from Go, you say who the request is for. Put the tenant, and the key if there is one, on the request:
 
 ```go
-ctx = nexus.WithTenant(ctx, "tenant-1")
+resp, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{
+    Model:    "gpt-4o",
+    TenantID: tenantID,
+    KeyID:    keyID, // optional; access then checks the key's status and scopes
+    Messages: msgs,
+})
 ```
 
-All downstream operations (routing, caching, usage, guardrails) automatically respect the tenant scope.
+Or put the tenant in the context, which is what the HTTP edge does:
+
+```go
+ctx = pipeline.WithTenantID(ctx, tenantID)
+```
+
+The access stage refuses a tenant that is not active or does not exist, and a key that is revoked, expired, on another tenant or without the scope. A request that names a key and no tenant is refused `invalid_request`. A request that names neither is unattributed: it is served, recorded under no tenant, and only `GlobalRateLimit` applies to it. Caching, usage and the quota stage all read the same tenant.
 
 ## Quotas
 
@@ -51,6 +64,8 @@ The budget is soft, and softer than it looks. A request's cost is only known onc
 - a record whose insert failed adds nothing (watch `gw.UsageInsertErrors()`).
 
 If the budget has to hold, pair it with `RPM` and `MaxTokensPerReq`. Those two bound how many requests can be in flight and what each one can cost. Cost is read from the usage store, so every replica sees the same total.
+
+A stream is checked once, when it starts. The daily cap and the budget see it then, and its cost reaches the budget only when it closes, so a long stream is never cut for budget or daily reasons while it runs. `MaxStreamDuration` is what bounds it, and it counts from the first chunk, not from the request: time spent waiting for the provider to answer does not count. A realtime session on a tenant without `MaxStreamDuration` runs as long as the client keeps it open.
 
 Stream limits come from the tenant's own quota. A stream cut at either limit is recorded as an `error` with status 429 and code `quota_exceeded`, and it is priced from the tokens it used, because the client got part of it.
 
@@ -94,7 +109,7 @@ nexus.WithTenantAlias("premium", "fast",
 
 ## Usage Isolation
 
-Usage records are always scoped to a tenant. Query per-tenant usage:
+A usage record carries the tenant the request was attributed to. Unattributed requests are recorded too, under no tenant, and so are refusals of an unknown tenant. Passing `""` as the tenant id to a usage query or aggregate means every tenant, unattributed rows included. Query one tenant's usage:
 
 ```go
 summary, _ := usageService.Summary(ctx, tenantID, timeRange)

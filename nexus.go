@@ -48,7 +48,7 @@ type Gateway struct {
 	config *Config
 	engine *Engine
 	store  store.Store
-	auth   auth.Provider
+	auth   auth.Provider //nolint:staticcheck // kept for the deprecated WithAuth until the v1 break
 	logger Logger
 
 	// Core services (all interface-based)
@@ -123,9 +123,6 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 	}
 
 	// Set defaults for unset services
-	if gw.auth == nil {
-		gw.auth = auth.NewNoop()
-	}
 	if gw.store == nil {
 		gw.store = store.NewMemory()
 	}

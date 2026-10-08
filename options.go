@@ -37,6 +37,10 @@ func WithDatabase(s store.Store) Option {
 }
 
 // WithAuth sets the auth provider.
+//
+// Deprecated: the provider is stored and never consulted. Gateway keys are
+// checked by auth.KeyAuth on the HTTP routes and grpcsrv.KeyAuth on gRPC,
+// and WithAuth changes neither. It stays only so existing code compiles.
 func WithAuth(a auth.Provider) Option {
 	return func(gw *Gateway) { gw.auth = a }
 }

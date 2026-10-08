@@ -26,8 +26,9 @@ When running in a Forge application, the Nexus extension automatically discovers
 - **Chronicle** — Wires `audit_hook` with Chronicle recorder
 - **Shield** — Wires Shield as a guardrail adapter
 - **Relay** — Wires `relay_hook` with Relay sender
-- **Authsome** — Wires Authsome as auth provider
 - **Metrics** — Wires observability with `gu.MetricFactory`
+
+Authsome is not wired in. The gateway checks its own gateway keys, so an Authsome token sent to it gets a 401. See [Identity & Auth](/docs/concepts/identity).
 
 ## YAML configuration
 
