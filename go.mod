@@ -10,10 +10,10 @@ require (
 	github.com/shopspring/decimal v1.4.0
 	github.com/xraph/forge v1.12.3
 	github.com/xraph/go-utils v1.3.0
-	github.com/xraph/grove v1.6.3
-	github.com/xraph/grove/drivers/mongodriver v1.6.3
-	github.com/xraph/grove/drivers/pgdriver v1.6.3
-	github.com/xraph/grove/drivers/sqlitedriver v1.6.3
+	github.com/xraph/grove v1.7.1
+	github.com/xraph/grove/drivers/mongodriver v1.7.1
+	github.com/xraph/grove/drivers/pgdriver v1.7.1
+	github.com/xraph/grove/drivers/sqlitedriver v1.7.1
 	github.com/xraph/vessel v1.0.4
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
 	go.mongodb.org/mongo-driver/v2 v2.5.0
