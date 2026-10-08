@@ -1,3 +1,9 @@
 
 # ─── Local agent config ─────────────────────────────────────
 .claude/
+
+# ─── Example binaries ───────────────────────────────────────
+# go build inside an example writes its binary next to main.go.
+/_examples/grpc/grpc
+/_examples/live/live
+/_examples/realtime/realtime
