@@ -61,7 +61,8 @@ func TestEveryReadExcludesCreatedAndRotatedSecrets(t *testing.T) {
 	originalID := created["key"].(map[string]any)["id"].(string)
 	rotated := mustDispatch(t, d, "keys.rotate", map[string]string{"id": originalID}, dash.KindCommand)
 	replacementID := rotated["key"].(map[string]any)["id"].(string)
-	secrets := []string{created["rawKey"].(string), rotated["rawKey"].(string)}
+	secrets := make([]string, 0, 4)
+	secrets = append(secrets, created["rawKey"].(string), rotated["rawKey"].(string))
 	for _, kid := range []string{originalID, replacementID} {
 		k, err := gw.Store().Keys().FindByID(context.Background(), kid)
 		if err != nil {
