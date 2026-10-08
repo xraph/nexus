@@ -7,7 +7,10 @@ require (
 	github.com/xraph/nexus/providers/openairealtime v0.0.0
 )
 
-require github.com/coder/websocket v1.8.14 // indirect
+require (
+	github.com/coder/websocket v1.8.14 // indirect
+	github.com/shopspring/decimal v1.4.0 // indirect
+)
 
 replace (
 	github.com/xraph/nexus => ../..
