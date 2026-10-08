@@ -139,7 +139,6 @@ type lifecycleStream struct {
 	once         sync.Once
 	startedFired bool
 	chunkCount   int
-	closed       bool
 	finalResp    *provider.CompletionResponse
 
 	// accumulator merges deltas as they pass through. Built lazily so the
@@ -330,7 +329,6 @@ func (s *lifecycleStream) finishOnce(ctx context.Context, streamErr error) {
 		}
 		s.registry.EmitStreamCompleted(ctx, s.requestID, s.model, s.providerName, elapsed, final)
 	})
-	s.closed = true
 }
 
 func (s *lifecycleStream) buildFinal() *provider.CompletionResponse {
