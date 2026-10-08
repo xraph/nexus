@@ -85,17 +85,17 @@ func tenantFromModel(m *tenantModel) (*tenant.Tenant, error) {
 
 type apiKeyModel struct {
 	grove.BaseModel `grove:"table:api_keys"`
-	ID              string     `grove:"id,pk"`
-	TenantID        string     `grove:"tenant_id,notnull"`
-	Name            string     `grove:"name,notnull"`
-	Prefix          string     `grove:"prefix,notnull"`
-	Hash            string     `grove:"hash,notnull"`
-	Scopes          string     `grove:"scopes"`
-	Status          string     `grove:"status,notnull"`
-	ExpiresAt       *string    `grove:"expires_at"` // conv.TimeText, so a status filter compares it as a time
-	LastUsedAt      *time.Time `grove:"last_used_at"`
-	Metadata        string     `grove:"metadata"`
-	CreatedAt       time.Time  `grove:"created_at,notnull,default:current_timestamp"`
+	ID              string  `grove:"id,pk"`
+	TenantID        string  `grove:"tenant_id,notnull"`
+	Name            string  `grove:"name,notnull"`
+	Prefix          string  `grove:"prefix,notnull"`
+	Hash            string  `grove:"hash,notnull"`
+	Scopes          string  `grove:"scopes"`
+	Status          string  `grove:"status,notnull"`
+	ExpiresAt       *string `grove:"expires_at"` // conv.TimeText, so a status filter compares it as a time
+	LastUsedAt      *string `grove:"last_used_at"`
+	Metadata        string  `grove:"metadata"`
+	CreatedAt       string  `grove:"created_at,notnull,default:current_timestamp"`
 }
 
 func apiKeyToModel(k *key.APIKey) *apiKeyModel {
@@ -103,6 +103,11 @@ func apiKeyToModel(k *key.APIKey) *apiKeyModel {
 	if k.ExpiresAt != nil {
 		text := conv.TimeText(*k.ExpiresAt)
 		expires = &text
+	}
+	var lastUsed *string
+	if k.LastUsedAt != nil {
+		text := conv.TimeText(*k.LastUsedAt)
+		lastUsed = &text
 	}
 	return &apiKeyModel{
 		ID:         k.ID.String(),
@@ -113,9 +118,9 @@ func apiKeyToModel(k *key.APIKey) *apiKeyModel {
 		Scopes:     mustJSON(k.Scopes),
 		Status:     string(k.Status),
 		ExpiresAt:  expires,
-		LastUsedAt: k.LastUsedAt,
+		LastUsedAt: lastUsed,
 		Metadata:   mustJSON(k.Metadata),
-		CreatedAt:  k.CreatedAt,
+		CreatedAt:  conv.TimeText(k.CreatedAt),
 	}
 }
 
@@ -128,6 +133,18 @@ func apiKeyFromModel(m *apiKeyModel) (*key.APIKey, error) {
 	if err != nil {
 		return nil, err
 	}
+	created, err := parseLegacyTime(m.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("nexus: key %s created_at: %w", m.ID, err)
+	}
+	var lastUsed *time.Time
+	if m.LastUsedAt != nil {
+		at, parseErr := parseLegacyTime(*m.LastUsedAt)
+		if parseErr != nil {
+			return nil, fmt.Errorf("nexus: key %s last_used_at: %w", m.ID, parseErr)
+		}
+		lastUsed = &at
+	}
 	k := &key.APIKey{
 		ID:         kid,
 		TenantID:   tid,
@@ -135,8 +152,8 @@ func apiKeyFromModel(m *apiKeyModel) (*key.APIKey, error) {
 		Prefix:     m.Prefix,
 		Hash:       m.Hash,
 		Status:     key.Status(m.Status),
-		LastUsedAt: m.LastUsedAt,
-		CreatedAt:  m.CreatedAt,
+		LastUsedAt: lastUsed,
+		CreatedAt:  created,
 	}
 	if m.ExpiresAt != nil {
 		t, parseErr := parseKeyExpiry(*m.ExpiresAt)

@@ -231,7 +231,8 @@ func (s *keyStore) FindByPrefix(ctx context.Context, prefix string) ([]*key.APIK
 }
 
 func (s *keyStore) TouchLastUsed(ctx context.Context, kid string, at time.Time) error {
-	m := &apiKeyModel{ID: kid, LastUsedAt: &at}
+	text := conv.TimeText(at)
+	m := &apiKeyModel{ID: kid, LastUsedAt: &text}
 	res, err := s.sdb.NewUpdate(m).Column("last_used_at").WherePK().Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("nexus/sqlite: touch key: %w", err)
@@ -268,7 +269,7 @@ func (s *keyStore) ListByTenant(ctx context.Context, tenantID string) ([]*key.AP
 	var models []apiKeyModel
 	err := s.sdb.NewSelect(&models).
 		Where("tenant_id = ?", tenantID).
-		OrderExpr("created_at DESC").
+		OrderExpr("id DESC").
 		Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("nexus/sqlite: list keys by tenant: %w", err)
