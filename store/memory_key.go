@@ -104,7 +104,7 @@ func (s *memoryKeyStore) List(_ context.Context, opts *key.ListOptions) (*key.Li
 		return nil, err
 	}
 	limit := paging.Limit(opts.Limit)
-	now := time.Now()
+	now := opts.At()
 	s.mu.RLock()
 	var rows []*key.APIKey
 	for _, k := range s.data {
@@ -128,7 +128,7 @@ func (s *memoryKeyStore) Count(_ context.Context, opts *key.ListOptions) (int, e
 	if opts == nil {
 		opts = &key.ListOptions{}
 	}
-	now := time.Now()
+	now := opts.At()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	n := 0

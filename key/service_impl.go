@@ -165,14 +165,28 @@ func (s *service) List(ctx context.Context, tenantID string) ([]*APIKey, error) 
 	return keys, err
 }
 
-// ListPage delegates to the store, which filters on status and derives expiry.
+// ListPage delegates to the store, which filters on status and derives expiry
+// against the service's clock.
 func (s *service) ListPage(ctx context.Context, opts *ListOptions) (*ListResult, error) {
-	return s.store.List(ctx, opts)
+	return s.store.List(ctx, s.withClock(opts))
 }
 
 // Count delegates to the store, with the same filter semantics as ListPage.
 func (s *service) Count(ctx context.Context, opts *ListOptions) (int, error) {
-	return s.store.Count(ctx, opts)
+	return s.store.Count(ctx, s.withClock(opts))
+}
+
+// withClock returns a copy of opts that derives expiry against the service's
+// clock, unless the caller already set one.
+func (s *service) withClock(opts *ListOptions) *ListOptions {
+	var o ListOptions
+	if opts != nil {
+		o = *opts
+	}
+	if o.Now.IsZero() {
+		o.Now = s.now()
+	}
+	return &o
 }
 
 const rotatedSuffix = " (rotated)"

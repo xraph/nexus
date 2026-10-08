@@ -268,20 +268,22 @@ func (s *keyStore) ListByTenant(ctx context.Context, tenantID string) ([]*key.AP
 	return keys, nil
 }
 
-// keyStatusWhere is the SQL for a status filter, with expiry derived against
-// now. It mirrors key.Effective. expires_at is conv.TimeText, so it compares as
-// text in time order. An empty status has no clause.
-func keyStatusWhere(status key.Status, now time.Time) (clause string, args []any) {
-	switch status {
-	case "":
-		return "", nil
-	case key.KeyActive:
-		return `status = 'active' AND (expires_at IS NULL OR expires_at > ?)`, []any{conv.TimeText(now)}
-	case key.KeyExpired:
-		return `(status = 'expired' OR (status = 'active' AND expires_at <= ?))`, []any{conv.TimeText(now)}
-	default:
-		return `status = ?`, []any{string(status)}
+// keyFilter applies opts' tenant and status filters to q, with expiry derived
+// against now. The status clauses mirror key.Effective. expires_at is conv.TimeText, so it compares as text in time order.
+func keyFilter(q *sqlitedriver.SelectQuery, opts *key.ListOptions, now time.Time) *sqlitedriver.SelectQuery {
+	if opts.TenantID != "" {
+		q = q.Where("tenant_id = ?", opts.TenantID)
 	}
+	switch opts.Status {
+	case "":
+	case key.KeyActive:
+		q = q.Where(`status = 'active' AND (expires_at IS NULL OR expires_at > ?)`, conv.TimeText(now))
+	case key.KeyExpired:
+		q = q.Where(`(status = 'expired' OR (status = 'active' AND expires_at <= ?))`, conv.TimeText(now))
+	default:
+		q = q.Where("status = ?", string(opts.Status))
+	}
+	return q
 }
 
 func (s *keyStore) List(ctx context.Context, opts *key.ListOptions) (*key.ListResult, error) {
@@ -292,15 +294,9 @@ func (s *keyStore) List(ctx context.Context, opts *key.ListOptions) (*key.ListRe
 		return nil, err
 	}
 	limit := paging.Limit(opts.Limit)
-	now := time.Now().UTC()
+	now := opts.At()
 	var models []apiKeyModel
-	q := s.sdb.NewSelect(&models).OrderExpr("id DESC").Limit(limit + 1)
-	if opts.TenantID != "" {
-		q = q.Where("tenant_id = ?", opts.TenantID)
-	}
-	if clause, args := keyStatusWhere(opts.Status, now); clause != "" {
-		q = q.Where(clause, args...)
-	}
+	q := keyFilter(s.sdb.NewSelect(&models), opts, now).OrderExpr("id DESC").Limit(limit + 1)
 	if opts.Cursor != "" {
 		q = q.Where("id < ?", opts.Cursor)
 	}
@@ -324,21 +320,11 @@ func (s *keyStore) Count(ctx context.Context, opts *key.ListOptions) (int, error
 	if opts == nil {
 		opts = &key.ListOptions{}
 	}
-	q := `SELECT COUNT(*) FROM api_keys WHERE 1 = 1`
-	var args []any
-	if opts.TenantID != "" {
-		q += ` AND tenant_id = ?`
-		args = append(args, opts.TenantID)
-	}
-	if clause, a := keyStatusWhere(opts.Status, time.Now().UTC()); clause != "" {
-		q += ` AND ` + clause
-		args = append(args, a...)
-	}
-	var n int
-	if err := s.sdb.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+	n, err := keyFilter(s.sdb.NewSelect((*apiKeyModel)(nil)), opts, opts.At()).Count(ctx)
+	if err != nil {
 		return 0, fmt.Errorf("nexus/sqlite: count keys: %w", err)
 	}
-	return n, nil
+	return int(n), nil
 }
 
 // ──────────────────────────────────────────────────

@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/xraph/grove"
@@ -258,19 +257,22 @@ func (s *keyStore) ListByTenant(ctx context.Context, tenantID string) ([]*key.AP
 	return keys, nil
 }
 
-// keyStatusWhere is the SQL for a status filter, with expiry derived against
-// now. It mirrors key.Effective, and uses ? placeholders.
-func keyStatusWhere(status key.Status, now time.Time) (clause string, args []any) {
-	switch status {
-	case "":
-		return "", nil
-	case key.KeyActive:
-		return `status = 'active' AND (expires_at IS NULL OR expires_at > ?)`, []any{now}
-	case key.KeyExpired:
-		return `(status = 'expired' OR (status = 'active' AND expires_at <= ?))`, []any{now}
-	default:
-		return `status = ?`, []any{string(status)}
+// keyFilter applies opts' tenant and status filters to q, with expiry derived
+// against now. The status clauses mirror key.Effective.
+func keyFilter(q *pgdriver.SelectQuery, opts *key.ListOptions, now time.Time) *pgdriver.SelectQuery {
+	if opts.TenantID != "" {
+		q = q.Where("tenant_id = ?", opts.TenantID)
 	}
+	switch opts.Status {
+	case "":
+	case key.KeyActive:
+		q = q.Where(`status = 'active' AND (expires_at IS NULL OR expires_at > ?)`, now)
+	case key.KeyExpired:
+		q = q.Where(`(status = 'expired' OR (status = 'active' AND expires_at <= ?))`, now)
+	default:
+		q = q.Where("status = ?", string(opts.Status))
+	}
+	return q
 }
 
 func (s *keyStore) List(ctx context.Context, opts *key.ListOptions) (*key.ListResult, error) {
@@ -281,15 +283,9 @@ func (s *keyStore) List(ctx context.Context, opts *key.ListOptions) (*key.ListRe
 		return nil, err
 	}
 	limit := paging.Limit(opts.Limit)
-	now := time.Now().UTC()
+	now := opts.At()
 	var models []apiKeyModel
-	q := s.pgdb.NewSelect(&models).OrderExpr(`id COLLATE "C" DESC`).Limit(limit + 1)
-	if opts.TenantID != "" {
-		q = q.Where("tenant_id = ?", opts.TenantID)
-	}
-	if clause, args := keyStatusWhere(opts.Status, now); clause != "" {
-		q = q.Where(clause, args...)
-	}
+	q := keyFilter(s.pgdb.NewSelect(&models), opts, now).OrderExpr(`id COLLATE "C" DESC`).Limit(limit + 1)
 	if opts.Cursor != "" {
 		q = q.Where(`id COLLATE "C" < ?`, opts.Cursor)
 	}
@@ -313,29 +309,11 @@ func (s *keyStore) Count(ctx context.Context, opts *key.ListOptions) (int, error
 	if opts == nil {
 		opts = &key.ListOptions{}
 	}
-	var where []string
-	var args []any
-	if opts.TenantID != "" {
-		where = append(where, `tenant_id = ?`)
-		args = append(args, opts.TenantID)
-	}
-	if clause, a := keyStatusWhere(opts.Status, time.Now().UTC()); clause != "" {
-		where = append(where, clause)
-		args = append(args, a...)
-	}
-	q := `SELECT COUNT(*) FROM nexus_api_keys`
-	if len(where) > 0 {
-		q += ` WHERE ` + strings.Join(where, ` AND `)
-	}
-	// The clauses use ?, as the query builder does; QueryRow wants $n.
-	for i := 1; strings.Contains(q, "?"); i++ {
-		q = strings.Replace(q, "?", fmt.Sprintf("$%d", i), 1)
-	}
-	var n int
-	if err := s.pgdb.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+	n, err := keyFilter(s.pgdb.NewSelect((*apiKeyModel)(nil)), opts, opts.At()).Count(ctx)
+	if err != nil {
 		return 0, fmt.Errorf("nexus/postgres: count keys: %w", err)
 	}
-	return n, nil
+	return int(n), nil
 }
 
 // ──────────────────────────────────────────────────

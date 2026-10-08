@@ -2,6 +2,8 @@ package sqlite_test
 
 import (
 	"context"
+	"database/sql"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -217,7 +219,9 @@ func TestLegacyKeyExpiryIsNormalisedForTheStatusFilter(t *testing.T) {
 	now := time.Now().UTC()
 	lapsed := storetest.Key(tn.ID, "lapsed")
 	live := storetest.Key(tn.ID, "live")
-	for _, k := range []*key.APIKey{lapsed, live} {
+	forever := storetest.Key(tn.ID, "forever")
+	forever.ExpiresAt = nil
+	for _, k := range []*key.APIKey{lapsed, live, forever} {
 		if err := s.Keys().Insert(ctx, k); err != nil {
 			t.Fatalf("insert: %v", err)
 		}
@@ -235,21 +239,50 @@ func TestLegacyKeyExpiryIsNormalisedForTheStatusFilter(t *testing.T) {
 			t.Fatalf("write legacy expiry: %v", err)
 		}
 	}
+	rawExpiry := func() map[string]sql.NullString {
+		out := map[string]sql.NullString{}
+		for _, k := range []*key.APIKey{lapsed, live, forever} {
+			var v sql.NullString
+			if err := raw.QueryRow(ctx, `SELECT expires_at FROM api_keys WHERE id = ?`, k.ID.String()).Scan(&v); err != nil {
+				t.Fatalf("read raw expires_at: %v", err)
+			}
+			out[k.Name] = v
+		}
+		return out
+	}
+	var first map[string]sql.NullString
 	for pass := 1; pass <= 2; pass++ { // the second Migrate must change nothing
 		if err := s.Migrate(); err != nil {
 			t.Fatalf("migrate #%d: %v", pass, err)
+		}
+		stored := rawExpiry()
+		if pass == 1 {
+			first = stored
+			for _, name := range []string{"lapsed", "live"} {
+				if !stored[name].Valid || len(stored[name].String) != 30 || !strings.HasSuffix(stored[name].String, "Z") {
+					t.Fatalf("%s expires_at = %+v; want fixed-width UTC text", name, stored[name])
+				}
+			}
+			if stored["forever"].Valid {
+				t.Fatalf("forever expires_at = %+v; a key without an expiry stays NULL", stored["forever"])
+			}
+		} else if !reflect.DeepEqual(stored, first) {
+			t.Fatalf("second Migrate changed the stored text:\n pass 1 %+v\n pass 2 %+v", first, stored)
 		}
 		res, err := s.Keys().List(ctx, &key.ListOptions{TenantID: tn.ID.String(), Status: key.KeyExpired})
 		if err != nil || len(res.Items) != 1 || res.Items[0].ID.String() != lapsed.ID.String() {
 			t.Fatalf("pass %d: expired = %v, %v; want only the lapsed key", pass, res, err)
 		}
 		n, err := s.Keys().Count(ctx, &key.ListOptions{TenantID: tn.ID.String(), Status: key.KeyActive})
-		if err != nil || n != 1 {
-			t.Fatalf("pass %d: active count = %d, %v; want 1", pass, n, err)
+		if err != nil || n != 2 {
+			t.Fatalf("pass %d: active count = %d, %v; want 2 (live and forever)", pass, n, err)
 		}
 		got, err := s.Keys().FindByID(ctx, live.ID.String())
 		if err != nil || got.ExpiresAt == nil || got.ExpiresAt.Sub(now.Add(time.Hour)).Abs() > time.Second {
 			t.Fatalf("pass %d: live key expiry = %v, %v; want the same instant", pass, got, err)
+		}
+		if got, err = s.Keys().FindByID(ctx, forever.ID.String()); err != nil || got.ExpiresAt != nil {
+			t.Fatalf("pass %d: forever key expiry = %v, %v; want none", pass, got, err)
 		}
 	}
 }

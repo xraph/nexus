@@ -378,16 +378,19 @@ func TestEffectiveDerivesExpiryAtTheBoundary(t *testing.T) {
 }
 
 func TestListPageAndCountGoThroughTheStoreWithExpiryDerived(t *testing.T) {
-	svc, tn, _, _ := setup(t, nil)
+	svc, tn, st, _ := setup(t, nil)
 	ctx := context.Background()
-	soon := time.Now().Add(50 * time.Millisecond)
-	if _, _, err := svc.Create(ctx, &key.CreateInput{TenantID: tn.ID.String(), Name: "short", ExpiresAt: &soon}); err != nil {
+	past := time.Now().Add(-time.Hour)
+	lapsed := &key.APIKey{
+		ID: id.NewKeyID(), TenantID: tn.ID, Name: "lapsed", Prefix: "nxs_aaaaaaaa", Hash: "h1",
+		Status: key.KeyActive, ExpiresAt: &past, CreatedAt: time.Now(),
+	}
+	if err := st.Keys().Insert(ctx, lapsed); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := svc.Create(ctx, &key.CreateInput{TenantID: tn.ID.String(), Name: "long"}); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(100 * time.Millisecond)
 
 	opts := &key.ListOptions{TenantID: tn.ID.String(), Status: key.KeyActive}
 	page, err := svc.ListPage(ctx, opts)
@@ -400,10 +403,54 @@ func TestListPageAndCountGoThroughTheStoreWithExpiryDerived(t *testing.T) {
 	}
 	opts.Status = key.KeyExpired
 	page, err = svc.ListPage(ctx, opts)
-	if err != nil || len(page.Items) != 1 || page.Items[0].Name != "short" || page.Items[0].Status != key.KeyExpired {
+	if err != nil || len(page.Items) != 1 || page.Items[0].Name != "lapsed" || page.Items[0].Status != key.KeyExpired {
 		t.Fatalf("expired page = %+v, %v; want the lapsed key reading expired", page, err)
 	}
 	if n, err = svc.Count(ctx, opts); err != nil || n != 1 {
 		t.Fatalf("expired count = %d, %v; want 1", n, err)
+	}
+}
+
+// Under WithClock, Get, ListPage and Count read the same instant, and the
+// caller's ListOptions is left as it was.
+func TestListPageAndCountFollowTheServiceClock(t *testing.T) {
+	now := time.Now()
+	svc, tn, _, _ := setup(t, func() time.Time { return now })
+	ctx := context.Background()
+	exp := now.Add(time.Hour)
+	k, _, err := svc.Create(ctx, &key.CreateInput{TenantID: tn.ID.String(), Name: "short", ExpiresAt: &exp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := &key.ListOptions{TenantID: tn.ID.String(), Status: key.KeyActive}
+	expired := &key.ListOptions{TenantID: tn.ID.String(), Status: key.KeyExpired}
+
+	agree := func(label string, want key.Status) {
+		t.Helper()
+		got, err := svc.Get(ctx, k.ID.String())
+		if err != nil || got.Status != want {
+			t.Fatalf("%s: Get = %v, %v; want %s", label, got, err, want)
+		}
+		wantActive, wantExpired := 0, 0
+		if want == key.KeyActive {
+			wantActive = 1
+		} else {
+			wantExpired = 1
+		}
+		for opts, want := range map[*key.ListOptions]int{active: wantActive, expired: wantExpired} {
+			page, err := svc.ListPage(ctx, opts)
+			if err != nil || len(page.Items) != want {
+				t.Fatalf("%s: ListPage(%s) = %+v, %v; want %d items", label, opts.Status, page, err, want)
+			}
+			if n, err := svc.Count(ctx, opts); err != nil || n != want {
+				t.Fatalf("%s: Count(%s) = %d, %v; want %d", label, opts.Status, n, err, want)
+			}
+		}
+	}
+	agree("before expiry", key.KeyActive)
+	now = now.Add(2 * time.Hour) // the wall clock has not moved; the service clock has
+	agree("after expiry", key.KeyExpired)
+	if !active.Now.IsZero() || !expired.Now.IsZero() {
+		t.Fatal("the service wrote its clock into the caller's ListOptions")
 	}
 }

@@ -113,6 +113,20 @@ type ListOptions struct {
 	Status   Status `json:"status,omitempty"`
 	Limit    int    `json:"limit,omitempty"`
 	Cursor   string `json:"cursor,omitempty"`
+
+	// Now is the clock reading the status filter derives expiry against.
+	// The zero value means the wall clock. key.Service sets it from its own
+	// clock, so ListPage and Count agree with Get under WithClock.
+	Now time.Time `json:"-"`
+}
+
+// At returns the time expiry is derived against: Now, or the wall clock when
+// Now is unset.
+func (o *ListOptions) At() time.Time {
+	if o.Now.IsZero() {
+		return time.Now().UTC()
+	}
+	return o.Now.UTC()
 }
 
 // ListResult is one page of keys. NextCursor is "" on the last page.

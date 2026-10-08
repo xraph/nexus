@@ -337,7 +337,7 @@ func (s *keyStore) List(ctx context.Context, opts *key.ListOptions) (*key.ListRe
 		return nil, err
 	}
 	limit := paging.Limit(opts.Limit)
-	now := time.Now().UTC()
+	now := opts.At()
 	filter := keyFilter(opts, now)
 	if opts.Cursor != "" {
 		filter["_id"] = bson.M{"$lt": opts.Cursor}
@@ -364,7 +364,7 @@ func (s *keyStore) Count(ctx context.Context, opts *key.ListOptions) (int, error
 	if opts == nil {
 		opts = &key.ListOptions{}
 	}
-	n, err := s.mdb.Collection(colKeys).CountDocuments(ctx, keyFilter(opts, time.Now().UTC()))
+	n, err := s.mdb.Collection(colKeys).CountDocuments(ctx, keyFilter(opts, opts.At()))
 	if err != nil {
 		return 0, fmt.Errorf("nexus/mongo: count keys: %w", err)
 	}
