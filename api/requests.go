@@ -47,6 +47,8 @@ func mapStatusToErrorType(status int) string {
 		return "permission_error"
 	case http.StatusNotFound:
 		return "not_found_error"
+	case http.StatusConflict:
+		return "conflict_error"
 	case http.StatusTooManyRequests:
 		return "rate_limit_error"
 	case http.StatusNotImplemented:
@@ -62,6 +64,8 @@ func mapStatusToCode(status int) string {
 		return pipeline.CodeInvalidRequest
 	case http.StatusNotFound:
 		return "not_found"
+	case http.StatusConflict:
+		return "conflict"
 	case http.StatusNotImplemented:
 		return "not_implemented"
 	default:
@@ -79,7 +83,8 @@ func (a *API) writePipelineError(w http.ResponseWriter, r *http.Request, err err
 
 // writeAdminError answers an error from the key, tenant or usage service.
 // Bad input is a 400 with the service's own message, a tenant or key that
-// does not exist is a 404, and anything else goes through
+// does not exist is a 404, a tenant that is still in use is a 409, and
+// anything else goes through
 // writePipelineError: a fixed 500, with the cause logged.
 func (a *API) writeAdminError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
@@ -89,6 +94,8 @@ func (a *API) writeAdminError(w http.ResponseWriter, r *http.Request, err error)
 		writeError(w, http.StatusNotFound, "tenant not found")
 	case errors.Is(err, key.ErrNotFound):
 		writeError(w, http.StatusNotFound, "key not found")
+	case errors.Is(err, tenant.ErrInUse):
+		writeError(w, http.StatusConflict, "tenant has keys or usage history; disable it instead")
 	default:
 		a.writePipelineError(w, r, err)
 	}

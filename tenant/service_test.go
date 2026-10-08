@@ -7,6 +7,7 @@ import (
 
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/store"
+	"github.com/xraph/nexus/store/storetest"
 	"github.com/xraph/nexus/tenant"
 )
 
@@ -108,5 +109,60 @@ func TestTheModelListsAreTrimmedAndChecked(t *testing.T) {
 	kept, err := svc.Get(ctx, tn.ID.String())
 	if err != nil || len(kept.Config.AllowedModels) != 1 || kept.Config.AllowedModels[0] != "o1" {
 		t.Fatalf("after refused updates: %+v, %v; want the config unchanged", kept, err)
+	}
+}
+
+// keysOf is the checker the gateway builds: any key means in use.
+func keysOf(s store.Store) tenant.InUseFunc {
+	return func(ctx context.Context, tenantID string) (bool, error) {
+		ks, err := s.Keys().ListByTenant(ctx, tenantID)
+		return len(ks) > 0, err
+	}
+}
+
+func TestDeleteRefusesATenantThatHasKeys(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	svc := tenant.NewService(s.Tenants(), tenant.WithInUse(keysOf(s)))
+	keyed, err := svc.Create(ctx, &tenant.CreateInput{Name: "Keyed", Slug: "keyed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare, err := svc.Create(ctx, &tenant.CreateInput{Name: "Bare", Slug: "bare"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Keys().Insert(ctx, storetest.Key(keyed.ID, "k")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = svc.Delete(ctx, keyed.ID.String()); !errors.Is(err, tenant.ErrInUse) {
+		t.Fatalf("delete of a tenant with a key = %v, want ErrInUse", err)
+	}
+	if _, err = svc.Get(ctx, keyed.ID.String()); err != nil {
+		t.Fatalf("the refused delete removed the tenant: %v", err)
+	}
+	if err = svc.Delete(ctx, bare.ID.String()); err != nil {
+		t.Fatalf("delete of a tenant without keys = %v", err)
+	}
+	if _, err = svc.Get(ctx, bare.ID.String()); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("get after delete = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteFailsClosedWhenTheCheckFails(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	boom := errors.New("key store down")
+	svc := tenant.NewService(s.Tenants(), tenant.WithInUse(func(context.Context, string) (bool, error) { return false, boom }))
+	tn, err := svc.Create(ctx, &tenant.CreateInput{Name: "A", Slug: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.Delete(ctx, tn.ID.String()); !errors.Is(err, boom) {
+		t.Fatalf("delete = %v, want the check's error", err)
+	}
+	if _, err = svc.Get(ctx, tn.ID.String()); err != nil {
+		t.Fatalf("a failed check still deleted the tenant: %v", err)
 	}
 }

@@ -54,7 +54,8 @@ func Tenant(slug string) *tenant.Tenant {
 	}
 }
 
-// Key builds a key with every field filled.
+// Key builds a key with every field filled. Two keys with one name still get
+// different prefixes and hashes.
 func Key(tenantID id.TenantID, name string) *key.APIKey {
 	now := Now()
 	expires, used := now.Add(30*24*time.Hour), now.Add(-time.Hour)
@@ -63,7 +64,7 @@ func Key(tenantID id.TenantID, name string) *key.APIKey {
 		TenantID:   tenantID,
 		Name:       name,
 		Prefix:     "nxs_" + randomHex8(),
-		Hash:       "hash-of-" + name,
+		Hash:       "hash-of-" + name + "-" + randomHex8(), // unique per call: the key hash is unique in every store
 		Scopes:     []string{"completions", "models"},
 		Status:     key.KeyActive,
 		ExpiresAt:  &expires,

@@ -13,6 +13,7 @@ import (
 type service struct {
 	store  Store
 	events Events
+	inUse  InUseFunc
 }
 
 // NewService creates a new tenant service.
@@ -137,6 +138,15 @@ func (s *service) Update(ctx context.Context, tenantID string, input *UpdateInpu
 }
 
 func (s *service) Delete(ctx context.Context, tenantID string) error {
+	if s.inUse != nil {
+		used, err := s.inUse(ctx, tenantID)
+		if err != nil {
+			return fmt.Errorf("nexus: check whether tenant is in use: %w", err)
+		}
+		if used {
+			return ErrInUse
+		}
+	}
 	return s.store.Delete(ctx, tenantID)
 }
 

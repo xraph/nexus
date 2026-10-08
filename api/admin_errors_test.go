@@ -92,3 +92,31 @@ func TestAdminStoreFailuresAreAFixed500AndLogged(t *testing.T) {
 		t.Fatalf("logged %q; want each of the five causes logged", out)
 	}
 }
+
+func TestDeletingATenantThatHasKeysIs409AndLeavesItInPlace(t *testing.T) {
+	srv, gw, _, admin := newAPI(t)
+	ctx := context.Background()
+	keyed, err := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Keyed", Slug: "keyed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = gw.Keys().Create(ctx, &key.CreateInput{TenantID: keyed.ID.String(), Name: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	bare, err := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Bare", Slug: "bare"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := send(t, srv, "DELETE", "/admin/tenants/"+keyed.ID.String(), admin, "")
+	wantRefusal(t, got, 409, "conflict")
+	if !strings.Contains(got.body, "disable it instead") {
+		t.Fatalf("body %s; want it to say to disable the tenant", got.shown)
+	}
+	wantRefusal(t, send(t, srv, "GET", "/admin/tenants/"+keyed.ID.String(), admin, ""), 200, "")
+
+	if got = send(t, srv, "DELETE", "/admin/tenants/"+bare.ID.String(), admin, ""); got.status != 204 {
+		t.Fatalf("delete of a tenant without keys = %d %s; want 204", got.status, got.shown)
+	}
+	wantRefusal(t, send(t, srv, "GET", "/admin/tenants/"+bare.ID.String(), admin, ""), 404, "not_found")
+}

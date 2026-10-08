@@ -579,12 +579,15 @@ func TestAnAdminKeyOfASuspendedTenantIsRefused(t *testing.T) {
 }
 
 func TestAKeyOfADeletedTenantIsRefused(t *testing.T) {
-	srv, gw, _, admin := newAPI(t)
+	// The tenant service refuses to delete a tenant that has keys, so the
+	// dangling key an older gateway could leave behind is made in the store.
+	s := store.NewMemory()
+	srv, gw, _, admin := newAPI(t, nexus.WithDatabase(s))
 	k, err := gw.Keys().Validate(context.Background(), admin)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := gw.Tenants().Delete(context.Background(), k.TenantID.String()); err != nil {
+	if err := s.Tenants().Delete(context.Background(), k.TenantID.String()); err != nil {
 		t.Fatal(err)
 	}
 	got := send(t, srv, "GET", "/admin/tenants", admin, "")

@@ -140,7 +140,12 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 		if gw.extensions != nil {
 			te = gw.extensions
 		}
-		gw.tenant = tenant.NewService(gw.store.Tenants(), tenant.WithEvents(te))
+		keys := gw.store.Keys()
+		inUse := func(ctx context.Context, tenantID string) (bool, error) {
+			ks, err := keys.ListByTenant(ctx, tenantID)
+			return len(ks) > 0, err
+		}
+		gw.tenant = tenant.NewService(gw.store.Tenants(), tenant.WithEvents(te), tenant.WithInUse(inUse))
 	}
 	if gw.key == nil {
 		var ke key.Events

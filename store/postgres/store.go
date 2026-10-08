@@ -118,6 +118,11 @@ func (s *tenantStore) Delete(ctx context.Context, tid string) error {
 		Where("id = ?", tid).
 		Exec(ctx)
 	if err != nil {
+		// Keys and usage rows reference the tenant: it is in use.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgForeignKeyViolation {
+			return fmt.Errorf("nexus/postgres: delete tenant: %w", tenant.ErrInUse)
+		}
 		return fmt.Errorf("nexus/postgres: delete tenant: %w", err)
 	}
 	return nil
@@ -166,8 +171,12 @@ type keyStore struct {
 	pgdb *pgdriver.PgDB
 }
 
-// pgUniqueViolation is the SQLSTATE for a unique_violation.
-const pgUniqueViolation = "23505"
+// pgUniqueViolation and pgForeignKeyViolation are the SQLSTATEs for a
+// unique_violation and a foreign_key_violation.
+const (
+	pgUniqueViolation     = "23505"
+	pgForeignKeyViolation = "23503"
+)
 
 func (s *keyStore) Insert(ctx context.Context, k *key.APIKey) error {
 	m := apiKeyToModel(k)
