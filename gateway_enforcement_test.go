@@ -3,6 +3,7 @@ package nexus_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -142,6 +143,31 @@ func TestRateLimitRefusalsDoNotUseUpTheDailyQuota(t *testing.T) {
 	n, err := gw.Usage().DailyRequests(context.Background(), tn.ID.String())
 	if err != nil || n != 1 {
 		t.Fatalf("daily requests = %d, %v; five rate-limit refusals must not count", n, err)
+	}
+}
+
+// With usage recording off, nothing is recorded and no month is summed, so
+// the monthly budget has nothing to read. The daily cap is charged through
+// the limiter, so it still holds.
+func TestTheDailyCapHoldsWithUsageRecordingOff(t *testing.T) {
+	log := &captureLogger{}
+	gw, tn, k := enforced(t, store.NewMemory(), tenant.Quota{DailyRequests: 2},
+		nexus.WithUsageEnabled(false), nexus.WithLogger(log))
+	for i := 0; i < 2; i++ {
+		if err := complete(gw, tn, k); err != nil {
+			t.Fatalf("request %d under the cap = %v", i+1, err)
+		}
+	}
+	err := complete(gw, tn, k)
+	if code := refusedCode(err); code != pipeline.CodeQuotaExceeded {
+		t.Fatalf("third request = %v (code %q), want %s", err, code, pipeline.CodeQuotaExceeded)
+	}
+	text := log.text()
+	if !strings.Contains(text, "monthly budget will not apply") {
+		t.Fatalf("the usage-off warning does not name the monthly budget:\n%s", text)
+	}
+	if strings.Contains(text, "daily") {
+		t.Fatalf("the usage-off warning says the daily cap stops, but it holds:\n%s", text)
 	}
 }
 

@@ -253,7 +253,12 @@ func TestBootstrapStaysQuietForItsOwnHealthyKey(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if strings.Contains(log.text(), "warn ") {
-		t.Fatalf("a healthy bootstrap key warned:\n%s", log.text())
+	text := log.text()
+	if strings.Contains(text, bootstrapKey) {
+		t.Fatal("the log holds the raw bootstrap key")
+	}
+	// Only now is it safe to print the log.
+	if strings.Contains(text, "warn ") {
+		t.Fatalf("a healthy bootstrap key warned:\n%s", text)
 	}
 }
