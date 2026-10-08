@@ -58,6 +58,11 @@ func query[I, O any](deps Deps, name string, fn handler[I, O]) binding {
 func bindings(deps Deps) []binding {
 	return []binding{
 		query(deps, "settings.get", settingsGet),
+		query(deps, "keys.list", keysList),
+		query(deps, "keys.get", keysGet),
+		command(deps, "keys.create", keysCreate, dispatcher.SecretResponse()),
+		command(deps, "keys.rotate", keysRotate, dispatcher.SecretResponse()),
+		command(deps, "keys.revoke", keysRevoke),
 		query(deps, "models.list", modelsList),
 		query(deps, "providers.list", providersList),
 		query(deps, "gateway.get", gatewayGet),

@@ -22,3 +22,10 @@ intents:
   - { name: models.list, kind: query, version: 1, capability: read }
   - { name: providers.list, kind: query, version: 1, capability: read }
   - { name: gateway.get, kind: query, version: 1, capability: read }
+  - { name: keys.list, kind: query, version: 1, capability: read }
+  - { name: keys.get, kind: query, version: 1, capability: read }
+  # Answers a raw key, once. SecretResponse stores only a replay tombstone.
+  - { name: keys.create, kind: command, version: 1, capability: write, invalidates: [keys.list, tenants.get, overview.get] }
+  # Answers a raw key, once. SecretResponse stores only a replay tombstone.
+  - { name: keys.rotate, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.get, tenants.get] }
+  - { name: keys.revoke, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.get, tenants.get, overview.get] }
