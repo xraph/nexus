@@ -120,9 +120,12 @@ func (m *StreamLifecycleMiddleware) Process(ctx context.Context, req *pipeline.R
 }
 
 // lifecycleStream wraps a provider.Stream to fire plugin hooks and capture
-// the merged final response. Methods are not concurrency-safe by themselves
-// — same as the underlying Stream contract, where Next must not be called
-// concurrently with itself.
+// the merged final response. Next must not be called concurrently with
+// itself, same as the underlying Stream contract. Close may arrive from
+// another goroutine while a Next is in flight (a shutdown cancels the stream
+// under its reader), and the quota watchdog runs on its own goroutine, so mu
+// guards every field they share. mu is never held across inner.Next or a
+// hook.
 type lifecycleStream struct {
 	inner        provider.Stream
 	ctx          context.Context
@@ -136,10 +139,18 @@ type lifecycleStream struct {
 
 	req *pipeline.Request
 
-	once         sync.Once
+	once sync.Once
+
+	// closeUpstream closes the inner stream at most once, whoever asks first:
+	// Close, or the watchdog. closeErr is what that one close returned.
+	closeUpstreamOnce sync.Once
+	closeErr          error
+
+	// mu guards the fields below.
+	mu           sync.Mutex
+	closed       bool // Close has run; no watchdog may start
 	startedFired bool
 	chunkCount   int
-	finalResp    *provider.CompletionResponse
 
 	// accumulator merges deltas as they pass through. Built lazily so the
 	// hot path stays cheap when no completion-style hook is registered.
@@ -147,7 +158,8 @@ type lifecycleStream struct {
 
 	// Quota enforcement state. quotaErr is non-nil when a quota is active;
 	// when the watchdog or per-chunk check trips, it sends the violation
-	// error and Next returns it on the next invocation.
+	// error and Next returns it on the next invocation. quota and quotaErr
+	// are set before the stream is returned and never change.
 	quota          StreamQuota
 	quotaErr       chan error
 	quotaTokenSeen int
@@ -193,16 +205,37 @@ func (s *lifecycleStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 		return nil, nil
 	}
 
+	first, emit, cut := s.record(chunk)
+	if first {
+		s.registry.EmitStreamStarted(s.ctx, s.requestID, s.model, s.providerName)
+	}
+	if emit {
+		s.registry.EmitChunkReceived(s.ctx, s.requestID, chunk.Kind, estimateChunkSize(chunk))
+	}
+	if cut != nil {
+		s.finishOnce(ctx, cut)
+		return nil, cut
+	}
+
+	return chunk, nil
+}
+
+// record folds one chunk into the stream's state under mu. It reports whether
+// this was the first chunk, whether the chunk-received hook should fire, and
+// the quota error when this chunk tripped the token cap. Hooks run in the
+// caller, outside the lock.
+func (s *lifecycleStream) record(chunk *provider.StreamChunk) (first, emit bool, cut error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if !s.startedFired {
 		s.startedFired = true
-		s.registry.EmitStreamStarted(s.ctx, s.requestID, s.model, s.providerName)
-		s.startWatchdog()
+		first = true
+		s.startWatchdogLocked()
 	}
 
 	s.chunkCount++
-	if s.shouldEmitChunk() {
-		s.registry.EmitChunkReceived(s.ctx, s.requestID, chunk.Kind, estimateChunkSize(chunk))
-	}
+	emit = s.shouldEmitChunkLocked()
 
 	if s.acc == nil {
 		s.acc = provider.NewAccumulator()
@@ -212,26 +245,26 @@ func (s *lifecycleStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 	if s.quota.MaxTokens > 0 && chunk.Usage != nil {
 		s.quotaTokenSeen = chunk.Usage.CompletionTokens
 		if s.quotaTokenSeen > s.quota.MaxTokens {
-			err := errQuotaExceeded("output_tokens")
 			// The chunk is withheld, but the provider reported these tokens:
 			// keep them so Usage still prices what was used.
 			u := *chunk.Usage
 			s.cutUsage = &u
-			s.finishOnce(ctx, err)
-			return nil, err
+			return first, emit, errQuotaExceeded("output_tokens")
 		}
 	}
-
-	return chunk, nil
+	return first, emit, nil
 }
 
-// startWatchdog kicks off a goroutine that fires when MaxDuration elapses,
-// closing the upstream stream so the next Next() call surfaces an error.
-func (s *lifecycleStream) startWatchdog() {
-	if s.quotaErr == nil || s.quota.MaxDuration <= 0 {
+// startWatchdogLocked kicks off a goroutine that fires when MaxDuration
+// elapses, closing the upstream stream so the next Next() call surfaces an
+// error. The caller holds mu. A stream already closed gets no watchdog: its
+// first chunk can arrive from a Next that was in flight when Close ran.
+func (s *lifecycleStream) startWatchdogLocked() {
+	if s.closed || s.quotaErr == nil || s.quota.MaxDuration <= 0 {
 		return
 	}
-	s.watchdogStop = make(chan struct{})
+	stop := make(chan struct{})
+	s.watchdogStop = stop
 	go func() {
 		t := time.NewTimer(s.quota.MaxDuration)
 		defer t.Stop()
@@ -241,10 +274,17 @@ func (s *lifecycleStream) startWatchdog() {
 			case s.quotaErr <- errQuotaExceeded("duration"):
 			default:
 			}
-			_ = s.inner.Close()
-		case <-s.watchdogStop:
+			s.closeUpstream()
+		case <-stop:
 		}
 	}()
+}
+
+// closeUpstream closes the inner stream the first time anyone asks; later
+// callers wait for that close and change nothing. The error it returned is
+// closeErr.
+func (s *lifecycleStream) closeUpstream() {
+	s.closeUpstreamOnce.Do(func() { s.closeErr = s.inner.Close() })
 }
 
 // QuotaError is the typed sentinel emitted when a stream is canceled by
@@ -283,7 +323,9 @@ func IsQuotaExceeded(err error) bool {
 	return errors.As(err, &qe)
 }
 
-func (s *lifecycleStream) shouldEmitChunk() bool {
+// shouldEmitChunkLocked reports whether this chunk's hook should fire. The
+// caller holds mu, and chunkCount already counts the chunk.
+func (s *lifecycleStream) shouldEmitChunkLocked() bool {
 	if !s.registry.HasChunkReceived() {
 		return false
 	}
@@ -294,21 +336,25 @@ func (s *lifecycleStream) shouldEmitChunk() bool {
 }
 
 func (s *lifecycleStream) Close() error {
+	s.mu.Lock()
+	s.closed = true
 	if s.watchdogStop != nil {
-		select {
-		case <-s.watchdogStop:
-		default:
-			close(s.watchdogStop)
-		}
+		close(s.watchdogStop)
+		s.watchdogStop = nil
 	}
+	s.mu.Unlock()
+
 	s.finishOnce(s.ctx, nil)
-	return s.inner.Close()
+	s.closeUpstream()
+	return s.closeErr
 }
 
 func (s *lifecycleStream) Usage() *provider.Usage {
 	if u := s.inner.Usage(); u != nil {
 		return u
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.cutUsage
 }
 
@@ -320,7 +366,6 @@ func (s *lifecycleStream) finishOnce(ctx context.Context, streamErr error) {
 			return
 		}
 		final := s.buildFinal()
-		s.finalResp = final
 		if s.req != nil {
 			if s.req.State == nil {
 				s.req.State = make(map[string]any)
@@ -332,6 +377,8 @@ func (s *lifecycleStream) finishOnce(ctx context.Context, streamErr error) {
 }
 
 func (s *lifecycleStream) buildFinal() *provider.CompletionResponse {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.acc == nil {
 		s.acc = provider.NewAccumulator()
 	}
