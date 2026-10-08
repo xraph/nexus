@@ -1,3 +1,8 @@
+//go:build ignore
+
+// This disconnected contributor is retained as migration reference. Forge
+// v1.12 removed the templ contributor API. Delete it with the legacy pages
+// after the React dashboard passes browser verification.
 package dashboard
 
 import (

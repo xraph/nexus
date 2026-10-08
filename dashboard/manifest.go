@@ -1,3 +1,7 @@
+//go:build ignore
+
+// Retained with the disconnected templ contributor for the feature inventory.
+// Forge v1.12 removed the API this manifest describes.
 package dashboard
 
 import (

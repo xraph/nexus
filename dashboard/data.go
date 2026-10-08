@@ -1,3 +1,6 @@
+//go:build ignore
+
+// Retained with the disconnected templ contributor for the feature inventory.
 package dashboard
 
 import (
