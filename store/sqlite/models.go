@@ -84,13 +84,18 @@ type apiKeyModel struct {
 	Hash            string     `grove:"hash,notnull"`
 	Scopes          string     `grove:"scopes"`
 	Status          string     `grove:"status,notnull"`
-	ExpiresAt       *time.Time `grove:"expires_at"`
+	ExpiresAt       *string    `grove:"expires_at"` // conv.TimeText, so a status filter compares it as a time
 	LastUsedAt      *time.Time `grove:"last_used_at"`
 	Metadata        string     `grove:"metadata"`
 	CreatedAt       time.Time  `grove:"created_at,notnull,default:current_timestamp"`
 }
 
 func apiKeyToModel(k *key.APIKey) *apiKeyModel {
+	var expires *string
+	if k.ExpiresAt != nil {
+		text := conv.TimeText(*k.ExpiresAt)
+		expires = &text
+	}
 	return &apiKeyModel{
 		ID:         k.ID.String(),
 		TenantID:   k.TenantID.String(),
@@ -99,7 +104,7 @@ func apiKeyToModel(k *key.APIKey) *apiKeyModel {
 		Hash:       k.Hash,
 		Scopes:     mustJSON(k.Scopes),
 		Status:     string(k.Status),
-		ExpiresAt:  k.ExpiresAt,
+		ExpiresAt:  expires,
 		LastUsedAt: k.LastUsedAt,
 		Metadata:   mustJSON(k.Metadata),
 		CreatedAt:  k.CreatedAt,
@@ -122,9 +127,15 @@ func apiKeyFromModel(m *apiKeyModel) (*key.APIKey, error) {
 		Prefix:     m.Prefix,
 		Hash:       m.Hash,
 		Status:     key.Status(m.Status),
-		ExpiresAt:  m.ExpiresAt,
 		LastUsedAt: m.LastUsedAt,
 		CreatedAt:  m.CreatedAt,
+	}
+	if m.ExpiresAt != nil {
+		t, parseErr := parseKeyExpiry(*m.ExpiresAt)
+		if parseErr != nil {
+			return nil, fmt.Errorf("nexus: key %s expires_at: %w", m.ID, parseErr)
+		}
+		k.ExpiresAt = &t
 	}
 	if err = json.Unmarshal([]byte(m.Scopes), &k.Scopes); err != nil {
 		return nil, fmt.Errorf("nexus: unmarshal scopes: %w", err)

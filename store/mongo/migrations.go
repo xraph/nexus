@@ -63,6 +63,8 @@ func init() {
 					{Keys: bson.D{{Key: "prefix", Value: 1}}},
 					{Keys: bson.D{{Key: "tenant_id", Value: 1}}},
 					{Keys: bson.D{{Key: "prefix", Value: 1}, {Key: "status", Value: 1}}},
+					{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "status", Value: 1}}},
+					{Keys: bson.D{{Key: "status", Value: 1}, {Key: "expires_at", Value: 1}}},
 				})
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
@@ -120,6 +122,8 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			{Keys: bson.D{{Key: "prefix", Value: 1}}},
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}}},
 			{Keys: bson.D{{Key: "prefix", Value: 1}, {Key: "status", Value: 1}}},
+			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "status", Value: 1}}},
+			{Keys: bson.D{{Key: "status", Value: 1}, {Key: "expires_at", Value: 1}}},
 		},
 		colUsage: {
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}},

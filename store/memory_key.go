@@ -87,6 +87,15 @@ func (s *memoryKeyStore) ListByTenant(_ context.Context, tenantID string) ([]*ke
 	return result, nil
 }
 
+// keyMatches reports whether k passes the tenant and status filters, with
+// the status taken as key.Effective reads it at now. An empty filter passes.
+func keyMatches(k *key.APIKey, opts *key.ListOptions, now time.Time) bool {
+	if opts.TenantID != "" && k.TenantID.String() != opts.TenantID {
+		return false
+	}
+	return opts.Status == "" || key.Effective(k, now) == opts.Status
+}
+
 func (s *memoryKeyStore) List(_ context.Context, opts *key.ListOptions) (*key.ListResult, error) {
 	if opts == nil {
 		opts = &key.ListOptions{}
@@ -95,16 +104,16 @@ func (s *memoryKeyStore) List(_ context.Context, opts *key.ListOptions) (*key.Li
 		return nil, err
 	}
 	limit := paging.Limit(opts.Limit)
+	now := time.Now()
 	s.mu.RLock()
 	var rows []*key.APIKey
 	for _, k := range s.data {
-		switch {
-		case opts.TenantID != "" && k.TenantID.String() != opts.TenantID:
-		case opts.Status != "" && k.Status != opts.Status:
-		case opts.Cursor != "" && k.ID.String() >= opts.Cursor:
-		default:
-			rows = append(rows, cloneKey(k))
+		if !keyMatches(k, opts, now) || (opts.Cursor != "" && k.ID.String() >= opts.Cursor) {
+			continue
 		}
+		c := cloneKey(k)
+		c.Status = key.Effective(c, now)
+		rows = append(rows, c)
 	}
 	s.mu.RUnlock()
 	slices.SortFunc(rows, func(a, b *key.APIKey) int { return strings.Compare(b.ID.String(), a.ID.String()) })
@@ -113,4 +122,20 @@ func (s *memoryKeyStore) List(_ context.Context, opts *key.ListOptions) (*key.Li
 	}
 	page, next := paging.Trim(rows, limit, func(k *key.APIKey) string { return k.ID.String() })
 	return &key.ListResult{Items: page, NextCursor: next}, nil
+}
+
+func (s *memoryKeyStore) Count(_ context.Context, opts *key.ListOptions) (int, error) {
+	if opts == nil {
+		opts = &key.ListOptions{}
+	}
+	now := time.Now()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	n := 0
+	for _, k := range s.data {
+		if keyMatches(k, opts, now) {
+			n++
+		}
+	}
+	return n, nil
 }

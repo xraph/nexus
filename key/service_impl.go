@@ -31,8 +31,8 @@ func NewService(store Store, opts ...Option) Service {
 
 // derive reports an active key whose expiry has passed as expired.
 func (s *service) derive(k *APIKey) *APIKey {
-	if k != nil && k.Status == KeyActive && k.ExpiresAt != nil && !k.ExpiresAt.After(s.now()) {
-		k.Status = KeyExpired
+	if k != nil {
+		k.Status = Effective(k, s.now())
 	}
 	return k
 }
@@ -163,6 +163,16 @@ func (s *service) List(ctx context.Context, tenantID string) ([]*APIKey, error) 
 		s.derive(k)
 	}
 	return keys, err
+}
+
+// ListPage delegates to the store, which filters on status and derives expiry.
+func (s *service) ListPage(ctx context.Context, opts *ListOptions) (*ListResult, error) {
+	return s.store.List(ctx, opts)
+}
+
+// Count delegates to the store, with the same filter semantics as ListPage.
+func (s *service) Count(ctx context.Context, opts *ListOptions) (int, error) {
+	return s.store.Count(ctx, opts)
 }
 
 const rotatedSuffix = " (rotated)"

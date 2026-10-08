@@ -10,6 +10,7 @@ import (
 	"github.com/xraph/grove/drivers/sqlitedriver"
 
 	"github.com/xraph/nexus/id"
+	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/money"
 	sqlitestore "github.com/xraph/nexus/store/sqlite"
 	"github.com/xraph/nexus/store/storetest"
@@ -198,5 +199,57 @@ func TestFailedRebuildLeavesNoPartialTable(t *testing.T) {
 	// The connection must not be left inside the failed transaction.
 	if _, err := raw.Exec(ctx, `BEGIN; COMMIT;`); err != nil {
 		t.Fatalf("connection is stuck in a transaction: %v", err)
+	}
+}
+
+// Keys written before expires_at became conv.TimeText hold whatever form
+// grove bound a time.Time in: time.Time.String, in the zone the caller used.
+// Compared as text those do not sort as times, so Migrate rewrites them, and
+// the status filter then sees the right instants.
+func TestLegacyKeyExpiryIsNormalisedForTheStatusFilter(t *testing.T) {
+	ctx := context.Background()
+	db := storetest.OpenSQLiteDB(t)
+	s := sqlitestore.New(db)
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	tn := storetest.InsertTenant(t, s)
+	now := time.Now().UTC()
+	lapsed := storetest.Key(tn.ID, "lapsed")
+	live := storetest.Key(tn.ID, "live")
+	for _, k := range []*key.APIKey{lapsed, live} {
+		if err := s.Keys().Insert(ctx, k); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+	// 2h ago in a zone ahead of UTC and 1h ahead in one behind it: as text, the
+	// zone-local clock readings sort the wrong way round.
+	east, west := time.FixedZone("EEST", 3*3600), time.FixedZone("CDT", -5*3600)
+	legacy := map[string]string{
+		lapsed.ID.String(): now.Add(-2 * time.Hour).In(east).Format("2006-01-02 15:04:05.999999999 -0700 MST"),
+		live.ID.String():   now.Add(time.Hour).In(west).Format("2006-01-02 15:04:05.999999999 -0700 MST") + " m=+0.028456085",
+	}
+	raw := sqlitedriver.Unwrap(db)
+	for kid, text := range legacy {
+		if _, err := raw.Exec(ctx, `UPDATE api_keys SET expires_at = ? WHERE id = ?`, text, kid); err != nil {
+			t.Fatalf("write legacy expiry: %v", err)
+		}
+	}
+	for pass := 1; pass <= 2; pass++ { // the second Migrate must change nothing
+		if err := s.Migrate(); err != nil {
+			t.Fatalf("migrate #%d: %v", pass, err)
+		}
+		res, err := s.Keys().List(ctx, &key.ListOptions{TenantID: tn.ID.String(), Status: key.KeyExpired})
+		if err != nil || len(res.Items) != 1 || res.Items[0].ID.String() != lapsed.ID.String() {
+			t.Fatalf("pass %d: expired = %v, %v; want only the lapsed key", pass, res, err)
+		}
+		n, err := s.Keys().Count(ctx, &key.ListOptions{TenantID: tn.ID.String(), Status: key.KeyActive})
+		if err != nil || n != 1 {
+			t.Fatalf("pass %d: active count = %d, %v; want 1", pass, n, err)
+		}
+		got, err := s.Keys().FindByID(ctx, live.ID.String())
+		if err != nil || got.ExpiresAt == nil || got.ExpiresAt.Sub(now.Add(time.Hour)).Abs() > time.Second {
+			t.Fatalf("pass %d: live key expiry = %v, %v; want the same instant", pass, got, err)
+		}
 	}
 }

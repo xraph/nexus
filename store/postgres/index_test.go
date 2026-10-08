@@ -60,3 +60,49 @@ func TestUsageIsIndexedByTenantAndTime(t *testing.T) {
 		t.Fatalf("after Down the index is still %q", def)
 	}
 }
+
+// A key list filters on tenant and status, and derives expiry from
+// expires_at, so keys need (tenant_id, status) and (status, expires_at).
+func TestKeysAreIndexedByStatusAndExpiry(t *testing.T) {
+	ctx := context.Background()
+	db := storetest.OpenPostgresDB(t)
+	if err := pgstore.New(db).Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	raw := pgdriver.Unwrap(db)
+	def := func(name string) string {
+		var d string
+		err := raw.QueryRow(ctx, `SELECT COALESCE(MAX(indexdef), '') FROM pg_indexes
+			WHERE schemaname = current_schema() AND indexname = $1`, name).Scan(&d)
+		if err != nil {
+			t.Fatalf("read index %s: %v", name, err)
+		}
+		return d
+	}
+	want := map[string]string{
+		"idx_nexus_api_keys_tenant_status":  "(tenant_id, status)",
+		"idx_nexus_api_keys_status_expires": "(status, expires_at)",
+	}
+	for name, cols := range want {
+		if d := def(name); !strings.Contains(d, cols) {
+			t.Fatalf("index %s = %q; want one on nexus_api_keys %s", name, d, cols)
+		}
+	}
+	var m *migrate.Migration
+	for _, mig := range pgstore.Migrations.Migrations() {
+		if mig.Name == "index_keys_by_status_and_expiry" {
+			m = mig
+		}
+	}
+	if m == nil {
+		t.Fatal("no index_keys_by_status_and_expiry migration")
+	}
+	if err := m.Down(ctx, execOnly{db: raw}); err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	for name := range want {
+		if d := def(name); d != "" {
+			t.Fatalf("after Down index %s is still %q", name, d)
+		}
+	}
+}

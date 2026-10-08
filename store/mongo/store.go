@@ -303,6 +303,32 @@ func (s *keyStore) ListByTenant(ctx context.Context, tenantID string) ([]*key.AP
 	return keys, nil
 }
 
+// keyFilter is the filter for a key list or count. The status is derived
+// against now, mirroring key.Effective. A missing expires_at never expires.
+func keyFilter(opts *key.ListOptions, now time.Time) bson.M {
+	filter := bson.M{}
+	if opts.TenantID != "" {
+		filter["tenant_id"] = opts.TenantID
+	}
+	switch opts.Status {
+	case "":
+	case key.KeyActive:
+		filter["status"] = string(key.KeyActive)
+		filter["$or"] = bson.A{
+			bson.M{"expires_at": nil}, // null or missing
+			bson.M{"expires_at": bson.M{"$gt": now}},
+		}
+	case key.KeyExpired:
+		filter["$or"] = bson.A{
+			bson.M{"status": string(key.KeyExpired)},
+			bson.M{"status": string(key.KeyActive), "expires_at": bson.M{"$lte": now}},
+		}
+	default:
+		filter["status"] = string(opts.Status)
+	}
+	return filter
+}
+
 func (s *keyStore) List(ctx context.Context, opts *key.ListOptions) (*key.ListResult, error) {
 	if opts == nil {
 		opts = &key.ListOptions{}
@@ -311,13 +337,8 @@ func (s *keyStore) List(ctx context.Context, opts *key.ListOptions) (*key.ListRe
 		return nil, err
 	}
 	limit := paging.Limit(opts.Limit)
-	filter := bson.M{}
-	if opts.TenantID != "" {
-		filter["tenant_id"] = opts.TenantID
-	}
-	if opts.Status != "" {
-		filter["status"] = string(opts.Status)
-	}
+	now := time.Now().UTC()
+	filter := keyFilter(opts, now)
 	if opts.Cursor != "" {
 		filter["_id"] = bson.M{"$lt": opts.Cursor}
 	}
@@ -332,10 +353,22 @@ func (s *keyStore) List(ctx context.Context, opts *key.ListOptions) (*key.ListRe
 		if err != nil {
 			return nil, fmt.Errorf("nexus/mongo: convert key model: %w", err)
 		}
+		k.Status = key.Effective(k, now)
 		rows = append(rows, k)
 	}
 	page, next := paging.Trim(rows, limit, func(k *key.APIKey) string { return k.ID.String() })
 	return &key.ListResult{Items: page, NextCursor: next}, nil
+}
+
+func (s *keyStore) Count(ctx context.Context, opts *key.ListOptions) (int, error) {
+	if opts == nil {
+		opts = &key.ListOptions{}
+	}
+	n, err := s.mdb.Collection(colKeys).CountDocuments(ctx, keyFilter(opts, time.Now().UTC()))
+	if err != nil {
+		return 0, fmt.Errorf("nexus/mongo: count keys: %w", err)
+	}
+	return int(n), nil
 }
 
 // ──────────────────────────────────────────────────

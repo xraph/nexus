@@ -187,6 +187,25 @@ ALTER TABLE nexus_usage_records
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "index_keys_by_status_and_expiry",
+			Version: "20261008000001",
+			Comment: "Index keys by tenant and status, and by status and expiry, for the status filter and count",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE INDEX IF NOT EXISTS idx_nexus_api_keys_tenant_status ON nexus_api_keys (tenant_id, status);
+CREATE INDEX IF NOT EXISTS idx_nexus_api_keys_status_expires ON nexus_api_keys (status, expires_at);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_nexus_api_keys_tenant_status;
+DROP INDEX IF EXISTS idx_nexus_api_keys_status_expires;
+`)
+				return err
+			},
+		},
 	)
 	return g
 }()

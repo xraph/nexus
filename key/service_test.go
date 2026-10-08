@@ -351,3 +351,59 @@ func TestCreateRefusesAnUnknownScope(t *testing.T) {
 		t.Fatalf("every known scope = %v; want a key with all four", err)
 	}
 }
+
+func TestEffectiveDerivesExpiryAtTheBoundary(t *testing.T) {
+	now := time.Now()
+	past, edge, future := now.Add(-time.Hour), now, now.Add(time.Hour)
+	cases := []struct {
+		name   string
+		status key.Status
+		expiry *time.Time
+		want   key.Status
+	}{
+		{"active without expiry", key.KeyActive, nil, key.KeyActive},
+		{"active before expiry", key.KeyActive, &future, key.KeyActive},
+		{"active at expiry", key.KeyActive, &edge, key.KeyExpired},
+		{"active after expiry", key.KeyActive, &past, key.KeyExpired},
+		{"revoked after expiry stays revoked", key.KeyRevoked, &past, key.KeyRevoked},
+		{"stored expired stays expired", key.KeyExpired, &future, key.KeyExpired},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := key.Effective(&key.APIKey{Status: c.status, ExpiresAt: c.expiry}, now); got != c.want {
+				t.Fatalf("Effective = %s, want %s", got, c.want)
+			}
+		})
+	}
+}
+
+func TestListPageAndCountGoThroughTheStoreWithExpiryDerived(t *testing.T) {
+	svc, tn, _, _ := setup(t, nil)
+	ctx := context.Background()
+	soon := time.Now().Add(50 * time.Millisecond)
+	if _, _, err := svc.Create(ctx, &key.CreateInput{TenantID: tn.ID.String(), Name: "short", ExpiresAt: &soon}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.Create(ctx, &key.CreateInput{TenantID: tn.ID.String(), Name: "long"}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	opts := &key.ListOptions{TenantID: tn.ID.String(), Status: key.KeyActive}
+	page, err := svc.ListPage(ctx, opts)
+	if err != nil || len(page.Items) != 1 || page.Items[0].Name != "long" {
+		t.Fatalf("active page = %+v, %v; want only the key without an expiry", page, err)
+	}
+	n, err := svc.Count(ctx, opts)
+	if err != nil || n != 1 {
+		t.Fatalf("active count = %d, %v; want 1", n, err)
+	}
+	opts.Status = key.KeyExpired
+	page, err = svc.ListPage(ctx, opts)
+	if err != nil || len(page.Items) != 1 || page.Items[0].Name != "short" || page.Items[0].Status != key.KeyExpired {
+		t.Fatalf("expired page = %+v, %v; want the lapsed key reading expired", page, err)
+	}
+	if n, err = svc.Count(ctx, opts); err != nil || n != 1 {
+		t.Fatalf("expired count = %d, %v; want 1", n, err)
+	}
+}
