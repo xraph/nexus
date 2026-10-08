@@ -134,3 +134,22 @@ func TestConcurrentKeyCreateMintsOnce(t *testing.T) {
 		t.Fatal("overlapping retries minted multiple keys")
 	}
 }
+
+func TestTenantRenameInvalidatesKeyQueries(t *testing.T) {
+	r := newWireRig(t)
+	tn := storetest.InsertTenant(t, r.gw.Store())
+	created := wireKey(t, r.call("keys.create", fmt.Sprintf(`{"tenantId":%q,"name":"rename"}`, tn.ID.String()), r.csrf, "create-for-rename"), []string{"keys.list", "tenants.get", "overview.get"})
+	reply := r.call("tenants.update", fmt.Sprintf(`{"id":%q,"name":"Renamed"}`, tn.ID.String()), r.csrf, "rename")
+	var out dash.Response
+	if reply.Code != http.StatusOK || json.Unmarshal(reply.Body.Bytes(), &out) != nil {
+		t.Fatal("tenant rename failed")
+	}
+	want := []string{"tenants.list", "tenants.get", "overview.get", "keys.list", "keys.get"}
+	if !reflect.DeepEqual(out.Meta.Invalidates, want) {
+		t.Fatal("tenant rename did not refresh dependent key labels")
+	}
+	row, err := keysGet(context.Background(), r.gw, idRequest{ID: created.Key.ID})
+	if err != nil || row.TenantName != "Renamed" {
+		t.Fatal("refreshed key did not carry the renamed tenant")
+	}
+}

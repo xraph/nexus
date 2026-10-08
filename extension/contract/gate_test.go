@@ -25,7 +25,7 @@ func TestManifestMatchesAllEighteenIntents(t *testing.T) {
 		"overview.get": nil, "tenants.list": nil, "tenants.get": nil, "keys.list": nil, "keys.get": nil,
 		"usage.summary": nil, "usage.series": nil, "usage.records": nil, "models.list": nil, "providers.list": nil, "gateway.get": nil, "settings.get": nil,
 		"tenants.create":    {"tenants.list", "overview.get"},
-		"tenants.update":    {"tenants.list", "tenants.get", "overview.get"},
+		"tenants.update":    {"tenants.list", "tenants.get", "overview.get", "keys.list", "keys.get"},
 		"tenants.setStatus": {"tenants.list", "tenants.get", "overview.get"},
 		"keys.create":       {"keys.list", "tenants.get", "overview.get"},
 		"keys.rotate":       {"keys.list", "keys.get", "tenants.get"},
