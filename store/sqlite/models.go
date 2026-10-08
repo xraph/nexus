@@ -20,15 +20,15 @@ import (
 
 type tenantModel struct {
 	grove.BaseModel `grove:"table:tenants"`
-	ID              string    `grove:"id,pk"`
-	Name            string    `grove:"name,notnull"`
-	Slug            string    `grove:"slug,notnull"`
-	Status          string    `grove:"status,notnull"`
-	Quota           string    `grove:"quota"`
-	Config          string    `grove:"config"`
-	Metadata        string    `grove:"metadata"`
-	CreatedAt       time.Time `grove:"created_at,notnull,default:current_timestamp"`
-	UpdatedAt       time.Time `grove:"updated_at,notnull,default:current_timestamp"`
+	ID              string `grove:"id,pk"`
+	Name            string `grove:"name,notnull"`
+	Slug            string `grove:"slug,notnull"`
+	Status          string `grove:"status,notnull"`
+	Quota           string `grove:"quota"`
+	Config          string `grove:"config"`
+	Metadata        string `grove:"metadata"`
+	CreatedAt       string `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt       string `grove:"updated_at,notnull,default:current_timestamp"`
 }
 
 func tenantToModel(t *tenant.Tenant) *tenantModel {
@@ -40,8 +40,8 @@ func tenantToModel(t *tenant.Tenant) *tenantModel {
 		Quota:     mustJSON(t.Quota),
 		Config:    mustJSON(t.Config),
 		Metadata:  mustJSON(t.Metadata),
-		CreatedAt: t.CreatedAt,
-		UpdatedAt: t.UpdatedAt,
+		CreatedAt: conv.TimeText(t.CreatedAt),
+		UpdatedAt: conv.TimeText(t.UpdatedAt),
 	}
 }
 
@@ -50,13 +50,21 @@ func tenantFromModel(m *tenantModel) (*tenant.Tenant, error) {
 	if err != nil {
 		return nil, err
 	}
+	created, err := parseLegacyTime(m.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("nexus: tenant %s created_at: %w", m.ID, err)
+	}
+	updated, err := parseLegacyTime(m.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("nexus: tenant %s updated_at: %w", m.ID, err)
+	}
 	t := &tenant.Tenant{
 		ID:        tid,
 		Name:      m.Name,
 		Slug:      m.Slug,
 		Status:    tenant.Status(m.Status),
-		CreatedAt: m.CreatedAt,
-		UpdatedAt: m.UpdatedAt,
+		CreatedAt: created,
+		UpdatedAt: updated,
 	}
 
 	if err = json.Unmarshal([]byte(m.Quota), &t.Quota); err != nil {
