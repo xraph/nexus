@@ -2,6 +2,7 @@ package extension
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -86,17 +87,78 @@ func TestBootstrapAdminKeyMergesLikeBasePath(t *testing.T) {
 	}
 }
 
-func TestAMalformedBootstrapAdminKeyFailsStartWithoutEchoingIt(t *testing.T) {
+func TestAMalformedBootstrapAdminKeyFailsStartNamingItsSourceAndLength(t *testing.T) {
 	const bad = "swordfish-not-a-key"
-	e := New(WithDatabase(store.NewMemory()))
-	e.SetLogger(forge.NewNoopLogger())
-	e.config = e.mergeWithDefaults(Config{BootstrapAdminKey: bad})
-	e.applyConfigToGatewayOpts()
-	err := e.Start(context.Background())
-	if err == nil {
-		t.Fatal("start must fail on a malformed bootstrap admin key")
+	for name, tc := range map[string]struct{ cfg, env, source string }{
+		"config": {cfg: bad, source: "bootstrap_admin_key"},
+		"env":    {env: bad, source: "NEXUS_BOOTSTRAP_ADMIN_KEY"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("NEXUS_BOOTSTRAP_ADMIN_KEY", tc.env)
+			e := New(WithDatabase(store.NewMemory()))
+			e.SetLogger(forge.NewNoopLogger())
+			e.config = e.mergeWithDefaults(Config{BootstrapAdminKey: tc.cfg})
+			e.resolveBootstrapAdminKey()
+			e.applyConfigToGatewayOpts()
+			err := e.Start(context.Background())
+			if err == nil {
+				t.Fatal("start must fail on a malformed bootstrap admin key")
+			}
+			msg := err.Error()
+			if strings.Contains(msg, bad) {
+				t.Fatal("the error echoes the key")
+			}
+			if !strings.Contains(msg, tc.source) || !strings.Contains(msg, fmt.Sprintf("%d characters", len(bad))) {
+				t.Fatalf("error %q must name %s and the length %d", msg, tc.source, len(bad))
+			}
+			if strings.Count(msg, "nexus:") != 1 {
+				t.Fatalf("error %q repeats its nexus: prefix", msg)
+			}
+		})
 	}
-	if strings.Contains(err.Error(), bad) {
-		t.Fatalf("the error echoes the key: %v", err)
+}
+
+func TestBootstrapAdminKeyIsTrimmedFromConfigAndEnv(t *testing.T) {
+	t.Setenv("NEXUS_BOOTSTRAP_ADMIN_KEY", "")
+	e := startWith(t, Config{BootstrapAdminKey: " \t" + configKey + "\n"})
+	mustValidate(t, e, configKey)
+
+	t.Setenv("NEXUS_BOOTSTRAP_ADMIN_KEY", envKey+"\n")
+	e = startWith(t, Config{})
+	mustValidate(t, e, envKey)
+}
+
+// registerAndStart takes the real path: the app's config manager under
+// extensions.nexus, then Register (which runs loadConfiguration and so the
+// env fallback), then Start.
+func registerAndStart(t *testing.T, keys map[string]any) *Extension {
+	t.Helper()
+	cm := forge.NewManager()
+	if keys != nil {
+		cm.Set("extensions.nexus", keys)
+	}
+	e := New(WithDatabase(store.NewMemory()), WithDisableRoutes())
+	if err := e.Register(forge.New(forge.WithAppName("t"), forge.WithAppConfigManager(cm))); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if err := e.Start(context.Background()); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(func() { _ = e.Stop(context.Background()) })
+	return e
+}
+
+func TestRegisterReadsTheBootstrapAdminKeyFromTheEnvVar(t *testing.T) {
+	t.Setenv("NEXUS_BOOTSTRAP_ADMIN_KEY", envKey)
+	e := registerAndStart(t, nil)
+	mustValidate(t, e, envKey)
+}
+
+func TestRegisterReadsTheBootstrapAdminKeyFromYAMLAndItBeatsTheEnvVar(t *testing.T) {
+	t.Setenv("NEXUS_BOOTSTRAP_ADMIN_KEY", envKey)
+	e := registerAndStart(t, map[string]any{"bootstrap_admin_key": configKey})
+	mustValidate(t, e, configKey)
+	if _, err := e.Gateway().Keys().Validate(context.Background(), envKey); err == nil {
+		t.Fatal("the env var key must not be created when the YAML sets one")
 	}
 }

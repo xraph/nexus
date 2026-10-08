@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/xraph/nexus/auth"
@@ -350,8 +351,10 @@ const (
 // scope. Running it again changes nothing.
 //
 // A key revoked since the last run stays revoked and is reported with a
-// warning that names its id, so revoking the bootstrap key retires it. An
-// "operator" tenant that is not active is an error. The raw key never
+// warning that names its id, so revoking the bootstrap key retires it. The
+// same warning covers a key that exists without the admin scope or under
+// another tenant. An "operator" tenant that is not active is an error. A key
+// of the wrong shape is an error that gives its length. The raw key never
 // appears in an error or a log line.
 //
 // Call it after the gateway is initialized and the store is migrated:
@@ -362,7 +365,12 @@ func (gw *Gateway) EnsureBootstrapAdminKey(ctx context.Context) error {
 		return nil
 	}
 	if gw.tenant == nil || gw.key == nil {
-		return errors.New("nexus: ensure the bootstrap admin key: the gateway is not initialized")
+		return errors.New("nexus: the gateway is not initialized: call Initialize before EnsureBootstrapAdminKey")
+	}
+	if !key.WellFormed(gw.bootstrapAdminKey) {
+		// Say how long it was, never what it was.
+		return fmt.Errorf("%w: the bootstrap admin key must be \"nxs_\" and 64 lowercase hex digits, and it is %d characters",
+			key.ErrInvalid, len(gw.bootstrapAdminKey))
 	}
 	tn, err := gw.operatorTenant(ctx)
 	if err != nil {
@@ -377,13 +385,19 @@ func (gw *Gateway) EnsureBootstrapAdminKey(ctx context.Context) error {
 		Scopes:   []string{key.ScopeAdmin},
 	})
 	if err != nil {
-		return fmt.Errorf("nexus: ensure the bootstrap admin key: %w", err)
+		return err
 	}
 	switch {
 	case created:
 		gw.logger.Info("nexus: bootstrap admin key created", "key_id", k.ID.String(), "tenant", bootstrapTenantSlug)
-	case k.Status == key.KeyRevoked:
-		gw.logger.Warn("nexus: the bootstrap admin key is revoked and stays revoked: remove it from the config, or set a new one",
+	case k.Status != key.KeyActive:
+		gw.logger.Warn("nexus: the bootstrap admin key is not active and stays that way: remove it from the config, or set a new one",
+			"key_id", k.ID.String(), "status", string(k.Status))
+	case !slices.Contains(k.Scopes, key.ScopeAdmin):
+		gw.logger.Warn("nexus: the bootstrap admin key exists without the admin scope, so it does not open the admin API",
+			"key_id", k.ID.String())
+	case k.TenantID != tn.ID:
+		gw.logger.Warn("nexus: the bootstrap admin key exists under a tenant other than operator",
 			"key_id", k.ID.String())
 	}
 	return nil

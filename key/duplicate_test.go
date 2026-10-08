@@ -133,9 +133,9 @@ func TestConcurrentEnsureMakesExactlyOneRow(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, created, err := svc.Ensure(ctx, operatorKey, &key.CreateInput{TenantID: tn.ID.String(), Name: "bootstrap admin", Scopes: []string{key.ScopeAdmin}})
-			if err != nil {
-				failure.Store(err)
+			_, created, ensureErr := svc.Ensure(ctx, operatorKey, &key.CreateInput{TenantID: tn.ID.String(), Name: "bootstrap admin", Scopes: []string{key.ScopeAdmin}})
+			if ensureErr != nil {
+				failure.Store(ensureErr)
 				return
 			}
 			if created {

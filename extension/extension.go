@@ -13,12 +13,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/xraph/forge"
 	"github.com/xraph/grove"
 	"github.com/xraph/vessel"
 
 	nexus "github.com/xraph/nexus"
+	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/store"
 	mongostore "github.com/xraph/nexus/store/mongo"
 	pgstore "github.com/xraph/nexus/store/postgres"
@@ -49,6 +51,10 @@ type Extension struct {
 	gateway     *nexus.Gateway
 	gatewayOpts []nexus.Option
 	useGrove    bool
+
+	// bootstrapSource names where the bootstrap admin key came from, for
+	// an error about it. The key itself never goes in a message.
+	bootstrapSource string
 }
 
 // New creates a new Nexus Forge extension with the given options.
@@ -112,6 +118,13 @@ func (e *Extension) Register(fapp forge.App) error {
 
 // Start implements [forge.Extension]. It creates and initializes the gateway.
 func (e *Extension) Start(ctx context.Context) error {
+	// Refuse a bootstrap admin key of the wrong shape before anything starts,
+	// naming where it came from and how long it was, never what it was.
+	if k := e.config.BootstrapAdminKey; k != "" && !key.WellFormed(k) {
+		return fmt.Errorf("nexus: %s is not a valid key: want \"nxs_\" and 64 lowercase hex digits, got %d characters",
+			e.bootstrapSourceName(), len(k))
+	}
+
 	gw := nexus.New(e.gatewayOpts...)
 	if err := gw.Initialize(ctx); err != nil {
 		return fmt.Errorf("nexus: failed to initialize gateway: %w", err)
@@ -125,17 +138,17 @@ func (e *Extension) Start(ctx context.Context) error {
 		}
 	}
 
+	// The admin API always needs an admin key. This runs after the migration
+	// (the operator migrated already when DisableMigrate is set).
+	if err := gw.EnsureBootstrapAdminKey(ctx); err != nil {
+		return err
+	}
+
 	e.Logger().Info("nexus: gateway started",
 		forge.F("providers", gw.Providers().Count()),
 		forge.F("extensions", gw.Extensions().Count()),
 		forge.F("base_path", e.config.BasePath),
 	)
-
-	// The admin API always needs an admin key. This runs after the migration
-	// (the operator migrated already when DisableMigrate is set).
-	if err := gw.EnsureBootstrapAdminKey(ctx); err != nil {
-		return fmt.Errorf("nexus: bootstrap admin key: %w", err)
-	}
 
 	e.MarkStarted()
 	return nil
@@ -242,12 +255,24 @@ func (e *Extension) loadConfiguration() error {
 	return nil
 }
 
-// resolveBootstrapAdminKey fills an empty bootstrap_admin_key from the
-// NEXUS_BOOTSTRAP_ADMIN_KEY environment variable. A value in the config wins.
+// resolveBootstrapAdminKey trims the bootstrap admin key from the config and,
+// when it is empty, takes it from the NEXUS_BOOTSTRAP_ADMIN_KEY environment
+// variable, trimmed. A value in the config wins. A secret read from a file
+// or a shell often carries a trailing newline.
 func (e *Extension) resolveBootstrapAdminKey() {
+	e.bootstrapSource = "bootstrap_admin_key"
+	e.config.BootstrapAdminKey = strings.TrimSpace(e.config.BootstrapAdminKey)
 	if e.config.BootstrapAdminKey == "" {
-		e.config.BootstrapAdminKey = os.Getenv(BootstrapAdminKeyEnv)
+		e.config.BootstrapAdminKey = strings.TrimSpace(os.Getenv(BootstrapAdminKeyEnv))
+		e.bootstrapSource = BootstrapAdminKeyEnv
 	}
+}
+
+func (e *Extension) bootstrapSourceName() string {
+	if e.bootstrapSource == "" {
+		return "bootstrap_admin_key"
+	}
+	return e.bootstrapSource
 }
 
 // tryLoadFromConfigFile attempts to load config from YAML files.
