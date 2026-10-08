@@ -28,7 +28,7 @@ The access stage refuses a tenant that is not active or does not exist, and a ke
 
 ## Quotas
 
-A tenant carries a `Quota`. A field left at zero means no limit. The quota stage reads `DailyRequests` and `MonthlyBudgetUSD` from the usage store, so with usage tracking off (`enable_usage: false`) no rows are written, those two limits never trip, and the stage still runs the rest.
+A tenant carries a `Quota`. A field left at zero means no limit. With usage tracking off (`enable_usage: false`), the monthly budget cannot apply because no spend is recorded. The daily cap still applies through the limiter, as do RPM, TPM and token caps. Memory windows reset on restart and apply per replica; use Redis to share them.
 
 ```go
 type Quota struct {
@@ -83,7 +83,7 @@ The default limiter lives in the process, so each replica keeps its own RPM and 
 
 ## Tenant Configuration
 
-Each tenant can also have custom settings:
+You can restrict the models a tenant uses, supply its default model and disable its response cache:
 
 ```go
 type Config struct {
@@ -96,6 +96,16 @@ type Config struct {
     Metadata        map[string]string
 }
 ```
+
+Model names are case-sensitive and match exactly. The service trims surrounding spaces when you save them and refuses blank names or a name present in both lists. A block wins: either the requested name or the resolved alias target being blocked refuses the request with 403 `forbidden`. A non-empty allow list admits a request when either name is listed. An alias with several targets is checked against the target selected for that request, so list every target when you need predictable access.
+
+`DefaultModel` fills an omitted model before alias resolution, for HTTP and in-process requests alike. An explicit model keeps its value. `CacheEnabled: false` bypasses both cache reads and writes, including stream replay. A nil value follows the gateway setting.
+
+`RoutingStrategy` and `GuardrailPolicy` are stored but not enforced. Saving them does not change routing or guard execution.
+
+## Deleting a tenant
+
+You cannot delete a tenant that has keys or usage history. The gateway returns `tenant.ErrInUse`, and the admin API answers 409 `conflict`. Disable the tenant instead to stop its traffic while retaining its records. Custom tenant services must supply their own in-use check.
 
 ## Per-Tenant Aliases
 

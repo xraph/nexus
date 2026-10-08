@@ -35,7 +35,7 @@ type Config struct {
 
 `DefaultConfig()` returns sensible defaults. `RequireAPIKey` is true by default, which means the `api` and `proxy` routes refuse a request without a valid gateway key. Set it to false for local work and the `/v1` routes open up. The `/admin` routes stay closed. See [Authentication](/docs/api-reference/http-api#authentication).
 
-`EnableUsage` is true by default. Turn it off and the gateway writes no usage rows, which also makes a tenant's `DailyRequests` and `MonthlyBudgetUSD` limits inert, since both are counted from those rows. RPM, TPM and the token cap still apply.
+`EnableUsage` is true by default. Turn it off and the gateway writes no usage rows, so the monthly budget cannot apply. The daily cap still applies through the limiter, along with RPM, TPM and token caps. Memory windows reset on restart and apply per replica.
 
 `GlobalRateLimit` is requests per minute across the whole gateway, every tenant and every unattributed request included. Zero means no limit. It is enforced: the quota stage charges one request against it before it looks at the tenant's own limits, and a request over it gets a 429 `rate_limited`.
 
@@ -57,6 +57,7 @@ type Config struct {
 | `WithBasePath(path)` | Set the HTTP base path |
 | `WithRateLimit(rpm)` | Set global rate limit |
 | `WithRequireAPIKey(on)` | Require a gateway key on the `/v1` routes (default true) |
+| `WithBootstrapAdminKey(raw)` | Supply the first admin key; call `EnsureBootstrapAdminKey` after migrating the store |
 | `WithLimiter(l)` | Set the RPM and TPM limiter (default: in-process memory) |
 | `WithTracer(tracer)` | Set the request tracer |
 | `WithTransforms(registry)` | Set input/output transforms |
@@ -114,6 +115,9 @@ In addition to the gateway config fields, the extension config adds:
 | `disable_routes` | `bool` | Disable automatic route registration | `false` |
 | `disable_migrate` | `bool` | Disable automatic store migration | `false` |
 | `grove_database` | `string` | Name of grove.DB to resolve from DI (empty = default DB) | `""` |
+| `bootstrap_admin_key` | `string` | Operator-supplied admin key, applied after migration; an empty value falls back to `NEXUS_BOOTSTRAP_ADMIN_KEY` | `""` |
+
+The extension trims the bootstrap value and checks its shape before starting. It stores only the hash, leaves a revoked key revoked, and never returns the raw value. Use a randomly generated value and keep it in your secret configuration. See [Your first admin key](/docs/api-reference/http-api#your-first-admin-key).
 
 ### Configuration precedence
 

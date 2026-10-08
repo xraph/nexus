@@ -58,7 +58,7 @@ if err != nil {
 // raw is shown once. Only its hash is stored, so hand it to its owner now.
 ```
 
-`Create` returns the raw key this once. Only its hash is stored, so if you lose it you rotate or revoke the key and make another. You can also create keys from the dashboard once you have an admin key. An `admin` key administers every tenant, whichever tenant it belongs to, so keep it out of application code, source control and logs.
+`Create` returns the raw key this once. Only its hash is stored, so if you lose it you rotate or revoke the key and make another. The dashboard uses its own operator authentication and calls the services in process; it does not need a gateway admin key. An `admin` key administers every tenant through the HTTP API, whichever tenant it belongs to, so keep it out of application code, source control and logs.
 
 ## OpenAI-Compatible Endpoints
 
@@ -97,6 +97,8 @@ Bad input (a missing name, a tenant id that does not parse, an unknown scope) is
 | `GET` | `/admin/tenants/:id` | Get a tenant |
 | `PATCH` | `/admin/tenants/:id` | Update a tenant |
 | `DELETE` | `/admin/tenants/:id` | Delete a tenant |
+
+Deleting a tenant that still has keys or usage history answers 409 `conflict`: disable it instead. This check applies across the built-in stores when you use the gateway's tenant service.
 
 ### API Keys
 
