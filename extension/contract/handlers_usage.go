@@ -3,14 +3,17 @@ package contract
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"time"
 
 	nexus "github.com/xraph/nexus"
 	"github.com/xraph/nexus/id"
+	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/paging"
+	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/usage"
 )
 
@@ -155,7 +158,9 @@ type usageRecordsRequest struct {
 type usageRecordRow struct {
 	ID               string              `json:"id"`
 	TenantID         *string             `json:"tenantId"`
+	TenantName       *string             `json:"tenantName"`
 	KeyID            *string             `json:"keyId"`
+	KeyPrefix        *string             `json:"keyPrefix"`
 	RequestID        *string             `json:"requestId"`
 	Provider         string              `json:"provider"`
 	Model            string              `json:"model"`
@@ -252,8 +257,39 @@ func usageRecords(ctx context.Context, gw *nexus.Gateway, in usageRecordsRequest
 		return usageRecordsResponse{}, err
 	}
 	out.NextCursor = page.NextCursor
+	names := map[string]*string{}
+	prefixes := map[string]*string{}
 	for _, r := range page.Items {
-		out.Items = append(out.Items, projectRecord(r))
+		row := projectRecord(r)
+		if row.TenantID != nil {
+			name, seen := names[*row.TenantID]
+			if !seen {
+				t, findErr := gw.Tenants().Get(ctx, *row.TenantID)
+				if findErr != nil && !errors.Is(findErr, tenant.ErrNotFound) {
+					return usageRecordsResponse{}, findErr
+				}
+				if findErr == nil {
+					name = ptr(t.Name)
+				}
+				names[*row.TenantID] = name
+			}
+			row.TenantName = name
+		}
+		if row.KeyID != nil {
+			prefix, seen := prefixes[*row.KeyID]
+			if !seen {
+				k, findErr := gw.Keys().Get(ctx, *row.KeyID)
+				if findErr != nil && !errors.Is(findErr, key.ErrNotFound) {
+					return usageRecordsResponse{}, findErr
+				}
+				if findErr == nil {
+					prefix = ptr(k.Prefix)
+				}
+				prefixes[*row.KeyID] = prefix
+			}
+			row.KeyPrefix = prefix
+		}
+		out.Items = append(out.Items, row)
 	}
 	return out, nil
 }

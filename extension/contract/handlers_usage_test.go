@@ -10,11 +10,55 @@ import (
 
 	nexus "github.com/xraph/nexus"
 	"github.com/xraph/nexus/id"
+	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/store"
 	"github.com/xraph/nexus/store/storetest"
 	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/usage"
 )
+
+func TestUsageRecordsProjectLabels(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		tn := storetest.InsertTenant(t, s)
+		gw := testGateway(t, nexus.WithDatabase(s))
+		k, _, err := gw.Keys().Create(context.Background(), &key.CreateInput{TenantID: tn.ID.String(), Name: "request log"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := storetest.Record(tn.ID, "0.001")
+		r.KeyID = k.ID
+		storetest.InsertRecord(t, s, r)
+		d := testDispatcher(t, Deps{Gateway: func() *nexus.Gateway { return gw }})
+		out := mustDispatch(t, d, "usage.records", map[string]any{}, dash.KindQuery)
+		rows := out["items"].([]any)
+		if len(rows) != 1 {
+			t.Fatal("request log lost its record")
+		}
+		row := rows[0].(map[string]any)
+		if row["tenantName"] != tn.Name || row["keyPrefix"] != k.Prefix {
+			t.Fatal("request log omitted current display labels")
+		}
+	})
+}
+
+func TestUsageRecordsKeepHistoricalRowsWithoutResources(t *testing.T) {
+	gw := testGateway(t)
+	r := storetest.Record(id.NewTenantID(), "0")
+	r.KeyID = id.NewKeyID()
+	if err := gw.Usage().Record(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	d := testDispatcher(t, Deps{Gateway: func() *nexus.Gateway { return gw }})
+	out := mustDispatch(t, d, "usage.records", map[string]any{}, dash.KindQuery)
+	rows := out["items"].([]any)
+	if len(rows) != 1 {
+		t.Fatal("missing resource removed historical usage")
+	}
+	row := rows[0].(map[string]any)
+	if row["tenantName"] != nil || row["keyPrefix"] != nil {
+		t.Fatal("historical row fabricated missing labels")
+	}
+}
 
 func TestUsageQueriesKeepExactCostScopeAndPaging(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, s store.Store) {

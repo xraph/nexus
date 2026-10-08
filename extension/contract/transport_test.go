@@ -144,7 +144,7 @@ func TestTenantRenameInvalidatesKeyQueries(t *testing.T) {
 	if reply.Code != http.StatusOK || json.Unmarshal(reply.Body.Bytes(), &out) != nil {
 		t.Fatal("tenant rename failed")
 	}
-	want := []string{"tenants.list", "tenants.get", "overview.get", "keys.list", "keys.get"}
+	want := []string{"tenants.list", "tenants.get", "overview.get", "keys.list", "keys.get", "usage.records"}
 	if !reflect.DeepEqual(out.Meta.Invalidates, want) {
 		t.Fatal("tenant rename did not refresh dependent key labels")
 	}
