@@ -10,3 +10,8 @@ contributor:
 # unknown tenant is refused. No handler derives scope from principal claims.
 intents:
   - { name: settings.get, kind: query, version: 1, capability: read }
+  - { name: tenants.list, kind: query, version: 1, capability: read }
+  - { name: tenants.get, kind: query, version: 1, capability: read }
+  - { name: tenants.create, kind: command, version: 1, capability: write, invalidates: [tenants.list, overview.get] }
+  - { name: tenants.update, kind: command, version: 1, capability: write, invalidates: [tenants.list, tenants.get, overview.get] }
+  - { name: tenants.setStatus, kind: command, version: 1, capability: write, invalidates: [tenants.list, tenants.get, overview.get] }

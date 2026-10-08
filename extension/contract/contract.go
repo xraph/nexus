@@ -56,7 +56,20 @@ func query[I, O any](deps Deps, name string, fn handler[I, O]) binding {
 }
 
 func bindings(deps Deps) []binding {
-	return []binding{query(deps, "settings.get", settingsGet)}
+	return []binding{
+		query(deps, "settings.get", settingsGet),
+		query(deps, "tenants.list", tenantsList),
+		query(deps, "tenants.get", tenantsGet),
+		command(deps, "tenants.create", tenantsCreate),
+		command(deps, "tenants.update", tenantsUpdate),
+		command(deps, "tenants.setStatus", tenantsSetStatus),
+	}
+}
+
+func command[I, O any](deps Deps, name string, fn handler[I, O], opts ...dispatcher.RegisterOption) binding {
+	return binding{name: name, kind: dash.IntentKindCommand, bind: func(d *dispatcher.Dispatcher) error {
+		return dispatcher.RegisterCommand(d, ContributorName, name, 1, withGateway(deps, name, fn), opts...)
+	}}
 }
 
 // Register validates the manifest and binds every declared intent.

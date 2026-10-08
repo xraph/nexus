@@ -26,7 +26,7 @@ func mapError(err error) error {
 		return ce
 	case errors.Is(err, tenant.ErrNotFound), errors.Is(err, key.ErrNotFound):
 		return &dash.Error{Code: dash.CodeNotFound, Message: "resource not found"}
-	case errors.Is(err, tenant.ErrInUse), errors.Is(err, key.ErrDuplicate):
+	case errors.Is(err, tenant.ErrInUse), errors.Is(err, tenant.ErrDuplicate), errors.Is(err, key.ErrDuplicate):
 		return &dash.Error{Code: dash.CodeConflict, Message: "the operation conflicts with an existing resource"}
 	case errors.Is(err, tenant.ErrInvalid), errors.Is(err, key.ErrInvalid), errors.Is(err, paging.ErrInvalidCursor), errors.Is(err, usage.ErrInvalidPeriod), errors.Is(err, usage.ErrInvalidSeries):
 		return badRequest("invalid request values")
