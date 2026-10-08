@@ -64,7 +64,7 @@ func TestUsageCanBeTurnedOff(t *testing.T) {
 	}
 }
 
-func TestTurningUsageOffWarnsThatTheMoneyLimitsWillNotApply(t *testing.T) {
+func TestTurningUsageOffWarnsThatTheMonthlyBudgetWillNotApply(t *testing.T) {
 	for _, on := range []bool{false, true} {
 		var got []string
 		gw := nexus.New(nexus.WithUsageEnabled(on), nexus.WithLogger(recordLogger{&got}))
@@ -72,7 +72,7 @@ func TestTurningUsageOffWarnsThatTheMoneyLimitsWillNotApply(t *testing.T) {
 			t.Fatalf("initialize: %v", err)
 		}
 		warned := slices.ContainsFunc(got, func(m string) bool {
-			return strings.Contains(m, "daily and monthly budget limits will not apply")
+			return strings.Contains(m, "the monthly budget will not apply")
 		})
 		if warned == on {
 			t.Fatalf("usage on=%v: warned %v; want a warning only when usage is off (logged %v)", on, warned, got)
