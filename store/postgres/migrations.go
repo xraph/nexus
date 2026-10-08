@@ -206,6 +206,19 @@ DROP INDEX IF EXISTS idx_nexus_api_keys_status_expires;
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "unique_key_hash",
+			Version: "20261008000002",
+			Comment: "A key hash is unique, so two replicas creating one key cannot leave two rows",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_nexus_api_keys_hash ON nexus_api_keys (hash)`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP INDEX IF EXISTS idx_nexus_api_keys_hash`)
+				return err
+			},
+		},
 	)
 	return g
 }()

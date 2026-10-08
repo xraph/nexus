@@ -217,6 +217,9 @@ func (s *keyStore) Insert(ctx context.Context, k *key.APIKey) error {
 	m := apiKeyToModel(k)
 	_, err := s.mdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			return fmt.Errorf("nexus/mongo: insert key: %w", key.ErrDuplicate)
+		}
 		return fmt.Errorf("nexus/mongo: insert key: %w", err)
 	}
 	return nil

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/pgdriver"
 	"github.com/xraph/grove/migrate"
@@ -165,10 +166,17 @@ type keyStore struct {
 	pgdb *pgdriver.PgDB
 }
 
+// pgUniqueViolation is the SQLSTATE for a unique_violation.
+const pgUniqueViolation = "23505"
+
 func (s *keyStore) Insert(ctx context.Context, k *key.APIKey) error {
 	m := apiKeyToModel(k)
 	_, err := s.pgdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			return fmt.Errorf("nexus/postgres: insert key: %w", key.ErrDuplicate)
+		}
 		return fmt.Errorf("nexus/postgres: insert key: %w", err)
 	}
 	return nil

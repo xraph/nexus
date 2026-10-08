@@ -55,7 +55,9 @@ func (s *service) Create(ctx context.Context, input *CreateInput) (*APIKey, stri
 
 // Ensure creates the key whose raw value is rawKey, unless a key with that
 // value exists already, in any status. A revoked key stays revoked: Ensure
-// never brings one back. The error text never carries rawKey.
+// never brings one back. Two callers racing to create the same key get the
+// same row: the loser's insert is refused as a duplicate and it returns the
+// winner's. The error text never carries rawKey.
 func (s *service) Ensure(ctx context.Context, rawKey string, input *CreateInput) (*APIKey, bool, error) {
 	if !WellFormed(rawKey) {
 		return nil, false, fmt.Errorf("%w: a key is %q followed by 64 lowercase hex digits", ErrInvalid, keyPrefix)
@@ -72,7 +74,16 @@ func (s *service) Ensure(ctx context.Context, rawKey string, input *CreateInput)
 		return nil, false, err
 	}
 	if err := s.insert(ctx, k); err != nil {
-		return nil, false, err
+		if !errors.Is(err, ErrDuplicate) {
+			return nil, false, err
+		}
+		// Another caller inserted this key between our lookup and our
+		// insert. Its row is the one: report it, create nothing.
+		won, findErr := s.find(ctx, rawKey)
+		if findErr != nil {
+			return nil, false, err
+		}
+		return s.derive(won), false, nil
 	}
 	return k, true, nil
 }
@@ -135,6 +146,12 @@ func (s *service) insert(ctx context.Context, k *APIKey) error {
 
 // find returns the key whose hash matches rawKey, in any status, or
 // ErrNotFound. It touches nothing. rawKey must be well formed.
+//
+// The hash is unique in every store, but rows written before that, or by
+// two replicas racing a first insert, can share one. Then find fails closed:
+// a key that is not usable (revoked, or expired by its ExpiresAt) wins over
+// an active one, whatever order the store returns them in, so revoking a key
+// always takes effect.
 func (s *service) find(ctx context.Context, rawKey string) (*APIKey, error) {
 	candidates, err := s.store.FindByPrefix(ctx, rawKey[:prefixLen])
 	if err != nil {
@@ -142,10 +159,14 @@ func (s *service) find(ctx context.Context, rawKey string) (*APIKey, error) {
 	}
 	want := []byte(hashKey(rawKey))
 	var match *APIKey
+	now := s.now()
 	// Compare against every candidate, in constant time, and keep going
 	// after a match, so timing says nothing about which key matched.
 	for _, k := range candidates {
-		if subtle.ConstantTimeCompare([]byte(k.Hash), want) == 1 {
+		if subtle.ConstantTimeCompare([]byte(k.Hash), want) != 1 {
+			continue
+		}
+		if match == nil || (Effective(match, now) == KeyActive && Effective(k, now) != KeyActive) {
 			match = k
 		}
 	}

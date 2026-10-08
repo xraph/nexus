@@ -86,3 +86,30 @@ func TestTouchingAKeyNeverChangesItsStatus(t *testing.T) {
 		}
 	})
 }
+
+func TestAKeyHashIsUnique(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		tn := storetest.InsertTenant(t, s)
+		first := storetest.Key(tn.ID, "first")
+		if err := s.Keys().Insert(ctx, first); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+		// A different id, name and prefix, the same hash.
+		again := storetest.Key(tn.ID, "again")
+		again.Hash = first.Hash
+		if err := s.Keys().Insert(ctx, again); !errors.Is(err, key.ErrDuplicate) {
+			t.Fatalf("a second insert with the same hash = %v, want ErrDuplicate", err)
+		}
+		if _, err := s.Keys().FindByID(ctx, again.ID.String()); !errors.Is(err, key.ErrNotFound) {
+			t.Fatalf("the refused key was stored anyway: %v", err)
+		}
+		// A hash can be stored again once its key is deleted.
+		if err := s.Keys().Delete(ctx, first.ID.String()); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Keys().Insert(ctx, again); err != nil {
+			t.Fatalf("insert after the delete: %v", err)
+		}
+	})
+}

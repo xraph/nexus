@@ -154,6 +154,8 @@ type ListResult struct {
 //
 // Every key List returns carries its effective status (see Effective).
 type Store interface {
+	// Insert stores k. A key whose Hash is already stored is refused with
+	// ErrDuplicate, and nothing is written: the hash is unique in every store.
 	Insert(ctx context.Context, k *APIKey) error
 	FindByID(ctx context.Context, id string) (*APIKey, error)
 	// FindByPrefix returns every key whose prefix is prefix, in any status.

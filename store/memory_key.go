@@ -20,6 +20,11 @@ type memoryKeyStore struct {
 func (s *memoryKeyStore) Insert(_ context.Context, k *key.APIKey) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, have := range s.data {
+		if have.Hash == k.Hash {
+			return key.ErrDuplicate
+		}
+	}
 	s.data[k.ID.String()] = cloneKey(k)
 	return nil
 }

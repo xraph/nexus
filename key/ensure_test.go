@@ -2,6 +2,8 @@ package key_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -155,4 +157,9 @@ func TestWellFormed(t *testing.T) {
 			t.Fatalf("%q must not be well formed", bad)
 		}
 	}
+}
+
+func hashOf(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
 }

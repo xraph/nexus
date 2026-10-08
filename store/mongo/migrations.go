@@ -136,6 +136,28 @@ func init() {
 				return nil
 			},
 		},
+		&migrate.Migration{
+			Name:    "unique_key_hash",
+			Version: "20261008000002",
+			Comment: "A key hash is unique, so two replicas creating one key cannot leave two documents",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+				return mexec.CreateIndexes(ctx, colKeys, keyHashIndex())
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+				if err := mexec.DB().Collection(colKeys).Indexes().DropOne(ctx, "hash_1"); err != nil {
+					return fmt.Errorf("drop index hash_1 on %s: %w", colKeys, err)
+				}
+				return nil
+			},
+		},
 	)
 }
 
@@ -153,7 +175,7 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			{Keys: bson.D{{Key: "prefix", Value: 1}}},
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}}},
 			{Keys: bson.D{{Key: "prefix", Value: 1}, {Key: "status", Value: 1}}},
-		}, keyStatusIndexes()...),
+		}, append(keyStatusIndexes(), keyHashIndex()...)...),
 		colUsage: append([]mongo.IndexModel{
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "provider", Value: 1}}},
@@ -179,5 +201,13 @@ func usageOperatorIndexes() []mongo.IndexModel {
 	return []mongo.IndexModel{
 		{Keys: bson.D{{Key: "created_at", Value: -1}}},
 		{Keys: bson.D{{Key: "key_id", Value: 1}}},
+	}
+}
+
+// keyHashIndex makes a key hash unique. Added by the 20261008000002
+// migration, and kept in migrationIndexes() for Store.Migrate.
+func keyHashIndex() []mongo.IndexModel {
+	return []mongo.IndexModel{
+		{Keys: bson.D{{Key: "hash", Value: 1}}, Options: options.Index().SetUnique(true)},
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/xraph/grove"
@@ -66,6 +67,13 @@ func (s *Store) Migrate() error {
 
 // Close closes the database connection.
 func (s *Store) Close() error { return s.db.Close() }
+
+// isUniqueViolation reports whether err is SQLite refusing a duplicate on a
+// UNIQUE constraint or index. The driver exposes no typed code here, so it
+// matches the message SQLite documents.
+func isUniqueViolation(err error) bool {
+	return strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
 
 // isNoRows returns true if the error is sql.ErrNoRows.
 func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
@@ -180,6 +188,9 @@ func (s *keyStore) Insert(ctx context.Context, k *key.APIKey) error {
 	m := apiKeyToModel(k)
 	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("nexus/sqlite: insert key: %w", key.ErrDuplicate)
+		}
 		return fmt.Errorf("nexus/sqlite: insert key: %w", err)
 	}
 	return nil
