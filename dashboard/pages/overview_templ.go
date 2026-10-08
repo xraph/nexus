@@ -11,6 +11,7 @@ import (
 	"github.com/a-h/templ"
 	templruntime "github.com/a-h/templ/runtime"
 	"github.com/xraph/forgeui/components/card"
+
 	"github.com/xraph/nexus/dashboard/components"
 	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/usage"

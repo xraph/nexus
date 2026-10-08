@@ -8,6 +8,7 @@ package widgets
 import (
 	"github.com/a-h/templ"
 	templruntime "github.com/a-h/templ/runtime"
+
 	"github.com/xraph/nexus/dashboard/components"
 	"github.com/xraph/nexus/money"
 )

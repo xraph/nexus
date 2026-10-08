@@ -15,6 +15,7 @@ import (
 	"github.com/xraph/forgeui/components/input"
 	"github.com/xraph/forgeui/components/separator"
 	"github.com/xraph/forgeui/icons"
+
 	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/tenant"
 )
