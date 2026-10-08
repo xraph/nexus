@@ -15,3 +15,10 @@ intents:
   - { name: tenants.create, kind: command, version: 1, capability: write, invalidates: [tenants.list, overview.get] }
   - { name: tenants.update, kind: command, version: 1, capability: write, invalidates: [tenants.list, tenants.get, overview.get] }
   - { name: tenants.setStatus, kind: command, version: 1, capability: write, invalidates: [tenants.list, tenants.get, overview.get] }
+  - { name: usage.summary, kind: query, version: 1, capability: read }
+  - { name: usage.series, kind: query, version: 1, capability: read }
+  - { name: usage.records, kind: query, version: 1, capability: read }
+  - { name: overview.get, kind: query, version: 1, capability: read }
+  - { name: models.list, kind: query, version: 1, capability: read }
+  - { name: providers.list, kind: query, version: 1, capability: read }
+  - { name: gateway.get, kind: query, version: 1, capability: read }
