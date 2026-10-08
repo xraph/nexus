@@ -153,6 +153,16 @@ func WithHealthTracker(h provider.HealthTracker) Option {
 	return func(gw *Gateway) { gw.healthTrack = h }
 }
 
+// WithBootstrapAdminKey sets the raw value of the first admin key. After
+// Initialize and Store().Migrate(), EnsureBootstrapAdminKey stores it under
+// the "operator" tenant with the admin scope, so the admin API is reachable
+// without writing Go. The value must be "nxs_" and 64 lowercase hex digits,
+// for example "nxs_" + the output of `openssl rand -hex 32`. It is a secret:
+// keep it out of source control.
+func WithBootstrapAdminKey(raw string) Option {
+	return func(gw *Gateway) { gw.bootstrapAdminKey = raw }
+}
+
 // WithTimeout sets the default request timeout.
 func WithTimeout(d time.Duration) Option {
 	return func(gw *Gateway) { gw.config.DefaultTimeout = d }

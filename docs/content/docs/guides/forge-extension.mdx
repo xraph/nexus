@@ -51,6 +51,7 @@ extensions:
     grove_database: ""
     disable_routes: false
     disable_migrate: false
+    # bootstrap_admin_key: "nxs_..."   # or set NEXUS_BOOTSTRAP_ADMIN_KEY
 ```
 
 ### Configuration reference
@@ -68,6 +69,7 @@ extensions:
 | `GroveDatabase` | `grove_database` | `string` | `""` | Name of grove.DB to resolve from DI |
 | `DisableRoutes` | `disable_routes` | `bool` | `false` | Disable automatic route registration |
 | `DisableMigrate` | `disable_migrate` | `bool` | `false` | Disable automatic store migration |
+| `BootstrapAdminKey` | `bootstrap_admin_key` | `string` | `""` | The raw value of the first admin key: `nxs_` and 64 lowercase hex digits. When empty, the `NEXUS_BOOTSTRAP_ADMIN_KEY` environment variable is used. |
 
 ### Merge behavior
 
@@ -76,11 +78,17 @@ File-based and programmatic configuration are merged with these rules:
 | Category | Precedence |
 |----------|------------|
 | Boolean flags (`disable_routes`, `disable_migrate`, `enable_cache`) | Programmatic `true` wins |
-| String fields (`base_path`, `log_level`, `grove_database`) | YAML takes precedence; programmatic fills gaps |
+| String fields (`base_path`, `log_level`, `grove_database`, `bootstrap_admin_key`) | YAML takes precedence; programmatic fills gaps |
 | Duration/int fields (`default_timeout`, `default_max_retries`, `global_rate_limit`) | YAML takes precedence; programmatic fills gaps |
 | Pointer fields (`enable_usage`, `require_api_key`) | YAML takes precedence; programmatic fills gaps |
 
 Any remaining zero-valued fields are filled from `DefaultConfig()`.
+
+### The first admin key
+
+The admin API always needs a key with the `admin` scope, and no route can make the first one. Set `bootstrap_admin_key`, or the `NEXUS_BOOTSTRAP_ADMIN_KEY` environment variable when the config leaves it empty, to a value you made (`nxs_` followed by the output of `openssl rand -hex 32`). On start, after the store migrates, the extension stores it as an `admin` key under a tenant with the slug `operator`. It does this once: a later start finds the key by its hash and changes nothing. A revoked bootstrap key stays revoked and is logged as a warning with its id. If you set `disable_migrate`, the key is still created, so migrate the store yourself first.
+
+The value is a secret. The extension never logs it or puts it in an error, but a YAML file under source control keeps it forever, so prefer the environment variable. See [Your first admin key](/docs/api-reference/http-api#your-first-admin-key).
 
 ### Requiring file config
 

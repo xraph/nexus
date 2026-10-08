@@ -77,6 +77,15 @@ type Service interface {
 	// Create generates a new API key. Returns the full key (only time it's visible).
 	Create(ctx context.Context, input *CreateInput) (*APIKey, string, error)
 
+	// Ensure makes sure the key whose raw value is rawKey exists, so an
+	// operator can supply the first admin key from config. A key with that
+	// value, found by prefix and a constant-time hash compare, is returned
+	// with created false, in any status: a revoked key stays revoked.
+	// Otherwise Ensure checks in as Create does (tenant exists, scopes known,
+	// expiry), stores the key and reports it. A rawKey that is not "nxs_"
+	// and 64 lowercase hex digits gives ErrInvalid. No error carries rawKey.
+	Ensure(ctx context.Context, rawKey string, in *CreateInput) (k *APIKey, created bool, err error)
+
 	// Validate checks a raw API key and returns the associated key record.
 	Validate(ctx context.Context, rawKey string) (*APIKey, error)
 

@@ -62,6 +62,10 @@ type Gateway struct {
 	usage     usage.Service
 	model     model.Service
 
+	// bootstrapAdminKey is the raw value of the first admin key, from
+	// WithBootstrapAdminKey. It is a secret: nothing logs it or returns it.
+	bootstrapAdminKey string
+
 	// routerStrategy is the name of the routing strategy in use.
 	routerStrategy string
 
@@ -331,6 +335,81 @@ func (gw *Gateway) Tenants() tenant.Service { return gw.tenant }
 
 // Keys returns the API key service.
 func (gw *Gateway) Keys() key.Service { return gw.key }
+
+// The tenant that holds the bootstrap admin key, and the key's name.
+const (
+	bootstrapTenantSlug = "operator"
+	bootstrapTenantName = "Operator"
+	bootstrapKeyName    = "bootstrap admin"
+)
+
+// EnsureBootstrapAdminKey makes sure the key set with WithBootstrapAdminKey
+// exists, so an operator can reach the admin API without writing Go. It does
+// nothing when no key was set. Otherwise it finds or creates the active
+// tenant with slug "operator", then stores the key there with the admin
+// scope. Running it again changes nothing.
+//
+// A key revoked since the last run stays revoked and is reported with a
+// warning that names its id, so revoking the bootstrap key retires it. An
+// "operator" tenant that is not active is an error. The raw key never
+// appears in an error or a log line.
+//
+// Call it after the gateway is initialized and the store is migrated:
+// Store().Migrate() must have run, or the lookups fail. The Forge extension
+// does this in Start.
+func (gw *Gateway) EnsureBootstrapAdminKey(ctx context.Context) error {
+	if gw.bootstrapAdminKey == "" {
+		return nil
+	}
+	if gw.tenant == nil || gw.key == nil {
+		return errors.New("nexus: ensure the bootstrap admin key: the gateway is not initialized")
+	}
+	tn, err := gw.operatorTenant(ctx)
+	if err != nil {
+		return err
+	}
+	if tn.Status != tenant.StatusActive {
+		return fmt.Errorf("nexus: the %q tenant is %s: the bootstrap admin key needs it active", bootstrapTenantSlug, tn.Status)
+	}
+	k, created, err := gw.key.Ensure(ctx, gw.bootstrapAdminKey, &key.CreateInput{
+		TenantID: tn.ID.String(),
+		Name:     bootstrapKeyName,
+		Scopes:   []string{key.ScopeAdmin},
+	})
+	if err != nil {
+		return fmt.Errorf("nexus: ensure the bootstrap admin key: %w", err)
+	}
+	switch {
+	case created:
+		gw.logger.Info("nexus: bootstrap admin key created", "key_id", k.ID.String(), "tenant", bootstrapTenantSlug)
+	case k.Status == key.KeyRevoked:
+		gw.logger.Warn("nexus: the bootstrap admin key is revoked and stays revoked: remove it from the config, or set a new one",
+			"key_id", k.ID.String())
+	}
+	return nil
+}
+
+// operatorTenant returns the tenant with slug "operator", creating it when
+// it does not exist.
+func (gw *Gateway) operatorTenant(ctx context.Context) (*tenant.Tenant, error) {
+	tn, err := gw.tenant.GetBySlug(ctx, bootstrapTenantSlug)
+	if err == nil {
+		return tn, nil
+	}
+	if !errors.Is(err, tenant.ErrNotFound) {
+		return nil, fmt.Errorf("nexus: find the %q tenant: %w", bootstrapTenantSlug, err)
+	}
+	tn, err = gw.tenant.Create(ctx, &tenant.CreateInput{Name: bootstrapTenantName, Slug: bootstrapTenantSlug})
+	if err != nil {
+		// Another instance starting at the same time may have created it
+		// first; the unique slug then refuses ours.
+		if found, getErr := gw.tenant.GetBySlug(ctx, bootstrapTenantSlug); getErr == nil {
+			return found, nil
+		}
+		return nil, fmt.Errorf("nexus: create the %q tenant: %w", bootstrapTenantSlug, err)
+	}
+	return tn, nil
+}
 
 // Usage returns the usage service.
 func (gw *Gateway) Usage() usage.Service { return gw.usage }

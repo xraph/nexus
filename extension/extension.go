@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/xraph/forge"
 	"github.com/xraph/grove"
@@ -23,6 +24,10 @@ import (
 	pgstore "github.com/xraph/nexus/store/postgres"
 	sqlitestore "github.com/xraph/nexus/store/sqlite"
 )
+
+// BootstrapAdminKeyEnv is the environment variable that supplies the
+// bootstrap admin key when the config sets none.
+const BootstrapAdminKeyEnv = "NEXUS_BOOTSTRAP_ADMIN_KEY"
 
 // ExtensionName is the name registered with Forge.
 const ExtensionName = "nexus"
@@ -126,6 +131,12 @@ func (e *Extension) Start(ctx context.Context) error {
 		forge.F("base_path", e.config.BasePath),
 	)
 
+	// The admin API always needs an admin key. This runs after the migration
+	// (the operator migrated already when DisableMigrate is set).
+	if err := gw.EnsureBootstrapAdminKey(ctx); err != nil {
+		return fmt.Errorf("nexus: bootstrap admin key: %w", err)
+	}
+
 	e.MarkStarted()
 	return nil
 }
@@ -181,6 +192,9 @@ func (e *Extension) applyConfigToGatewayOpts() {
 	if e.config.EnableCache {
 		opts = append(opts, nexus.WithCacheEnabled(true))
 	}
+	if e.config.BootstrapAdminKey != "" {
+		opts = append(opts, nexus.WithBootstrapAdminKey(e.config.BootstrapAdminKey))
+	}
 	if e.config.LogLevel != "" {
 		lvl := e.config.LogLevel
 		opts = append(opts,
@@ -211,6 +225,8 @@ func (e *Extension) loadConfiguration() error {
 		e.config = e.mergeConfigurations(fileConfig, programmaticConfig)
 	}
 
+	e.resolveBootstrapAdminKey()
+
 	// Enable grove resolution if YAML config specifies a grove database.
 	if e.config.GroveDatabase != "" {
 		e.useGrove = true
@@ -224,6 +240,14 @@ func (e *Extension) loadConfiguration() error {
 	)
 
 	return nil
+}
+
+// resolveBootstrapAdminKey fills an empty bootstrap_admin_key from the
+// NEXUS_BOOTSTRAP_ADMIN_KEY environment variable. A value in the config wins.
+func (e *Extension) resolveBootstrapAdminKey() {
+	if e.config.BootstrapAdminKey == "" {
+		e.config.BootstrapAdminKey = os.Getenv(BootstrapAdminKeyEnv)
+	}
 }
 
 // tryLoadFromConfigFile attempts to load config from YAML files.
@@ -309,6 +333,9 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 	}
 	if yamlConfig.GroveDatabase == "" && programmaticConfig.GroveDatabase != "" {
 		yamlConfig.GroveDatabase = programmaticConfig.GroveDatabase
+	}
+	if yamlConfig.BootstrapAdminKey == "" && programmaticConfig.BootstrapAdminKey != "" {
+		yamlConfig.BootstrapAdminKey = programmaticConfig.BootstrapAdminKey
 	}
 
 	// Duration/int fields: YAML takes precedence, programmatic fills gaps.

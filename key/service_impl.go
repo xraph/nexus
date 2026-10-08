@@ -38,31 +38,68 @@ func (s *service) derive(k *APIKey) *APIKey {
 }
 
 func (s *service) Create(ctx context.Context, input *CreateInput) (*APIKey, string, error) {
-	if input == nil || input.Name == "" {
-		return nil, "", fmt.Errorf("%w: name is required", ErrInvalid)
-	}
-	tid, err := id.ParseTenantID(input.TenantID)
-	if err != nil {
-		return nil, "", fmt.Errorf("%w: tenant id: %w", ErrInvalid, err)
-	}
-	if input.ExpiresAt != nil && !input.ExpiresAt.After(s.now()) {
-		return nil, "", fmt.Errorf("%w: expires_at is in the past", ErrInvalid)
-	}
-	for _, sc := range input.Scopes {
-		if !KnownScope(sc) {
-			return nil, "", fmt.Errorf("%w: unknown scope %q (want completions, embeddings, models or admin)", ErrInvalid, sc)
-		}
-	}
-	if s.tenants != nil {
-		if _, err := s.tenants.FindByID(ctx, tid.String()); err != nil {
-			return nil, "", fmt.Errorf("nexus: key for tenant %s: %w", tid, err)
-		}
-	}
 	rawBytes := make([]byte, 32)
 	if _, err := rand.Read(rawBytes); err != nil {
 		return nil, "", fmt.Errorf("nexus: generate key: %w", err)
 	}
-	rawKey := "nxs_" + hex.EncodeToString(rawBytes)
+	rawKey := keyPrefix + hex.EncodeToString(rawBytes)
+	k, err := s.build(ctx, input, rawKey)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := s.insert(ctx, k); err != nil {
+		return nil, "", err
+	}
+	return k, rawKey, nil
+}
+
+// Ensure creates the key whose raw value is rawKey, unless a key with that
+// value exists already, in any status. A revoked key stays revoked: Ensure
+// never brings one back. The error text never carries rawKey.
+func (s *service) Ensure(ctx context.Context, rawKey string, input *CreateInput) (*APIKey, bool, error) {
+	if !WellFormed(rawKey) {
+		return nil, false, fmt.Errorf("%w: a key is %q followed by 64 lowercase hex digits", ErrInvalid, keyPrefix)
+	}
+	existing, err := s.find(ctx, rawKey)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, false, fmt.Errorf("nexus: look up key: %w", err)
+	}
+	if existing != nil {
+		return s.derive(existing), false, nil
+	}
+	k, err := s.build(ctx, input, rawKey)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := s.insert(ctx, k); err != nil {
+		return nil, false, err
+	}
+	return k, true, nil
+}
+
+// build checks input and returns the record for a new key whose raw value is
+// rawKey. It stores nothing.
+func (s *service) build(ctx context.Context, input *CreateInput, rawKey string) (*APIKey, error) {
+	if input == nil || input.Name == "" {
+		return nil, fmt.Errorf("%w: name is required", ErrInvalid)
+	}
+	tid, err := id.ParseTenantID(input.TenantID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: tenant id: %w", ErrInvalid, err)
+	}
+	if input.ExpiresAt != nil && !input.ExpiresAt.After(s.now()) {
+		return nil, fmt.Errorf("%w: expires_at is in the past", ErrInvalid)
+	}
+	for _, sc := range input.Scopes {
+		if !KnownScope(sc) {
+			return nil, fmt.Errorf("%w: unknown scope %q (want completions, embeddings, models or admin)", ErrInvalid, sc)
+		}
+	}
+	if s.tenants != nil {
+		if _, err := s.tenants.FindByID(ctx, tid.String()); err != nil {
+			return nil, fmt.Errorf("nexus: key for tenant %s: %w", tid, err)
+		}
+	}
 	scopes := input.Scopes
 	if len(scopes) == 0 {
 		scopes = []string{ScopeCompletions, ScopeEmbeddings, ScopeModels}
@@ -71,7 +108,7 @@ func (s *service) Create(ctx context.Context, input *CreateInput) (*APIKey, stri
 		ID:        id.NewKeyID(),
 		TenantID:  tid,
 		Name:      input.Name,
-		Prefix:    rawKey[:12],
+		Prefix:    rawKey[:prefixLen],
 		Hash:      hashKey(rawKey),
 		Scopes:    scopes,
 		Status:    KeyActive,
@@ -82,23 +119,24 @@ func (s *service) Create(ctx context.Context, input *CreateInput) (*APIKey, stri
 	if k.Metadata == nil {
 		k.Metadata = map[string]string{}
 	}
+	return k, nil
+}
+
+// insert stores a built key and reports it.
+func (s *service) insert(ctx context.Context, k *APIKey) error {
 	if err := s.store.Insert(ctx, k); err != nil {
-		return nil, "", err
+		return err
 	}
 	if s.events != nil {
 		s.events.EmitKeyCreated(ctx, k.ID, k.TenantID)
 	}
-	return k, rawKey, nil
+	return nil
 }
 
-func (s *service) Validate(ctx context.Context, rawKey string) (*APIKey, error) {
-	// A value Create could not have made never reaches the store: a store
-	// may reject odd bytes (Postgres refuses invalid UTF-8) and the caller
-	// would see an outage instead of a wrong key.
-	if !wellFormed(rawKey) {
-		return nil, ErrNotFound
-	}
-	candidates, err := s.store.FindByPrefix(ctx, rawKey[:12])
+// find returns the key whose hash matches rawKey, in any status, or
+// ErrNotFound. It touches nothing. rawKey must be well formed.
+func (s *service) find(ctx context.Context, rawKey string) (*APIKey, error) {
+	candidates, err := s.store.FindByPrefix(ctx, rawKey[:prefixLen])
 	if err != nil {
 		return nil, err
 	}
@@ -113,6 +151,20 @@ func (s *service) Validate(ctx context.Context, rawKey string) (*APIKey, error) 
 	}
 	if match == nil {
 		return nil, ErrNotFound
+	}
+	return match, nil
+}
+
+func (s *service) Validate(ctx context.Context, rawKey string) (*APIKey, error) {
+	// A value Create could not have made never reaches the store: a store
+	// may reject odd bytes (Postgres refuses invalid UTF-8) and the caller
+	// would see an outage instead of a wrong key.
+	if !WellFormed(rawKey) {
+		return nil, ErrNotFound
+	}
+	match, err := s.find(ctx, rawKey)
+	if err != nil {
+		return nil, err
 	}
 	s.derive(match)
 	switch match.Status {
@@ -225,14 +277,20 @@ func (s *service) Rotate(ctx context.Context, oldKeyID string) (*APIKey, string,
 	return n, raw, nil
 }
 
-// wellFormed reports whether raw has the shape Create gives a key: "nxs_"
+// The shape of a raw key: "nxs_" and 64 lowercase hex digits. The stored
+// prefix is the first prefixLen characters.
+const (
+	keyPrefix = "nxs_"
+	prefixLen = 12
+)
+
+// WellFormed reports whether raw has the shape Create gives a key: "nxs_"
 // and 64 lowercase hex digits.
-func wellFormed(raw string) bool {
-	const prefix = "nxs_"
-	if len(raw) != len(prefix)+64 || raw[:len(prefix)] != prefix {
+func WellFormed(raw string) bool {
+	if len(raw) != len(keyPrefix)+64 || raw[:len(keyPrefix)] != keyPrefix {
 		return false
 	}
-	for i := len(prefix); i < len(raw); i++ {
+	for i := len(keyPrefix); i < len(raw); i++ {
 		c := raw[i]
 		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return false

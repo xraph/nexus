@@ -24,7 +24,23 @@ A WebSocket client to `/v1/realtime` authenticates with the same headers on the 
 
 ### Your first admin key
 
-With keys required, no HTTP route can make the first admin key, because making one takes an admin key. Create it in Go, once, from the process that owns the gateway:
+With keys required, no HTTP route can make the first admin key, because making one takes an admin key. You do not need Go to get past that. Make a key value yourself and give it to the gateway:
+
+```bash
+export NEXUS_BOOTSTRAP_ADMIN_KEY="nxs_$(openssl rand -hex 32)"
+```
+
+A key is `nxs_` followed by 64 lowercase hex digits, and the command above makes one. When the gateway starts, after it migrates the store, it stores that value as an `admin` key named `bootstrap admin`, under a tenant with the slug `operator` (it creates the tenant if it is missing). Then use it like any key:
+
+```bash
+curl -H "x-api-key: $NEXUS_BOOTSTRAP_ADMIN_KEY" http://localhost:8080/admin/providers
+```
+
+Starting again changes nothing, because the key is found by its hash. If you revoke the bootstrap key, it stays revoked and the gateway logs a warning with its id on each start. Take the value out of your config, or set a new one to get a fresh key. If the `operator` tenant is disabled or suspended, start fails with an error that names it.
+
+Inside Forge, set `bootstrap_admin_key` under `extensions.nexus`, or leave it empty and use the environment variable (see the [Forge extension guide](/docs/guides/forge-extension)). Without the extension, pass `nexus.WithBootstrapAdminKey(raw)` and call `gw.EnsureBootstrapAdminKey(ctx)` after `Initialize` and `Store().Migrate()`.
+
+If you would rather make the key in Go, once, from the process that owns the gateway, this works too:
 
 ```go
 t, err := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Ops", Slug: "ops"})
@@ -42,7 +58,7 @@ if err != nil {
 // raw is shown once. Only its hash is stored, so hand it to its owner now.
 ```
 
-The raw key comes back this once. Only its hash is stored, so if you lose it you rotate or revoke the key and make another. You can also create it from the dashboard. An `admin` key administers every tenant, whichever tenant it belongs to, so keep it out of application code and logs.
+`Create` returns the raw key this once. Only its hash is stored, so if you lose it you rotate or revoke the key and make another. You can also create keys from the dashboard once you have an admin key. An `admin` key administers every tenant, whichever tenant it belongs to, so keep it out of application code, source control and logs.
 
 ## OpenAI-Compatible Endpoints
 
