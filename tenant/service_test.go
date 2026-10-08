@@ -2,6 +2,7 @@ package tenant_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/xraph/nexus/id"
@@ -59,5 +60,53 @@ func TestTenantServiceWorksWithoutEvents(t *testing.T) {
 	}
 	if err := svc.SetStatus(ctx, tn.ID.String(), tenant.StatusDisabled); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTheModelListsAreTrimmedAndChecked(t *testing.T) {
+	ctx := context.Background()
+	svc := tenant.NewService(store.NewMemory().Tenants())
+
+	tn, err := svc.Create(ctx, &tenant.CreateInput{Name: "Acme", Slug: "acme", Config: &tenant.Config{
+		AllowedModels: []string{" gpt-4o ", "o1"},
+		BlockedModels: []string{"  gpt-3.5-turbo"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tn.Config.AllowedModels; len(got) != 2 || got[0] != "gpt-4o" || got[1] != "o1" {
+		t.Fatalf("allowed = %q; want the names trimmed", got)
+	}
+	if got := tn.Config.BlockedModels; len(got) != 1 || got[0] != "gpt-3.5-turbo" {
+		t.Fatalf("blocked = %q; want the name trimmed", got)
+	}
+
+	updated, err := svc.Update(ctx, tn.ID.String(), &tenant.UpdateInput{Config: &tenant.Config{AllowedModels: []string{" o1 "}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := updated.Config.AllowedModels; len(got) != 1 || got[0] != "o1" {
+		t.Fatalf("updated allowed = %q; want the name trimmed", got)
+	}
+
+	bad := map[string]*tenant.Config{
+		"an empty allowed name":   {AllowedModels: []string{"gpt-4o", ""}},
+		"a blank blocked name":    {BlockedModels: []string{"   "}},
+		"a name in both lists":    {AllowedModels: []string{"gpt-4o"}, BlockedModels: []string{"gpt-4o"}},
+		"both lists after a trim": {AllowedModels: []string{" gpt-4o"}, BlockedModels: []string{"gpt-4o "}},
+	}
+	for name, cfg := range bad {
+		_, err = svc.Create(ctx, &tenant.CreateInput{Name: "Bad", Slug: "bad", Config: cfg})
+		if !errors.Is(err, tenant.ErrInvalid) {
+			t.Fatalf("create with %s = %v; want ErrInvalid", name, err)
+		}
+		_, err = svc.Update(ctx, tn.ID.String(), &tenant.UpdateInput{Config: cfg})
+		if !errors.Is(err, tenant.ErrInvalid) {
+			t.Fatalf("update with %s = %v; want ErrInvalid", name, err)
+		}
+	}
+	kept, err := svc.Get(ctx, tn.ID.String())
+	if err != nil || len(kept.Config.AllowedModels) != 1 || kept.Config.AllowedModels[0] != "o1" {
+		t.Fatalf("after refused updates: %+v, %v; want the config unchanged", kept, err)
 	}
 }

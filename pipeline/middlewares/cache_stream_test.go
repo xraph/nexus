@@ -14,6 +14,7 @@ import (
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/pipeline/middlewares"
 	"github.com/xraph/nexus/provider"
+	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/testutil"
 )
 
@@ -308,5 +309,46 @@ func TestReplayMode_PacedSleepsBetweenFrames(t *testing.T) {
 	elapsed := time.Since(start)
 	if elapsed < 40*time.Millisecond {
 		t.Fatalf("paced replay too fast: %v", elapsed)
+	}
+}
+
+func TestCacheMiddleware_TenantCacheSwitch(t *testing.T) {
+	t.Parallel()
+
+	newReq := func() *pipeline.Request {
+		return &pipeline.Request{
+			Completion: &provider.CompletionRequest{Model: "m", Messages: []provider.Message{{Role: "user", Content: "hi"}}},
+			Type:       pipeline.RequestCompletion,
+			State:      map[string]any{},
+		}
+	}
+	run := func(t *testing.T, cacheEnabled *bool) (upstream int, secondHit bool) {
+		t.Helper()
+		mw := middlewares.NewCache(cache.NewService(stores.NewMemory()))
+		ctx := middlewares.WithTenantForTest(context.Background(), &tenant.Tenant{Config: tenant.Config{CacheEnabled: cacheEnabled}})
+		next := func(context.Context) (*pipeline.Response, error) {
+			upstream++
+			return &pipeline.Response{Completion: &provider.CompletionResponse{Model: "m"}}, nil
+		}
+		for i := 0; i < 2; i++ {
+			req := newReq()
+			if _, err := mw.Process(ctx, req, next); err != nil {
+				t.Fatal(err)
+			}
+			secondHit = req.State[pipeline.StateCacheHit] == true
+		}
+		return upstream, secondHit
+	}
+
+	off := false
+	if upstream, hit := run(t, &off); upstream != 2 || hit {
+		t.Fatalf("cache off: upstream calls %d, second hit %v; want both requests to reach next and no hit", upstream, hit)
+	}
+	if upstream, hit := run(t, nil); upstream != 1 || !hit {
+		t.Fatalf("cache unset: upstream calls %d, second hit %v; want the second request served from the cache", upstream, hit)
+	}
+	on := true
+	if upstream, hit := run(t, &on); upstream != 1 || !hit {
+		t.Fatalf("cache on: upstream calls %d, second hit %v; want the second request served from the cache", upstream, hit)
 	}
 }

@@ -270,3 +270,50 @@ func TestAKeyIDWithoutATenantIsRefused(t *testing.T) {
 		t.Fatalf("refusal %v; want it recorded unattributed, since its key names no tenant", err)
 	}
 }
+
+// modelSeenByNext runs the access stage for a tenant whose default model is
+// def and returns the model the next stage saw.
+func modelSeenByNext(t *testing.T, def string, req *pipeline.Request) string {
+	t.Helper()
+	tn := &tenant.Tenant{ID: id.NewTenantID(), Status: tenant.StatusActive, Config: tenant.Config{DefaultModel: def}}
+	mw := middlewares.NewAccess(stubTenants{t: tn}, stubKeys{})
+	var seen string
+	_, err := mw.Process(pipeline.WithTenantID(context.Background(), tn.ID.String()), req, func(context.Context) (*pipeline.Response, error) {
+		switch {
+		case req.Completion != nil:
+			seen = req.Completion.Model
+		case req.Embedding != nil:
+			seen = req.Embedding.Model
+		}
+		return &pipeline.Response{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return seen
+}
+
+func TestTheTenantsDefaultModelFillsAnEmptyModel(t *testing.T) {
+	req := &pipeline.Request{Type: pipeline.RequestCompletion, Completion: &provider.CompletionRequest{}, State: map[string]any{}}
+	if got := modelSeenByNext(t, "gpt-4o", req); got != "gpt-4o" {
+		t.Fatalf("model = %q; want the tenant's default", got)
+	}
+	emb := &pipeline.Request{Type: pipeline.RequestEmbedding, Embedding: &provider.EmbeddingRequest{}, State: map[string]any{}}
+	if got := modelSeenByNext(t, "text-embedding-3-small", emb); got != "text-embedding-3-small" {
+		t.Fatalf("embedding model = %q; want the tenant's default", got)
+	}
+}
+
+func TestARequestThatNamesAModelKeepsIt(t *testing.T) {
+	req := &pipeline.Request{Type: pipeline.RequestCompletion, Completion: &provider.CompletionRequest{Model: "o1"}, State: map[string]any{}}
+	if got := modelSeenByNext(t, "gpt-4o", req); got != "o1" {
+		t.Fatalf("model = %q; want the requested o1", got)
+	}
+}
+
+func TestATenantWithNoDefaultModelLeavesAnEmptyModelEmpty(t *testing.T) {
+	req := &pipeline.Request{Type: pipeline.RequestCompletion, Completion: &provider.CompletionRequest{}, State: map[string]any{}}
+	if got := modelSeenByNext(t, "", req); got != "" {
+		t.Fatalf("model = %q; want it left empty", got)
+	}
+}

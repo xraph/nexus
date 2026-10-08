@@ -337,3 +337,25 @@ func TestAnInProcessKeyIDWithoutATenantIsRefused(t *testing.T) {
 		t.Fatalf("key id with no tenant = %v; want invalid_request", err)
 	}
 }
+
+func TestABlockedModelIsRefusedAndRecorded(t *testing.T) {
+	s := store.NewMemory()
+	gw, tn, k := enforced(t, s, tenant.Quota{})
+	if _, err := gw.Tenants().Update(context.Background(), tn.ID.String(), &tenant.UpdateInput{
+		Config: &tenant.Config{BlockedModels: []string{"gpt-4o"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := complete(gw, tn, k)
+	if status, code := pipeline.HTTPStatus(err); status != 403 || code != pipeline.CodeForbidden {
+		t.Fatalf("blocked model = %v (status %d, code %q); want 403 forbidden", err, status, code)
+	}
+	recs := records(t, gw, s)
+	if len(recs) != 1 {
+		t.Fatalf("records = %+v; want exactly one", recs)
+	}
+	r := recs[0]
+	if r.Outcome != usage.OutcomeRefused || r.RefusalCode != pipeline.CodeForbidden || r.TenantID != tn.ID || r.CostUSD == nil || !r.CostUSD.IsZero() {
+		t.Fatalf("record = outcome %s code %q tenant %s cost %v; want a $0 forbidden refusal charged to the tenant", r.Outcome, r.RefusalCode, r.TenantID, r.CostUSD)
+	}
+}

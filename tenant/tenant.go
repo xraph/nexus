@@ -47,13 +47,27 @@ type Quota struct {
 
 // Config holds per-tenant overrides.
 type Config struct {
-	AllowedModels   []string          `json:"allowed_models,omitempty"`
-	BlockedModels   []string          `json:"blocked_models,omitempty"`
-	DefaultModel    string            `json:"default_model,omitempty"`
-	RoutingStrategy string            `json:"routing_strategy,omitempty"`
-	GuardrailPolicy string            `json:"guardrail_policy,omitempty"`
-	CacheEnabled    *bool             `json:"cache_enabled,omitempty"`
-	Metadata        map[string]string `json:"metadata,omitempty"`
+	// AllowedModels, when not empty, limits the tenant to these models. A
+	// request is admitted when the model it asked for, or the model an
+	// alias resolved it to, is listed. Names are case-sensitive and match
+	// exactly; surrounding spaces are trimmed when the tenant is saved.
+	AllowedModels []string `json:"allowed_models,omitempty"`
+	// BlockedModels refuses a request when the model it asked for, or the
+	// model an alias resolved it to, is listed. Blocks win over allows.
+	BlockedModels []string `json:"blocked_models,omitempty"`
+	// DefaultModel is the model a request gets when it names none. It is
+	// filled before alias resolution, so it may be an alias.
+	DefaultModel string `json:"default_model,omitempty"`
+	// RoutingStrategy is stored for the dashboard; not enforced by the
+	// gateway yet.
+	RoutingStrategy string `json:"routing_strategy,omitempty"`
+	// GuardrailPolicy is stored for the dashboard; not enforced by the
+	// gateway yet.
+	GuardrailPolicy string `json:"guardrail_policy,omitempty"`
+	// CacheEnabled false turns the response cache off for this tenant, for
+	// reading and for writing. Nil follows the gateway setting.
+	CacheEnabled *bool             `json:"cache_enabled,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
 // CreateInput is the input for creating a tenant.

@@ -110,5 +110,15 @@ func (m *AccessMiddleware) Process(ctx context.Context, req *pipeline.Request, n
 			return nil, refuse(pipeline.CodeForbidden, 403, "the key lacks the "+need+" scope")
 		}
 	}
+	// A request that names no model gets the tenant's default one. This runs
+	// before alias resolution, so the default may itself be an alias.
+	if t.Config.DefaultModel != "" {
+		if req.Completion != nil && req.Completion.Model == "" {
+			req.Completion.Model = t.Config.DefaultModel
+		}
+		if req.Embedding != nil && req.Embedding.Model == "" {
+			req.Embedding.Model = t.Config.DefaultModel
+		}
+	}
 	return next(context.WithValue(ctx, tenantCtxKey{}, t))
 }

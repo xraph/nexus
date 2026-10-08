@@ -34,7 +34,7 @@ func TestInitializeBuildsTheDeclaredServices(t *testing.T) {
 	if gw.Tenants() == nil || gw.Keys() == nil || gw.Usage() == nil {
 		t.Fatalf("tenant %v, key %v, usage %v: all must be built", gw.Tenants(), gw.Keys(), gw.Usage())
 	}
-	want := []string{"request_id", "usage", "timeout", "identity", "access", "quota", "stream_lifecycle", "retry", "provider_call"}
+	want := []string{"request_id", "usage", "timeout", "identity", "access", "quota", "stream_lifecycle", "model_policy", "retry", "provider_call"}
 	if got := stageNames(gw); !slices.Equal(got, want) {
 		t.Fatalf("stages %v, want %v", got, want)
 	}

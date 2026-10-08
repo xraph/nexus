@@ -264,6 +264,11 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 		b.Use(middlewares.NewAlias(gw.aliasRegistry))
 	}
 
+	// Priority 260: the tenant's allowed and blocked models, checked against
+	// the requested name and the one alias resolution produced. It passes
+	// quickly when the tenant has no lists.
+	b.Use(middlewares.NewModelPolicy())
+
 	// Priority 280: Cache (if configured)
 	if gw.cache != nil || gw.streamCache != nil {
 		mw := middlewares.NewCache(gw.cache)

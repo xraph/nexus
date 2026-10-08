@@ -8,4 +8,7 @@ const (
 	// StateCacheHit is true when the response came from the response cache
 	// or the stream cache.
 	StateCacheHit = "cache_hit"
+	// StateOriginalModel is the model name the caller asked for, set by the
+	// alias stage when it rewrote the request to the alias's target.
+	StateOriginalModel = "original_model"
 )

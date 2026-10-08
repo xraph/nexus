@@ -3,6 +3,8 @@ package tenant
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/xraph/nexus/id"
@@ -20,6 +22,39 @@ func NewService(store Store, opts ...Option) Service {
 		o(s)
 	}
 	return s
+}
+
+// normaliseConfig returns cfg with the model names trimmed. It refuses an
+// empty name, and a name that is in both lists. The input is not changed.
+func normaliseConfig(cfg Config) (Config, error) {
+	var err error
+	if cfg.AllowedModels, err = trimModelNames("allowed_models", cfg.AllowedModels); err != nil {
+		return Config{}, err
+	}
+	if cfg.BlockedModels, err = trimModelNames("blocked_models", cfg.BlockedModels); err != nil {
+		return Config{}, err
+	}
+	for _, n := range cfg.BlockedModels {
+		if slices.Contains(cfg.AllowedModels, n) {
+			return Config{}, fmt.Errorf("%w: model %q is in both allowed_models and blocked_models", ErrInvalid, n)
+		}
+	}
+	return cfg, nil
+}
+
+func trimModelNames(field string, names []string) ([]string, error) {
+	if names == nil {
+		return nil, nil
+	}
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			return nil, fmt.Errorf("%w: %s holds an empty model name", ErrInvalid, field)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 func (s *service) Create(ctx context.Context, input *CreateInput) (*Tenant, error) {
@@ -44,7 +79,11 @@ func (s *service) Create(ctx context.Context, input *CreateInput) (*Tenant, erro
 		t.Quota = *input.Quota
 	}
 	if input.Config != nil {
-		t.Config = *input.Config
+		cfg, err := normaliseConfig(*input.Config)
+		if err != nil {
+			return nil, err
+		}
+		t.Config = cfg
 	}
 	if t.Metadata == nil {
 		t.Metadata = make(map[string]string)
@@ -80,7 +119,11 @@ func (s *service) Update(ctx context.Context, tenantID string, input *UpdateInpu
 		t.Quota = *input.Quota
 	}
 	if input.Config != nil {
-		t.Config = *input.Config
+		cfg, err := normaliseConfig(*input.Config)
+		if err != nil {
+			return nil, err
+		}
+		t.Config = cfg
 	}
 	if input.Metadata != nil {
 		t.Metadata = input.Metadata

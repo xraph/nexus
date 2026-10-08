@@ -64,6 +64,10 @@ func (m *CacheMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	if req.Completion == nil {
 		return next(ctx)
 	}
+	// A tenant that turned its cache off neither reads nor writes it.
+	if t, ok := TenantFromContext(ctx); ok && t.Config.CacheEnabled != nil && !*t.Config.CacheEnabled {
+		return next(ctx)
+	}
 
 	keyReq, ok := tenantScoped(ctx, req.Completion)
 	if !ok {
