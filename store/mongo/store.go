@@ -117,6 +117,9 @@ func (s *tenantStore) Insert(ctx context.Context, t *tenant.Tenant) error {
 		return err
 	}
 	if _, err := s.mdb.NewInsert(m).Exec(ctx); err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			return fmt.Errorf("nexus/mongo: insert tenant: %w", tenant.ErrDuplicate)
+		}
 		return fmt.Errorf("nexus/mongo: insert tenant: %w", err)
 	}
 	return nil
@@ -153,6 +156,9 @@ func (s *tenantStore) Update(ctx context.Context, t *tenant.Tenant) error {
 	}
 	res, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID}).Exec(ctx)
 	if err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			return fmt.Errorf("nexus/mongo: update tenant: %w", tenant.ErrDuplicate)
+		}
 		return fmt.Errorf("nexus/mongo: update tenant: %w", err)
 	}
 	if res.MatchedCount() == 0 {

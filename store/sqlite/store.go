@@ -90,6 +90,9 @@ func (s *tenantStore) Insert(ctx context.Context, t *tenant.Tenant) error {
 	m := tenantToModel(t)
 	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("nexus/sqlite: insert tenant: %w", tenant.ErrDuplicate)
+		}
 		return fmt.Errorf("nexus/sqlite: insert tenant: %w", err)
 	}
 	return nil
@@ -123,6 +126,9 @@ func (s *tenantStore) Update(ctx context.Context, t *tenant.Tenant) error {
 	m := tenantToModel(t)
 	res, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("nexus/sqlite: update tenant: %w", tenant.ErrDuplicate)
+		}
 		return fmt.Errorf("nexus/sqlite: update tenant: %w", err)
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {

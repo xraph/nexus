@@ -6,6 +6,9 @@ import "errors"
 // FindByID, FindBySlug and Update, never a nil tenant with a nil error.
 var ErrNotFound = errors.New("nexus: tenant not found")
 
+// ErrDuplicate reports an existing tenant ID or slug.
+var ErrDuplicate = errors.New("nexus: tenant already exists")
+
 // ErrInUse reports that a tenant cannot be deleted because it still has keys
 // or usage history. Disable it instead.
 var ErrInUse = errors.New("nexus: tenant is in use")

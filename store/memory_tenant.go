@@ -19,6 +19,14 @@ type memoryTenantStore struct {
 func (s *memoryTenantStore) Insert(_ context.Context, t *tenant.Tenant) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, exists := s.data[t.ID.String()]; exists {
+		return tenant.ErrDuplicate
+	}
+	for _, existing := range s.data {
+		if existing.Slug == t.Slug {
+			return tenant.ErrDuplicate
+		}
+	}
 	s.data[t.ID.String()] = cloneTenant(t)
 	return nil
 }
@@ -49,6 +57,11 @@ func (s *memoryTenantStore) Update(_ context.Context, t *tenant.Tenant) error {
 	defer s.mu.Unlock()
 	if _, ok := s.data[t.ID.String()]; !ok {
 		return tenant.ErrNotFound
+	}
+	for _, existing := range s.data {
+		if existing.ID != t.ID && existing.Slug == t.Slug {
+			return tenant.ErrDuplicate
+		}
 	}
 	s.data[t.ID.String()] = cloneTenant(t)
 	return nil

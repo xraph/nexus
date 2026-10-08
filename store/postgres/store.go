@@ -72,6 +72,10 @@ func (s *tenantStore) Insert(ctx context.Context, t *tenant.Tenant) error {
 	m := tenantToModel(t)
 	_, err := s.pgdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			return fmt.Errorf("nexus/postgres: insert tenant: %w", tenant.ErrDuplicate)
+		}
 		return fmt.Errorf("nexus/postgres: insert tenant: %w", err)
 	}
 	return nil
@@ -105,6 +109,10 @@ func (s *tenantStore) Update(ctx context.Context, t *tenant.Tenant) error {
 	m := tenantToModel(t)
 	res, err := s.pgdb.NewUpdate(m).WherePK().Exec(ctx)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			return fmt.Errorf("nexus/postgres: update tenant: %w", tenant.ErrDuplicate)
+		}
 		return fmt.Errorf("nexus/postgres: update tenant: %w", err)
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
