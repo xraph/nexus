@@ -140,10 +140,22 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 		if gw.extensions != nil {
 			te = gw.extensions
 		}
-		keys := gw.store.Keys()
+		// Keys and usage history both count as in use, on every store. The
+		// usage store is read directly: WithUsageService may replace gw.usage.
+		keys, records := gw.store.Keys(), gw.store.Usage()
 		inUse := func(ctx context.Context, tenantID string) (bool, error) {
 			ks, err := keys.ListByTenant(ctx, tenantID)
-			return len(ks) > 0, err
+			if err != nil || len(ks) > 0 {
+				return len(ks) > 0, err
+			}
+			if tenantID == "" { // "" means every tenant to a usage query
+				return false, nil
+			}
+			page, err := records.Query(ctx, &usage.QueryOptions{TenantID: tenantID, Limit: 1})
+			if err != nil {
+				return false, err
+			}
+			return len(page.Items) > 0, nil
 		}
 		gw.tenant = tenant.NewService(gw.store.Tenants(), tenant.WithEvents(te), tenant.WithInUse(inUse))
 	}

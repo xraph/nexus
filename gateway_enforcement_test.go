@@ -19,6 +19,7 @@ import (
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/ratelimit"
 	"github.com/xraph/nexus/store"
+	"github.com/xraph/nexus/store/storetest"
 	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/usage"
 )
@@ -168,6 +169,38 @@ func TestTheDailyCapHoldsWithUsageRecordingOff(t *testing.T) {
 	}
 	if strings.Contains(text, "daily") {
 		t.Fatalf("the usage-off warning says the daily cap stops, but it holds:\n%s", text)
+	}
+}
+
+// Usage history counts as in use on every store, not only where a foreign
+// key says so: the memory store has none.
+func TestATenantWithOnlyUsageHistoryCannotBeDeleted(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	gw := nexus.New(nexus.WithDatabase(s), nexus.WithProvider(&fakeProvider{name: "openai", price: listPrice}))
+	if err := gw.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = gw.Shutdown(ctx) })
+	tn, err := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Acme", Slug: "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Other", Slug: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	storetest.InsertRecord(t, s, storetest.Record(tn.ID, "0.01")) // a row, and no key
+
+	if err = gw.Tenants().Delete(ctx, tn.ID.String()); !errors.Is(err, tenant.ErrInUse) {
+		t.Fatalf("delete of a tenant with usage history = %v, want ErrInUse", err)
+	}
+	if _, err = gw.Tenants().Get(ctx, tn.ID.String()); err != nil {
+		t.Fatalf("the refused delete removed the tenant: %v", err)
+	}
+	// Another tenant's history is not this tenant's.
+	if err = gw.Tenants().Delete(ctx, other.ID.String()); err != nil {
+		t.Fatalf("delete of a tenant with no keys and no usage = %v", err)
 	}
 }
 

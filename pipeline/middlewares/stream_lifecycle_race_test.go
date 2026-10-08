@@ -115,6 +115,13 @@ func TestStreamLifecycle_WatchdogAfterCloseDoesNotCloseTwice(t *testing.T) {
 	if n := inner.closes.Load(); n != 1 {
 		t.Fatalf("inner stream closed %d times, want 1", n)
 	}
+
+	// A watchdog that started late would have queued its quota error by now.
+	// Ungate the inner stream so a Next that reaches it returns at once.
+	close(inner.gate)
+	if _, err := stream.Next(context.Background()); middlewares.IsQuotaExceeded(err) {
+		t.Fatalf("next after close = %v; a watchdog started after Close", err)
+	}
 }
 
 // TestStreamLifecycle_CloseAfterWatchdogClosesOnce covers the other order:
