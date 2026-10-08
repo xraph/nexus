@@ -3,7 +3,7 @@ module github.com/xraph/nexus/_examples/grpc
 go 1.26.0
 
 require (
-	github.com/xraph/nexus v1.6.2
+	github.com/xraph/nexus v1.7.0
 	github.com/xraph/nexus/grpcsrv v0.0.0
 	github.com/xraph/nexus/providers/openai v0.0.0
 	google.golang.org/grpc v1.83.2
