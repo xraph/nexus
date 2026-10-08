@@ -37,10 +37,8 @@ func (a *API) handleCreateEmbedding(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if req.Model == "" {
-		writeError(w, http.StatusBadRequest, "model is required")
-		return
-	}
+	// An empty model is not refused here: the access stage fills the
+	// tenant's default model, and refuses the request when there is none.
 
 	resp, err := a.gw.Engine().Embed(r.Context(), &req)
 	if err != nil {

@@ -2,6 +2,7 @@ package middlewares
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	"github.com/xraph/nexus/pipeline"
@@ -35,12 +36,21 @@ func (*ModelPolicyMiddleware) Process(ctx context.Context, req *pipeline.Request
 	}
 	for _, n := range []string{requested, resolved} {
 		if slices.Contains(t.Config.BlockedModels, n) {
-			return nil, refuse(pipeline.CodeForbidden, 403, "model "+n+" is blocked for this tenant")
+			return nil, refuse(pipeline.CodeForbidden, 403, describeModel(n)+" is blocked for this tenant")
 		}
 	}
 	if len(t.Config.AllowedModels) > 0 &&
 		!slices.Contains(t.Config.AllowedModels, requested) && !slices.Contains(t.Config.AllowedModels, resolved) {
-		return nil, refuse(pipeline.CodeForbidden, 403, "model "+requested+" is not allowed for this tenant")
+		return nil, refuse(pipeline.CodeForbidden, 403, describeModel(requested)+" is not allowed for this tenant")
 	}
 	return next(ctx)
+}
+
+// describeModel names a model for a refusal message, quoted so that a name
+// with odd characters cannot run into the sentence.
+func describeModel(name string) string {
+	if name == "" {
+		return "a request with no model named"
+	}
+	return fmt.Sprintf("model %q", name)
 }

@@ -9,9 +9,12 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/testutil"
 
@@ -108,14 +111,25 @@ func TestServer_HappyPath(t *testing.T) {
 	}
 }
 
-func TestServer_RejectsMissingModel(t *testing.T) {
+// modelSeeingStreamer records the model it was called with and refuses the
+// way the access stage refuses a request that names none.
+type modelSeeingStreamer struct {
+	called bool
+	model  string
+}
+
+func (m *modelSeeingStreamer) CompleteStream(_ context.Context, req *provider.CompletionRequest) (provider.Stream, error) {
+	m.called, m.model = true, req.Model
+	return nil, &pipeline.RefusalError{Code: pipeline.CodeInvalidRequest, Status: 400, Message: "model is required"}
+}
+
+func TestServer_AnEmptyModelReachesThePipelineAndIsRefusedThere(t *testing.T) {
 	t.Parallel()
 
+	streamer := &modelSeeingStreamer{}
 	srv := grpc.NewServer()
-	grpcsrv.Register(srv, &fakeStreamer{})
-
-	conn := dialBuf(t, srv)
-	client := nexusv1.NewCompletionsClient(conn)
+	grpcsrv.Register(srv, streamer)
+	client := nexusv1.NewCompletionsClient(dialBuf(t, srv))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -124,8 +138,22 @@ func TestServer_RejectsMissingModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteStream: %v", err)
 	}
-	if _, err := stream.Recv(); err == nil {
-		t.Fatal("expected error from server, got nil")
+	var we *nexusv1.WireError
+	var recvErr error
+	for recvErr == nil {
+		var ev *nexusv1.StreamEvent
+		if ev, recvErr = stream.Recv(); recvErr == nil && ev.Type == nexusv1.StreamEvent_ERROR {
+			we = ev.Error
+		}
+	}
+	if !streamer.called || streamer.model != "" {
+		t.Fatalf("called %v with model %q; want the empty model to reach the pipeline", streamer.called, streamer.model)
+	}
+	if st, _ := status.FromError(recvErr); st.Code() != codes.InvalidArgument {
+		t.Fatalf("status = %s; want InvalidArgument", st.Code())
+	}
+	if we == nil || we.Code != pipeline.CodeInvalidRequest {
+		t.Fatalf("ERROR event = %v; want code invalid_request", we)
 	}
 }
 

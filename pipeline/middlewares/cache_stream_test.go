@@ -352,3 +352,64 @@ func TestCacheMiddleware_TenantCacheSwitch(t *testing.T) {
 		t.Fatalf("cache on: upstream calls %d, second hit %v; want the second request served from the cache", upstream, hit)
 	}
 }
+
+func TestCacheMiddleware_TenantCacheSwitchOffNeitherReplaysNorRecordsAStream(t *testing.T) {
+	t.Parallel()
+
+	chunks := []*provider.StreamChunk{
+		{Provider: "test", Model: "m", Delta: provider.Delta{Content: "hello"}, FinishReason: "stop"},
+	}
+	mw := middlewares.NewCache(nil).WithStreamCache(stores.NewMemoryStream(), cache.StreamCacheOptions{Mode: cache.ReplayBurst})
+	newReq := func() *pipeline.Request {
+		return &pipeline.Request{
+			Completion: &provider.CompletionRequest{Model: "m", Stream: true, Messages: []provider.Message{{Role: "user", Content: "hi"}}},
+			Type:       pipeline.RequestStream,
+			State:      map[string]any{},
+		}
+	}
+	drain := func(s provider.Stream) {
+		t.Helper()
+		for {
+			if _, err := s.Next(context.Background()); errors.Is(err, io.EOF) {
+				break
+			} else if err != nil {
+				t.Fatalf("drain: %v", err)
+			}
+		}
+		_ = s.Close()
+	}
+
+	off := false
+	offCtx := middlewares.WithTenantForTest(context.Background(), &tenant.Tenant{Config: tenant.Config{CacheEnabled: &off}})
+	for i := 0; i < 2; i++ {
+		upstream := testutil.NewFakeStream(chunks, nil)
+		req := newReq()
+		resp, err := mw.Process(offCtx, req, func(context.Context) (*pipeline.Response, error) {
+			return &pipeline.Response{Stream: upstream}, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.Stream != upstream {
+			t.Fatalf("request %d: the stream was wrapped for recording; want the upstream stream handed through", i+1)
+		}
+		if req.State[pipeline.StateCacheHit] == true {
+			t.Fatalf("request %d replayed a cached stream", i+1)
+		}
+		drain(resp.Stream)
+	}
+
+	// Nothing was recorded: a tenant with the cache on still misses.
+	called := false
+	resp, err := mw.Process(context.Background(), newReq(), func(context.Context) (*pipeline.Response, error) {
+		called = true
+		return &pipeline.Response{Stream: testutil.NewFakeStream(chunks, nil)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(resp.Stream)
+	if !called {
+		t.Fatal("a stream was recorded for a tenant whose cache is off")
+	}
+}

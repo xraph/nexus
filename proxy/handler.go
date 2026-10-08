@@ -29,10 +29,8 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Model == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
-		return
-	}
+	// An empty model is not refused here: the access stage fills the
+	// tenant's default model, and refuses the request when there is none.
 
 	if len(req.Messages) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "messages is required")
@@ -114,10 +112,8 @@ func (p *Proxy) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if req.Model == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
-		return
-	}
+	// An empty model is not refused here: the access stage fills the
+	// tenant's default model, and refuses the request when there is none.
 	if len(req.Input) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "input is required")
 		return

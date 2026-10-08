@@ -52,6 +52,16 @@ func refuse(code string, status int, msg string) *pipeline.RefusalError {
 	return &pipeline.RefusalError{Code: code, Status: status, Message: msg}
 }
 
+// requireModel refuses a request that still names no model once the tenant's
+// default has been applied. The edges let an empty model through so that the
+// default can fill it, which makes this the one place that insists on a model.
+func requireModel(req *pipeline.Request) *pipeline.RefusalError {
+	if (req.Completion != nil && req.Completion.Model == "") || (req.Embedding != nil && req.Embedding.Model == "") {
+		return refuse(pipeline.CodeInvalidRequest, 400, "model is required")
+	}
+	return nil
+}
+
 func (m *AccessMiddleware) Process(ctx context.Context, req *pipeline.Request, next pipeline.NextFunc) (*pipeline.Response, error) {
 	tenantID := pipeline.TenantID(ctx)
 	if tenantID == "" {
@@ -60,6 +70,9 @@ func (m *AccessMiddleware) Process(ctx context.Context, req *pipeline.Request, n
 		if pipeline.KeyID(ctx) != "" {
 			r := refuse(pipeline.CodeInvalidRequest, 400, "a key id needs its tenant id")
 			r.Unattributed = true
+			return nil, r
+		}
+		if r := requireModel(req); r != nil {
 			return nil, r
 		}
 		return next(ctx)
@@ -119,6 +132,9 @@ func (m *AccessMiddleware) Process(ctx context.Context, req *pipeline.Request, n
 		if req.Embedding != nil && req.Embedding.Model == "" {
 			req.Embedding.Model = t.Config.DefaultModel
 		}
+	}
+	if r := requireModel(req); r != nil {
+		return nil, r
 	}
 	return next(context.WithValue(ctx, tenantCtxKey{}, t))
 }

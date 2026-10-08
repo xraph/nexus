@@ -9,8 +9,10 @@ import (
 	"time"
 
 	nexus "github.com/xraph/nexus"
+	"github.com/xraph/nexus/cache/stores"
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/key"
+	"github.com/xraph/nexus/model"
 	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/provider"
@@ -357,5 +359,68 @@ func TestABlockedModelIsRefusedAndRecorded(t *testing.T) {
 	r := recs[0]
 	if r.Outcome != usage.OutcomeRefused || r.RefusalCode != pipeline.CodeForbidden || r.TenantID != tn.ID || r.CostUSD == nil || !r.CostUSD.IsZero() {
 		t.Fatalf("record = outcome %s code %q tenant %s cost %v; want a $0 forbidden refusal charged to the tenant", r.Outcome, r.RefusalCode, r.TenantID, r.CostUSD)
+	}
+}
+
+// o1Provider is the fake provider listing o1 as well.
+type o1Provider struct{ *fakeProvider }
+
+func (p o1Provider) Models(ctx context.Context) ([]provider.Model, error) {
+	models, err := p.fakeProvider.Models(ctx)
+	return append(models, provider.Model{ID: "o1", Provider: p.name, Pricing: p.price}), err
+}
+
+// A tenant that blocks o1 must be refused "smart", an alias for o1, even
+// when the cache holds the answer: alias resolution (250) comes first, then
+// the model policy (260), then the cache (280).
+func TestABlockedModelIsRefusedThroughAnAliasBeforeTheCache(t *testing.T) {
+	s := store.NewMemory()
+	fp := &fakeProvider{name: "openai", price: listPrice}
+	gw, tn, k := enforcedWith(t, s, tenant.Quota{}, fp,
+		nexus.WithAlias("smart", model.AliasTarget{Provider: "openai", Model: "o1"}),
+		nexus.WithCache(stores.NewMemory()),
+		nexus.WithProvider(o1Provider{fp}),
+	)
+	askSmart := func() (*provider.CompletionResponse, error) {
+		return gw.Engine().Complete(context.Background(), &provider.CompletionRequest{
+			Model: "smart", TenantID: tn.ID.String(), KeyID: k.ID.String(),
+			Messages: []provider.Message{{Role: "user", Content: "hi"}},
+		})
+	}
+
+	resp, err := askSmart()
+	if err != nil || resp.Model != "o1" {
+		t.Fatalf("unrestricted tenant: %+v, %v; want the alias served by o1", resp, err)
+	}
+	if fp.calls != 1 {
+		t.Fatalf("provider calls = %d after the warming request; want 1", fp.calls)
+	}
+
+	_, err = gw.Tenants().Update(context.Background(), tn.ID.String(), &tenant.UpdateInput{
+		Config: &tenant.Config{BlockedModels: []string{"o1"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = askSmart()
+	if status, code := pipeline.HTTPStatus(err); status != 403 || code != pipeline.CodeForbidden {
+		t.Fatalf("blocked alias target = %v (status %d, code %q); want 403 forbidden, not a cache hit", err, status, code)
+	}
+	if fp.calls != 1 {
+		t.Fatalf("provider calls = %d after the refusal; want it unchanged at 1", fp.calls)
+	}
+
+	var refused []*usage.Record
+	for _, r := range records(t, gw, s) {
+		if r.Outcome == usage.OutcomeRefused {
+			refused = append(refused, r)
+		}
+	}
+	if len(refused) != 1 {
+		t.Fatalf("refused records = %+v; want exactly one", refused)
+	}
+	r := refused[0]
+	if r.RefusalCode != pipeline.CodeForbidden || r.TenantID != tn.ID || r.CostUSD == nil || !r.CostUSD.IsZero() {
+		t.Fatalf("record = code %q tenant %s cost %v; want a $0 forbidden refusal charged to the tenant", r.RefusalCode, r.TenantID, r.CostUSD)
 	}
 }

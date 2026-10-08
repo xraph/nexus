@@ -324,18 +324,21 @@ func (c *Contributor) renderTenantEdit(ctx context.Context, params contributor.P
 		}
 		input.Quota = quota
 
-		config := &tenant.Config{
-			DefaultModel:    params.FormData["default_model"],
-			RoutingStrategy: params.FormData["routing_strategy"],
-			GuardrailPolicy: params.FormData["guardrail_policy"],
-		}
+		// Start from the stored config and overwrite only what the form
+		// carries, so the fields it has no input for (the cache switch, the
+		// metadata) keep their values.
+		config := t.Config
+		config.DefaultModel = params.FormData["default_model"]
+		config.RoutingStrategy = params.FormData["routing_strategy"]
+		config.GuardrailPolicy = params.FormData["guardrail_policy"]
+		config.AllowedModels, config.BlockedModels = nil, nil
 		if am := params.FormData["allowed_models"]; am != "" {
 			config.AllowedModels = splitAndTrim(am)
 		}
 		if bm := params.FormData["blocked_models"]; bm != "" {
 			config.BlockedModels = splitAndTrim(bm)
 		}
-		input.Config = config
+		input.Config = &config
 
 		updated, err := c.gw.Tenants().Update(ctx, tenantID, input)
 		if err != nil {

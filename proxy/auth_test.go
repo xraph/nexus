@@ -555,3 +555,43 @@ func TestTheRequestIdIsReadableFromABrowser(t *testing.T) {
 		t.Fatalf("Access-Control-Expose-Headers = %q; a browser page cannot read X-Request-Id", got.header.Get("Access-Control-Expose-Headers"))
 	}
 }
+
+// withDefaultModel sets the tenant's default model.
+func withDefaultModel(t *testing.T, gw *nexus.Gateway, tn *tenant.Tenant, model string) {
+	t.Helper()
+	if _, err := gw.Tenants().Update(context.Background(), tn.ID.String(), &tenant.UpdateInput{Config: &tenant.Config{DefaultModel: model}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestARequestWithNoModelGetsTheTenantsDefault(t *testing.T) {
+	srv, gw, _ := newProxy(t)
+	raw, tn := newKey(t, gw, "defaulted", tenant.Quota{})
+	withDefaultModel(t, gw, tn, "gpt-4o")
+
+	got := send(t, srv, "POST", "/v1/chat/completions", raw, `{"messages":[{"role":"user","content":"hi"}]}`)
+	if got.status != 200 || !strings.Contains(got.body, `"model":"gpt-4o"`) {
+		t.Fatalf("completion: status %d, body %s; want 200 served by the default model", got.status, got.shown)
+	}
+	got = send(t, srv, "POST", "/v1/embeddings", raw, `{"input":"x"}`)
+	if got.status != 200 || !strings.Contains(got.body, `"model":"gpt-4o"`) {
+		t.Fatalf("embedding: status %d, body %s; want 200 served by the default model", got.status, got.shown)
+	}
+}
+
+func TestARequestWithNoModelAndNoDefaultIsRefusedAndRecorded(t *testing.T) {
+	srv, gw, _ := newProxy(t)
+	raw, tn := newKey(t, gw, "undefaulted", tenant.Quota{})
+
+	wantRefusal(t, send(t, srv, "POST", "/v1/chat/completions", raw, `{"messages":[{"role":"user","content":"hi"}]}`), 400, "invalid_request")
+	wantRefusal(t, send(t, srv, "POST", "/v1/embeddings", raw, `{"input":"x"}`), 400, "invalid_request")
+	recs := records(t, gw, &usage.QueryOptions{TenantID: tn.ID.String()})
+	if len(recs) != 2 {
+		t.Fatalf("records = %d, want 2", len(recs))
+	}
+	for _, r := range recs {
+		if r.Outcome != usage.OutcomeRefused || r.RefusalCode != "invalid_request" {
+			t.Fatalf("record = outcome %s code %q; want refused/invalid_request", r.Outcome, r.RefusalCode)
+		}
+	}
+}

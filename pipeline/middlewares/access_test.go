@@ -3,6 +3,7 @@ package middlewares_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -311,9 +312,37 @@ func TestARequestThatNamesAModelKeepsIt(t *testing.T) {
 	}
 }
 
-func TestATenantWithNoDefaultModelLeavesAnEmptyModelEmpty(t *testing.T) {
-	req := &pipeline.Request{Type: pipeline.RequestCompletion, Completion: &provider.CompletionRequest{}, State: map[string]any{}}
-	if got := modelSeenByNext(t, "", req); got != "" {
-		t.Fatalf("model = %q; want it left empty", got)
+func TestARequestWithNoModelAndNoDefaultIsRefused(t *testing.T) {
+	cases := map[string]*pipeline.Request{
+		"completion": {Type: pipeline.RequestCompletion, Completion: &provider.CompletionRequest{}, State: map[string]any{}},
+		"embedding":  {Type: pipeline.RequestEmbedding, Embedding: &provider.EmbeddingRequest{}, State: map[string]any{}},
 	}
+	for name, req := range cases {
+		t.Run(name, func(t *testing.T) {
+			tn := &tenant.Tenant{ID: id.NewTenantID(), Status: tenant.StatusActive}
+			mw := middlewares.NewAccess(stubTenants{t: tn}, stubKeys{})
+			reached := false
+			_, err := mw.Process(pipeline.WithTenantID(context.Background(), tn.ID.String()), req, func(context.Context) (*pipeline.Response, error) {
+				reached = true
+				return &pipeline.Response{}, nil
+			})
+			wantRefusal(t, err, pipeline.CodeInvalidRequest, 400)
+			if reached {
+				t.Fatal("a request with no model must not reach next")
+			}
+			if !strings.Contains(err.Error(), "model is required") {
+				t.Fatalf("message %q; want model is required", err.Error())
+			}
+		})
+	}
+}
+
+func TestAnUnattributedRequestWithNoModelIsRefused(t *testing.T) {
+	f := newAccessFixture(t)
+	req := &pipeline.Request{Type: pipeline.RequestCompletion, Completion: &provider.CompletionRequest{}, State: map[string]any{}}
+	_, err := f.mw.Process(context.Background(), req, func(context.Context) (*pipeline.Response, error) {
+		t.Fatal("a request with no model must not reach next")
+		return nil, nil //nolint:nilnil // unreachable
+	})
+	wantRefusal(t, err, pipeline.CodeInvalidRequest, 400)
 }

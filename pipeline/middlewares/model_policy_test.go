@@ -2,6 +2,7 @@ package middlewares_test
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -48,8 +49,8 @@ func wantForbidden(t *testing.T, err error, reached bool, model string) {
 	if reached {
 		t.Fatal("a refused request must not reach next")
 	}
-	if !strings.Contains(err.Error(), model) {
-		t.Fatalf("message %q does not name the model %q", err.Error(), model)
+	if !strings.Contains(err.Error(), strconv.Quote(model)) {
+		t.Fatalf("message %q does not name the model %q, quoted", err.Error(), model)
 	}
 }
 
@@ -117,5 +118,14 @@ func TestModelPolicyPassesWhenTheListsAreEmpty(t *testing.T) {
 	reached, err := policyRun(t, &tenant.Config{}, "gpt-4o", "gpt-4o", false)
 	if err != nil || !reached {
 		t.Fatalf("reached %v, err %v; want empty lists to pass", reached, err)
+	}
+}
+
+func TestModelPolicyMessageSaysWhenNoModelIsNamed(t *testing.T) {
+	// The access stage refuses an empty model first, so only a stage run
+	// alone can see one.
+	_, err := policyRun(t, &tenant.Config{AllowedModels: []string{"gpt-4o"}}, "", "", false)
+	if err == nil || !strings.Contains(err.Error(), "no model named") {
+		t.Fatalf("err = %v; want the message to say no model is named", err)
 	}
 }

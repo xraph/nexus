@@ -161,8 +161,10 @@ func (m *QuotaMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 			return nil, r
 		}
 	}
-	// The daily cap is charged last, once every other check has passed, so a
-	// request refused for any other reason never uses up a day's allowance.
+	// The daily cap is charged last, once every other quota check has passed,
+	// so a request refused by an earlier quota check never uses up a day's
+	// allowance. Stages that run after this one, such as the model policy
+	// (260), can still refuse a request that has been charged.
 	// The store count above covers what the limiter cannot see (a restart of
 	// the memory limiter); the charge here holds the cap when requests run
 	// at the same time, because the store only counts a request once it has

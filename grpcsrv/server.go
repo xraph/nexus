@@ -99,9 +99,11 @@ func Register(reg grpc.ServiceRegistrar, engine CompletionStreamer, opts ...Opti
 // Internal with "internal error". The real error goes to the server's
 // logger, never to the client.
 func (s *Server) CompleteStream(req *nexusv1.CompletionRequest, srv nexusv1.Completions_CompleteStreamServer) error {
-	if req == nil || req.Model == "" {
-		return status.Error(codes.InvalidArgument, "model is required")
+	if req == nil {
+		return status.Error(codes.InvalidArgument, "request is required")
 	}
+	// An empty model is not refused here: the access stage fills the
+	// tenant's default model, and refuses the request when there is none.
 
 	completionReq := requestFromProto(req)
 	stream, err := s.engine.CompleteStream(srv.Context(), completionReq)

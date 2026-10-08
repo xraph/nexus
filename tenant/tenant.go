@@ -50,10 +50,14 @@ type Config struct {
 	// AllowedModels, when not empty, limits the tenant to these models. A
 	// request is admitted when the model it asked for, or the model an
 	// alias resolved it to, is listed. Names are case-sensitive and match
-	// exactly; surrounding spaces are trimmed when the tenant is saved.
+	// exactly; surrounding spaces are trimmed when the tenant is saved. An
+	// alias with several targets is checked against the target picked for
+	// that request, so list every target when it matters.
 	AllowedModels []string `json:"allowed_models,omitempty"`
 	// BlockedModels refuses a request when the model it asked for, or the
-	// model an alias resolved it to, is listed. Blocks win over allows.
+	// model an alias resolved it to, is listed. Blocks win over allows. An
+	// alias with several targets is checked against the target picked for
+	// that request, so list every target when it matters.
 	BlockedModels []string `json:"blocked_models,omitempty"`
 	// DefaultModel is the model a request gets when it names none. It is
 	// filled before alias resolution, so it may be an alias.
