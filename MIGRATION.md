@@ -72,26 +72,27 @@ shared idempotency storage require deployment verification.
 
 ## Dashboard migration status
 
-The Go contract and React read routes are implemented. The React tenant forms and
-status controls are implemented and unit tested; key dialogs and charts are in
-progress. Browser verification of writes and final templ retirement remain open.
-The legacy contributor is disconnected and build-ignored for Forge v1.12.3, but
-the templ sources remain until the replacement passes its browser gate.
+The Go contract, React read routes, tenant forms, status controls, key dialogs and
+usage charts are implemented. All 12 routes passed desktop and narrow fixture
+browser checks. Writes, exact chart values, protected key reveals and retry paths
+passed their browser gate. The disconnected legacy dashboard is retired. Remove imports of
+`github.com/xraph/nexus/dashboard`; the Forge extension registers the active
+`extension/contract` contributor.
 
 The following inventory was taken from all 25 templ sources while they existed.
-A moved field remains available through the named replacement page. Pending items
-must be verified before deleting the legacy directory.
+A moved field remains available through the named replacement page. This inventory
+was committed before the legacy directory was deleted.
 
 | Legacy surface | Columns, actions, filters, badges and empty states | Replacement and status |
 |---|---|---|
 | Overview | Tenant count, active keys, monthly spend, monthly requests, cache hit rate, provider count, recent request table | Read pages verified. Overview carries posture, counts and spend; Usage carries period requests and cache hit rate; Models lists providers; Request log carries recent records. |
-| Tenant list | Name, slug, status, RPM, monthly budget, created; name search; create and row navigation; tenant count caption; no tenants | Read page verified with search, real status filter, cursor paging and visible-page count. Create form implemented; browser write check pending. |
-| Tenant detail | ID, name, slug, status, created, updated; enable/disable/suspend confirmations; edit; five quotas; six config fields; metadata; keys; monthly requests/tokens/cost/cache/latency | Read page verified for quotas/config/metadata/keys. Usage provides monthly aggregates with tenant selection. Status/edit implemented; browser checks and updated timestamp parity pending. Streaming quotas and config metadata are added. |
-| Tenant form | Name, immutable edit slug, RPM, TPM, daily requests, budget, max tokens/request, default model, routing/guard policy, allow/block model lists; create/save/cancel | Implemented with explicit No limit controls and dirty patches, including streaming limits, cache inheritance and both metadata maps. Browser checks pending. |
-| Key list | Name, prefix, scopes, status, last used, created; tenant filter, create, row navigation; no keys | Read page verified; created is in detail. Expiry and customer names added. Create dialog and browser write checks pending. |
-| Key detail | ID, tenant ID, prefix, status, created, last used or Never, expires or Never, scope badges, metadata; rotate/revoke confirmation; new raw key; recent usage | Read page verified. Real key-filtered Request log replaces the old tenant-filtered recent usage. Protected reveal, rotation and revocation browser checks pending. |
-| Key form | Tenant, name, checked scopes, create/cancel; one-time generated key and copy affordance | Two-step create/reveal dialog in progress. Every checked scope must survive, and admin must carry its cross-tenant warning. |
-| Usage | Day/week/month selection; requests, tokens, cost, cache hit rate, average latency; provider/model tables of requests/tokens/cost; no usage | Exact tables verified with tenant/period filters and explicit collection-off state. Separate spend/request charts pending. |
+| Tenant list | Name, slug, status, RPM, monthly budget, created; name search; create and row navigation; tenant count caption; no tenants | Read page verified with search, real status filter, cursor paging and visible-page count. Create form and persisted browser write verified. |
+| Tenant detail | ID, name, slug, status, created, updated; enable/disable/suspend confirmations; edit; five quotas; six config fields; metadata; keys; monthly requests/tokens/cost/cache/latency | Read page verified for quotas/config/metadata/keys. Usage provides monthly aggregates with tenant selection. Status/edit browser checks passed; updated timestamp is shown. Streaming quotas and config metadata are added. |
+| Tenant form | Name, immutable edit slug, RPM, TPM, daily requests, budget, max tokens/request, default model, routing/guard policy, allow/block model lists; create/save/cancel | Implemented with explicit No limit controls and dirty patches, including streaming limits, cache inheritance and both metadata maps. Create/edit browser checks passed. Untouched stored fields stay omitted; a transient refresh failure preserves the draft. |
+| Key list | Name, prefix, scopes, status, last used, created; tenant filter, create, row navigation; no keys | Read page verified; created is in detail. Expiry and customer names added. Global and tenant create dialogs passed browser writes with all scopes and expiry. |
+| Key detail | ID, tenant ID, prefix, status, created, last used or Never, expires or Never, scope badges, metadata; rotate/revoke confirmation; new raw key; recent usage | Read page verified. Real key-filtered Request log replaces the old tenant-filtered recent usage. Protected reveal, immediate rotation, revocation and failure/retry passed browser checks. Never is explicit. |
+| Key form | Tenant, name, checked scopes, create/cancel; one-time generated key and copy affordance | Two-step create/reveal dialog verified. All checked scopes survive; admin carries its cross-tenant warning. Escape, backdrop, unload and SPA Back protect the reveal. Clipboard fallback and storage acknowledgement are verified. |
+| Usage | Day/week/month selection; requests, tokens, cost, cache hit rate, average latency; provider/model tables of requests/tokens/cost; no usage | Exact tables verified with tenant/period filters and explicit collection-off state. Separate spend/request charts, exact tooltips/table view and delayed filter retention passed browser checks. |
 | Request log | Tenant/provider/model filters; provider, model, tokens, cost, latency, cached, status code, created; no records | Verified with tenant/key/provider/model/outcome/time filters, correlation IDs and cursor load-more. Cached is an outcome badge; failing HTTP status is shown with the outcome. |
 | Models | Model ID, provider, name, context window, max output, input/output price; no models | Verified. Adds embedding price, capability fields and priced/free/unpriced distinction. |
 | Providers | Name, model count, healthy/unhealthy badge | Verified traffic counts over a stated 15-minute window replace the unsupported health verdict. Zero traffic does not imply healthy. |
@@ -120,16 +121,26 @@ must be verified before deleting the legacy directory.
 
 ## Verification
 
-Before the repository-wide formatting pass, the root race suite passed with real
-Postgres, MongoDB and Redis test containers, plus memory and SQLite coverage.
-All 37 nested modules passed standalone vet and tests. Contract transport checks
-covered CSRF, invalidations, secret replay and concurrent retry behavior. The
-React read plugin passed 28 tests and desktop/narrow fixture checks on all ten
-routes; tenant writes added five UI tests and six model tests, bringing the suite
-to 39. These checks do not qualify live provider credentials, installed-host
-permissions or distributed durable idempotency configuration.
+The root race suite passed with real Postgres, MongoDB and Redis test containers,
+plus memory and SQLite coverage. All 37 nested modules passed standalone vet and
+tests before retirement. Contract transport checks covered CSRF, invalidations,
+secret replay and concurrent retry behavior. The final retirement pass repeats
+the Go checks after dependency cleanup.
 
-After `make f`, `make l`, `make test-race` and `make b` passed across the Go
-workspace. The race run used the same Postgres, MongoDB and Redis containers.
-The linter used a task-specific temporary directory to avoid the shared linter
-lock held by another repository. The migration is not yet complete.
+The React plugin passed 66 tests, formatting, lint and typecheck after the final
+review fixes. All 12 routes passed 1440 by 1000 and 390 by 844 fixture browser
+checks. Tenant create/edit/status, key create/rotate/revoke, exact charts and
+error/retry paths were checked. Pending, uncertain and revealed key operations
+survived repeated Back, with the Navigation API and its indexed-history fallback.
+Tenant drafts survived an offline refresh and retry; denial, missing resources
+and a cleared host context discard them. All 18 HTTP intents and 12 spot checks
+passed, along with eight fixture tests.
+
+These checks do not qualify live provider credentials, installed-host permissions
+or distributed durable idempotency configuration. The React BASELINE records
+whole-host build measurements, shared-check outcomes and browser evidence.
+
+After retirement, `make f`, `make l`, `make test-race` and `make b` passed across
+all workspace modules. The race suite used the same database containers. No active
+Go source imports the retired dashboard, templ or forgeui, and Forge resolves to
+v1.12.3 with and without `go.work`.
