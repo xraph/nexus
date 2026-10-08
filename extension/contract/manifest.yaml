@@ -1,0 +1,12 @@
+schemaVersion: 1
+contributor:
+  name: nexus
+  envelope:
+    supports: [v1]
+    preferred: v1
+  capabilities: [nexus.read, nexus.write]
+
+# Operator-wide. Absent tenantId means all tenants; an explicit invalid or
+# unknown tenant is refused. No handler derives scope from principal claims.
+intents:
+  - { name: settings.get, kind: query, version: 1, capability: read }
