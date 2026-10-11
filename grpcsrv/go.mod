@@ -3,7 +3,7 @@ module github.com/xraph/nexus/grpcsrv
 go 1.26.0
 
 require (
-	github.com/xraph/nexus v1.7.0
+	github.com/xraph/nexus v1.7.1
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
 )
@@ -11,8 +11,11 @@ require (
 require (
 	github.com/coder/websocket v1.8.14 // indirect
 	github.com/gofrs/uuid/v5 v5.3.2 // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
+	github.com/stretchr/testify v1.11.1 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
+	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect

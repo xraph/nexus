@@ -88,7 +88,7 @@ func TestSecretCommandsUseTombstonesOverForgeTransport(t *testing.T) {
 		}
 		retry := r.call(tc.intent, tc.payload, r.csrf, tc.idem)
 		var replay dash.ErrorResponse
-		if json.Unmarshal(retry.Body.Bytes(), &replay) != nil || replay.Error == nil || replay.Error.Code != dash.CodeConflict || retry.Code != http.StatusInternalServerError || bytes.Contains(retry.Body.Bytes(), []byte(tc.raw)) {
+		if json.Unmarshal(retry.Body.Bytes(), &replay) != nil || replay.Error == nil || replay.Error.Code != dash.CodeConflict || retry.Code != http.StatusConflict || bytes.Contains(retry.Body.Bytes(), []byte(tc.raw)) {
 			t.Fatal("secret was replayed or command reran")
 		}
 	}
@@ -125,7 +125,7 @@ func TestConcurrentKeyCreateMintsOnce(t *testing.T) {
 	for got := range results {
 		if got.status == http.StatusOK {
 			successes++
-		} else if got.status != http.StatusInternalServerError || got.code != dash.CodeConflict {
+		} else if got.status != http.StatusConflict || got.code != dash.CodeConflict {
 			t.Fatalf("unexpected response status %d code %s", got.status, got.code)
 		}
 	}
