@@ -207,15 +207,35 @@ func (a *streamAccumulator) mergeTool(idx int, in *ToolCall) {
 		}
 	}
 	if slot == nil {
-		if existing, ok := a.toolByIndex[idx]; ok {
+		// The index fallback is for OpenAI-style streams that name a call
+		// once and then send ID-less fragments at the same index. A delta
+		// that carries a DIFFERENT id than the call already parked at this
+		// index is a distinct call, not a fragment: Anthropic, Bedrock and
+		// the realtime streams emit every tool delta as a one-element slice,
+		// so parallel calls all arrive at idx 0 and only the id tells them
+		// apart. Merging by index there glues the second call's JSON onto
+		// the first and loses the second call outright.
+		if existing, ok := a.toolByIndex[idx]; ok && (in.ID == "" || existing.ID == "" || existing.ID == in.ID) {
 			slot = existing
 		}
 	}
 	if slot == nil {
 		copyIn := *in
 		slot = &copyIn
-		a.toolByIndex[idx] = slot
-		a.toolOrder = append(a.toolOrder, idx)
+		key := idx
+		if _, taken := a.toolByIndex[key]; taken {
+			// Park the new call under the first free key so it keeps its own
+			// slot while toolOrder still records the order it arrived in.
+			key = len(a.toolByIndex)
+			for {
+				if _, taken := a.toolByIndex[key]; !taken {
+					break
+				}
+				key++
+			}
+		}
+		a.toolByIndex[key] = slot
+		a.toolOrder = append(a.toolOrder, key)
 		if in.ID != "" {
 			a.toolByID[in.ID] = slot
 		}
