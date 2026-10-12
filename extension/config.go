@@ -30,6 +30,10 @@ type Config struct {
 	// EnableUsage enables usage tracking (default: true).
 	EnableUsage *bool `json:"enable_usage" mapstructure:"enable_usage" yaml:"enable_usage"`
 
+	// RequireAPIKey makes the HTTP edges refuse a request without a valid
+	// nxs_ key (default: true).
+	RequireAPIKey *bool `json:"require_api_key" mapstructure:"require_api_key" yaml:"require_api_key"`
+
 	// EnableCache enables response caching (default: false).
 	EnableCache bool `json:"enable_cache" mapstructure:"enable_cache" yaml:"enable_cache"`
 
@@ -39,6 +43,15 @@ type Config struct {
 	// When empty and WithGroveDatabase was called, the default (unnamed) DB is used.
 	GroveDatabase string `json:"grove_database" mapstructure:"grove_database" yaml:"grove_database"`
 
+	// BootstrapAdminKey is the raw value of the first admin key: "nxs_" and
+	// 64 lowercase hex digits, for example "nxs_" plus the output of
+	// `openssl rand -hex 32`. On start, after migration, the extension stores
+	// it under the "operator" tenant with the admin scope, once. When empty,
+	// the NEXUS_BOOTSTRAP_ADMIN_KEY environment variable is used. It is a
+	// secret: prefer the env var to a file under source control. The
+	// extension never logs it.
+	BootstrapAdminKey string `json:"bootstrap_admin_key" mapstructure:"bootstrap_admin_key" yaml:"bootstrap_admin_key"`
+
 	// RequireConfig requires config to be present in YAML files.
 	// If true and no config is found, Register returns an error.
 	RequireConfig bool `json:"-" yaml:"-"`
@@ -47,6 +60,7 @@ type Config struct {
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() Config {
 	enableUsage := true
+	requireAPIKey := true
 	return Config{
 		BasePath:          "/nexus",
 		DefaultTimeout:    30 * time.Second,
@@ -54,6 +68,7 @@ func DefaultConfig() Config {
 		GlobalRateLimit:   0,
 		LogLevel:          "info",
 		EnableUsage:       &enableUsage,
+		RequireAPIKey:     &requireAPIKey,
 		EnableCache:       false,
 	}
 }

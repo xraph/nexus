@@ -94,11 +94,11 @@ func TestModels_PricingSet(t *testing.T) {
 	}
 
 	for _, m := range models {
-		if m.Pricing.InputPerMillion <= 0 {
-			t.Errorf("model %q Pricing.InputPerMillion = %f, want > 0", m.ID, m.Pricing.InputPerMillion)
+		if !m.Pricing.InputPerMillion.IsPositive() {
+			t.Errorf("model %q Pricing.InputPerMillion = %s, want > 0", m.ID, m.Pricing.InputPerMillion)
 		}
-		if m.Pricing.OutputPerMillion <= 0 {
-			t.Errorf("model %q Pricing.OutputPerMillion = %f, want > 0", m.ID, m.Pricing.OutputPerMillion)
+		if !m.Pricing.OutputPerMillion.IsPositive() {
+			t.Errorf("model %q Pricing.OutputPerMillion = %s, want > 0", m.ID, m.Pricing.OutputPerMillion)
 		}
 	}
 }

@@ -4,7 +4,9 @@ go 1.26.0
 
 require (
 	github.com/coder/websocket v1.8.14
-	github.com/xraph/nexus v1.6.2
+	github.com/xraph/nexus v1.7.1
 )
+
+require github.com/shopspring/decimal v1.4.0 // indirect
 
 replace github.com/xraph/nexus => ../..

@@ -17,11 +17,15 @@ package nexus
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/xraph/nexus/auth"
 	"github.com/xraph/nexus/cache"
+	"github.com/xraph/nexus/cache/stores"
 	"github.com/xraph/nexus/guard"
 	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/model"
@@ -30,6 +34,7 @@ import (
 	"github.com/xraph/nexus/pipeline/middlewares"
 	"github.com/xraph/nexus/plugin"
 	"github.com/xraph/nexus/provider"
+	"github.com/xraph/nexus/ratelimit"
 	"github.com/xraph/nexus/router"
 	"github.com/xraph/nexus/router/strategies"
 	"github.com/xraph/nexus/store"
@@ -44,7 +49,7 @@ type Gateway struct {
 	config *Config
 	engine *Engine
 	store  store.Store
-	auth   auth.Provider
+	auth   auth.Provider //nolint:staticcheck // kept for the deprecated WithAuth until the v1 break
 	logger Logger
 
 	// Core services (all interface-based)
@@ -57,6 +62,25 @@ type Gateway struct {
 	key       key.Service
 	usage     usage.Service
 	model     model.Service
+
+	// bootstrapAdminKey is the raw value of the first admin key, from
+	// WithBootstrapAdminKey. It is a secret: nothing logs it or returns it.
+	bootstrapAdminKey string
+
+	// routerStrategy is the name of the routing strategy in use.
+	routerStrategy string
+
+	// priceBook prices requests for the usage stage.
+	priceBook *model.PriceBook
+
+	// usageMW is the usage stage, kept so Shutdown can flush it.
+	usageMW *middlewares.UsageMiddleware
+
+	// limiter counts requests and tokens per minute for the quota stage.
+	limiter ratelimit.Limiter
+
+	// quotaMW is the quota stage, kept so the gateway can report limiter failures.
+	quotaMW *middlewares.QuotaMiddleware
 
 	// Model alias registry
 	aliasRegistry model.AliasRegistry
@@ -104,15 +128,51 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 	}
 
 	// Set defaults for unset services
-	if gw.auth == nil {
-		gw.auth = auth.NewNoop()
-	}
 	if gw.store == nil {
 		gw.store = store.NewMemory()
 	}
 	if gw.logger == nil {
 		gw.logger = NewNoopLogger()
 	}
+
+	if gw.tenant == nil {
+		var te tenant.Events
+		if gw.extensions != nil {
+			te = gw.extensions
+		}
+		// Keys and usage history both count as in use, on every store. The
+		// usage store is read directly: WithUsageService may replace gw.usage.
+		keys, records := gw.store.Keys(), gw.store.Usage()
+		inUse := func(ctx context.Context, tenantID string) (bool, error) {
+			ks, err := keys.ListByTenant(ctx, tenantID)
+			if err != nil || len(ks) > 0 {
+				return len(ks) > 0, err
+			}
+			if tenantID == "" { // "" means every tenant to a usage query
+				return false, nil
+			}
+			page, err := records.Query(ctx, &usage.QueryOptions{TenantID: tenantID, Limit: 1})
+			if err != nil {
+				return false, err
+			}
+			return len(page.Items) > 0, nil
+		}
+		gw.tenant = tenant.NewService(gw.store.Tenants(), tenant.WithEvents(te), tenant.WithInUse(inUse))
+	}
+	if gw.key == nil {
+		var ke key.Events
+		if gw.extensions != nil {
+			ke = gw.extensions
+		}
+		gw.key = key.NewService(gw.store.Keys(), key.WithTenants(gw.store.Tenants()), key.WithEvents(ke))
+	}
+	if gw.usage == nil {
+		gw.usage = usage.NewService(gw.store.Usage())
+	}
+	if gw.config.EnableCache && gw.cache == nil && gw.streamCache == nil {
+		gw.cache = cache.NewService(stores.NewMemory())
+	}
+	gw.priceBook = model.NewPriceBook(gw.providers)
 
 	// Initialize model service
 	if gw.model == nil {
@@ -121,18 +181,32 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 
 	// Default router: priority strategy (registration order)
 	if gw.router == nil {
-		gw.router = router.NewService(strategies.NewPriority())
+		s := strategies.NewPriority()
+		gw.router = router.NewService(s)
+		gw.routerStrategy = s.Name()
 	}
 
 	// Initialize engine
 	gw.engine = newEngine(gw)
 
+	if gw.limiter == nil {
+		gw.limiter = ratelimit.NewMemory()
+	}
+
 	// Build default pipeline if not set
 	if gw.pipeline == nil {
-		gw.pipeline = gw.buildDefaultPipeline()
+		p, err := gw.buildDefaultPipeline()
+		if err != nil {
+			return err
+		}
+		gw.pipeline = p
 	}
 
 	gw.initialized = true
+	if !gw.config.EnableUsage {
+		gw.logger.Warn("nexus: usage recording is off: the monthly budget will not apply",
+			"enable_usage", false)
+	}
 	gw.logger.Info("nexus gateway initialized",
 		"providers", gw.providers.Count(),
 		"extensions", gw.extensions.Count(),
@@ -143,18 +217,58 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 
 // buildDefaultPipeline creates the standard middleware chain.
 // Middleware is sorted by priority (lower = earlier), so the order
-// of b.Use() calls here doesn't matter — priority determines execution order.
-func (gw *Gateway) buildDefaultPipeline() pipeline.Service {
+// of b.Use() calls here doesn't matter: priority determines execution order.
+func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 	b := pipeline.NewBuilder()
+
+	// Priority 5: request id
+	b.Use(middlewares.NewRequestID())
 
 	// Priority 10: Tracing (if configured)
 	if gw.tracer != nil {
 		b.Use(observability.NewTracingMiddleware(gw.tracer))
 	}
 
+	// Priority 15: Usage recording (unless turned off)
+	if gw.config.EnableUsage && gw.usage != nil {
+		gw.usageMW = middlewares.NewUsage(gw.usage, gw.priceBook, gw.logger)
+		b.Use(gw.usageMW)
+	}
+
 	// Priority 20: Timeout (if configured)
 	if gw.config.DefaultTimeout > 0 {
 		b.Use(middlewares.NewTimeout(gw.config.DefaultTimeout))
+	}
+
+	// Priority 30: Identity (tenant isolation for the cache depends on it)
+	b.Use(middlewares.NewIdentity())
+
+	// Priority 40: tenant status and key scopes
+	b.Use(middlewares.NewAccess(gw.tenant, gw.key))
+
+	// Priority 50: token cap, daily requests, budget, RPM and TPM. The stage
+	// reads usage from the store, so it needs the usage service.
+	if gw.usage != nil {
+		var budgetEvents middlewares.BudgetEvents
+		if gw.extensions != nil {
+			budgetEvents = gw.extensions
+		}
+		gw.quotaMW = middlewares.NewQuota(middlewares.QuotaConfig{
+			Usage: gw.usage, Limiter: gw.limiter, Events: budgetEvents,
+			GlobalRPM: gw.config.GlobalRateLimit, Log: gw.logger,
+		})
+		b.Use(gw.quotaMW)
+	}
+
+	// Priority 60: Stream lifecycle hooks (only meaningful when extensions
+	// are registered; the middleware short-circuits when the registry is
+	// empty or the request isn't a stream).
+	if gw.extensions != nil {
+		cfg := gw.streamLifecycleCfg
+		if cfg.QuotaResolver == nil {
+			cfg.QuotaResolver = middlewares.TenantStreamQuota
+		}
+		b.Use(middlewares.NewStreamLifecycle(gw.extensions, cfg))
 	}
 
 	// Priority 150: Input guardrails (if configured)
@@ -172,6 +286,11 @@ func (gw *Gateway) buildDefaultPipeline() pipeline.Service {
 		b.Use(middlewares.NewAlias(gw.aliasRegistry))
 	}
 
+	// Priority 260: the tenant's allowed and blocked models, checked against
+	// the requested name and the one alias resolution produced. It passes
+	// quickly when the tenant has no lists.
+	b.Use(middlewares.NewModelPolicy())
+
 	// Priority 280: Cache (if configured)
 	if gw.cache != nil || gw.streamCache != nil {
 		mw := middlewares.NewCache(gw.cache)
@@ -186,28 +305,13 @@ func (gw *Gateway) buildDefaultPipeline() pipeline.Service {
 		b.Use(middlewares.NewRetry(gw.config.DefaultMaxRetries, 500*time.Millisecond, 2.0))
 	}
 
-	// Priority 350: Core provider call (always present)
-	b.Use(middlewares.NewProviderCall(gw.router, gw.providers))
-
-	// Priority 500: Response headers
-	b.Use(middlewares.NewHeaders("nexus"))
-
-	// Priority 545: Stream lifecycle hooks (only meaningful when extensions
-	// are registered; the middleware short-circuits when the registry is
-	// empty or the request isn't a stream).
-	if gw.extensions != nil {
-		b.Use(middlewares.NewStreamLifecycle(gw.extensions, gw.streamLifecycleCfg))
-	}
-
-	// Priority 550: Usage tracking (if store available)
-	if gw.usage != nil {
-		b.Use(middlewares.NewUsage(gw.usage))
-	}
-
 	// Custom middleware (user-provided, any priority)
 	for _, m := range gw.customMiddleware {
 		b.Use(m)
 	}
+
+	// Priority 350: Core provider call (always present, always last)
+	b.Use(middlewares.NewProviderCall(gw.router, gw.providers))
 
 	return b.Build()
 }
@@ -250,6 +354,94 @@ func (gw *Gateway) Tenants() tenant.Service { return gw.tenant }
 // Keys returns the API key service.
 func (gw *Gateway) Keys() key.Service { return gw.key }
 
+// The tenant that holds the bootstrap admin key, and the key's name.
+const (
+	bootstrapTenantSlug = "operator"
+	bootstrapTenantName = "Operator"
+	bootstrapKeyName    = "bootstrap admin"
+)
+
+// EnsureBootstrapAdminKey makes sure the key set with WithBootstrapAdminKey
+// exists, so an operator can reach the admin API without writing Go. It does
+// nothing when no key was set. Otherwise it finds or creates the active
+// tenant with slug "operator", then stores the key there with the admin
+// scope. Running it again changes nothing.
+//
+// A key revoked since the last run stays revoked and is reported with a
+// warning that names its id, so revoking the bootstrap key retires it. The
+// same warning covers a key that exists without the admin scope or under
+// another tenant. An "operator" tenant that is not active is an error. A key
+// of the wrong shape is an error that gives its length. The raw key never
+// appears in an error or a log line.
+//
+// Call it after the gateway is initialized and the store is migrated:
+// Store().Migrate() must have run, or the lookups fail. The Forge extension
+// does this in Start.
+func (gw *Gateway) EnsureBootstrapAdminKey(ctx context.Context) error {
+	if gw.bootstrapAdminKey == "" {
+		return nil
+	}
+	if gw.tenant == nil || gw.key == nil {
+		return errors.New("nexus: the gateway is not initialized: call Initialize before EnsureBootstrapAdminKey")
+	}
+	if !key.WellFormed(gw.bootstrapAdminKey) {
+		// Say how long it was, never what it was.
+		return fmt.Errorf("%w: the bootstrap admin key must be \"nxs_\" and 64 lowercase hex digits, and it is %d characters",
+			key.ErrInvalid, len(gw.bootstrapAdminKey))
+	}
+	tn, err := gw.operatorTenant(ctx)
+	if err != nil {
+		return err
+	}
+	if tn.Status != tenant.StatusActive {
+		return fmt.Errorf("nexus: the %q tenant is %s: the bootstrap admin key needs it active", bootstrapTenantSlug, tn.Status)
+	}
+	k, created, err := gw.key.Ensure(ctx, gw.bootstrapAdminKey, &key.CreateInput{
+		TenantID: tn.ID.String(),
+		Name:     bootstrapKeyName,
+		Scopes:   []string{key.ScopeAdmin},
+	})
+	if err != nil {
+		return err
+	}
+	switch {
+	case created:
+		gw.logger.Info("nexus: bootstrap admin key created", "key_id", k.ID.String(), "tenant", bootstrapTenantSlug)
+	case k.Status != key.KeyActive:
+		gw.logger.Warn("nexus: the bootstrap admin key is not active and stays that way: remove it from the config, or set a new one",
+			"key_id", k.ID.String(), "status", string(k.Status))
+	case !slices.Contains(k.Scopes, key.ScopeAdmin):
+		gw.logger.Warn("nexus: the bootstrap admin key exists without the admin scope, so it does not open the admin API",
+			"key_id", k.ID.String())
+	case k.TenantID != tn.ID:
+		gw.logger.Warn("nexus: the bootstrap admin key exists under a tenant other than operator",
+			"key_id", k.ID.String())
+	}
+	return nil
+}
+
+// operatorTenant returns the tenant with slug "operator", creating it when
+// it does not exist.
+func (gw *Gateway) operatorTenant(ctx context.Context) (*tenant.Tenant, error) {
+	tn, err := gw.tenant.GetBySlug(ctx, bootstrapTenantSlug)
+	if err == nil {
+		return tn, nil
+	}
+	if !errors.Is(err, tenant.ErrNotFound) {
+		return nil, fmt.Errorf("nexus: find the %q tenant: %w", bootstrapTenantSlug, err)
+	}
+	tn, err = gw.tenant.Create(ctx, &tenant.CreateInput{Name: bootstrapTenantName, Slug: bootstrapTenantSlug})
+	if err != nil {
+		// Another instance starting at the same time may have created it
+		// first; the unique slug then refuses ours.
+		if found, getErr := gw.tenant.GetBySlug(ctx, bootstrapTenantSlug); getErr == nil {
+			return found, nil
+		}
+		return nil, fmt.Errorf("nexus: create the %q tenant: %w", bootstrapTenantSlug, err)
+	}
+	return tn, nil
+}
+
 // Usage returns the usage service.
 func (gw *Gateway) Usage() usage.Service { return gw.usage }
 
@@ -265,18 +457,86 @@ func (gw *Gateway) Pipeline() pipeline.Service { return gw.pipeline }
 // Logger returns the gateway logger.
 func (gw *Gateway) Logger() Logger { return gw.logger }
 
+// RoutingStrategy is the name of the routing strategy in use.
+func (gw *Gateway) RoutingStrategy() string { return gw.routerStrategy }
+
+// Aliases lists the configured model aliases, or nil when there are none.
+func (gw *Gateway) Aliases() []model.Alias {
+	if gw.aliasRegistry == nil {
+		return nil
+	}
+	return gw.aliasRegistry.List()
+}
+
+// Transforms returns the transform registry, or nil when none is configured.
+func (gw *Gateway) Transforms() *transform.Registry { return gw.transforms }
+
+// PipelineStages lists the pipeline's stages in the order they run, or nil
+// for a custom pipeline that cannot list them.
+func (gw *Gateway) PipelineStages() []pipeline.Stage {
+	if in, ok := gw.pipeline.(pipeline.Inspector); ok {
+		return in.Stages()
+	}
+	return nil
+}
+
+// UsageInsertErrors is how many usage records failed to store since start.
+func (gw *Gateway) UsageInsertErrors() int64 {
+	if gw.usageMW == nil {
+		return 0
+	}
+	return gw.usageMW.InsertErrors()
+}
+
+// PriceBook returns the price book the usage stage prices requests with.
+func (gw *Gateway) PriceBook() *model.PriceBook { return gw.priceBook }
+
+// Limiter is the RPM and TPM limiter in use.
+func (gw *Gateway) Limiter() ratelimit.Limiter { return gw.limiter }
+
+// LimiterErrors counts limiter failures that let a request through.
+func (gw *Gateway) LimiterErrors() int64 {
+	if gw.quotaMW == nil {
+		return 0
+	}
+	return gw.quotaMW.LimiterErrors()
+}
+
+// FlushUsage waits until every usage record taken so far is stored, without
+// closing the stage. It also waits for streams that are still open, until ctx
+// ends. Shutdown flushes on its own.
+func (gw *Gateway) FlushUsage(ctx context.Context) error {
+	if gw.usageMW == nil {
+		return nil
+	}
+	return gw.usageMW.Flush(ctx)
+}
+
 // Health checks the health of the Gateway.
 func (gw *Gateway) Health(_ context.Context) error {
 	return nil
 }
 
-// Shutdown gracefully stops all services.
-func (gw *Gateway) Shutdown(_ context.Context) error {
+// Shutdown gracefully stops all services. It stops the usage stage taking
+// new records, waits until ctx is done for the streams still open and the
+// records still being stored, then closes the store. When ctx ends first,
+// the records not yet stored are lost: Shutdown logs how many and returns
+// the flush error, joined with any error from closing the store.
+func (gw *Gateway) Shutdown(ctx context.Context) error {
 	gw.logger.Info("nexus gateway shutting down")
-	if gw.store != nil {
-		return gw.store.Close()
+	var flushErr error
+	if gw.usageMW != nil {
+		gw.usageMW.Close()
+		if err := gw.usageMW.Flush(ctx); err != nil {
+			gw.logger.Warn("nexus: usage records not stored at shutdown", "pending", gw.usageMW.Pending(), "error", err)
+			flushErr = fmt.Errorf("nexus: flushing usage records: %w", err)
+		}
 	}
-	return nil
+	var closeErr error
+	if gw.store != nil {
+		closeErr = gw.store.Close()
+	}
+	return errors.Join(flushErr, closeErr)
 }
 
 // Router is a minimal interface for HTTP routing.

@@ -1,6 +1,10 @@
 package provider
 
-import "time"
+import (
+	"time"
+
+	"github.com/xraph/nexus/money"
+)
 
 // CompletionResponse is the unified response type.
 type CompletionResponse struct {
@@ -18,7 +22,7 @@ type CompletionResponse struct {
 	// Nexus metadata
 	Cached  bool          `json:"cached,omitempty"`
 	Latency time.Duration `json:"latency,omitempty"`
-	Cost    float64       `json:"cost,omitempty"` // estimated cost in USD
+	Cost    *money.USD    `json:"cost,omitempty"` // exact; nil until something prices the request
 
 	// Extended thinking
 	ThinkingContent string `json:"thinking_content,omitempty"`

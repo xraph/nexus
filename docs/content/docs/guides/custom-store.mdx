@@ -44,6 +44,15 @@ func (s *DynamoStore) Migrate(ctx context.Context) error { return s.createTables
 func (s *DynamoStore) Close() error                { return nil }
 ```
 
+## Key and usage store contracts
+
+The gateway's checks rely on a few rules that the Go types do not enforce. A custom store that breaks one still compiles, so check yours against this list. The tests in `store/storetest` check each rule against the built-in stores, and they are a good model for testing yours.
+
+- `key.Store.FindByPrefix` returns every key with that prefix, in any status, as a slice. Prefixes are not unique, and the key service compares the hash of each one and reports revoked and expired keys itself. Return an empty slice and a nil error when none match.
+- `key.Store.TouchLastUsed` writes `LastUsedAt` and nothing else, as a single-column update. A full-row write here can put a key you just revoked back to active.
+- `usage.Store.DailyRequests` counts every record since midnight UTC except those with outcome `refused`. If it counts refusals, a tenant held at its RPM burns its daily quota on them.
+- A tenant id of `""` passed to `DailyRequests`, `MonthlySpend`, `Summary`, `Series` or `Query` means every tenant, including requests attributed to none.
+
 ## Built-in Stores
 
 | Store | Package | Use Case |

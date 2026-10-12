@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -30,6 +32,11 @@ type CacheMiddleware struct {
 
 // NewCache creates a caching middleware backed only by the
 // CompletionResponse cache tier.
+//
+// Tenant isolation depends on the cache key naming the tenant: the request's
+// TenantID, or the context's (pipeline.WithTenantID) when the request names
+// none. When both name a tenant and they differ, the request bypasses the
+// cache, reading and writing nothing.
 func NewCache(c cache.Service) *CacheMiddleware {
 	return &CacheMiddleware{cache: c}
 }
@@ -57,9 +64,18 @@ func (m *CacheMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	if req.Completion == nil {
 		return next(ctx)
 	}
+	// A tenant that turned its cache off neither reads nor writes it.
+	if t, ok := TenantFromContext(ctx); ok && t.Config.CacheEnabled != nil && !*t.Config.CacheEnabled {
+		return next(ctx)
+	}
+
+	keyReq, ok := tenantScoped(ctx, req.Completion)
+	if !ok {
+		return next(ctx)
+	}
 
 	if req.Type == pipeline.RequestStream {
-		return m.handleStream(ctx, req, next)
+		return m.handleStream(ctx, req, keyReq, next)
 	}
 
 	if m.cache == nil {
@@ -67,13 +83,17 @@ func (m *CacheMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	}
 
 	// Generate cache key
-	key := cache.Key(req.Completion)
+	key := cache.Key(keyReq)
 
 	// Check cache
+	// The store may hand every caller the same object, so a hit gets its own
+	// copy before anything marks or redacts it.
 	cached, err := m.cache.Get(ctx, key)
 	if err == nil && cached != nil {
-		cached.Cached = true
-		return &pipeline.Response{Completion: cached}, nil
+		hit := copyCompletion(cached)
+		hit.Cached = true
+		req.State[pipeline.StateCacheHit] = true
+		return &pipeline.Response{Completion: hit}, nil
 	}
 
 	// Cache miss — continue pipeline
@@ -82,24 +102,58 @@ func (m *CacheMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 		return resp, err
 	}
 
-	// Store successful response
+	// Store a copy of the successful response, so the stages this response
+	// still passes through (an output guard's redaction, output transforms)
+	// never write into the stored entry.
 	if resp != nil && resp.Completion != nil {
-		_ = m.cache.Set(ctx, key, resp.Completion) //nolint:errcheck // best-effort cache store
+		_ = m.cache.Set(ctx, key, copyCompletion(resp.Completion)) //nolint:errcheck // best-effort cache store
 	}
 
 	return resp, nil
 }
 
-func (m *CacheMiddleware) handleStream(ctx context.Context, req *pipeline.Request, next pipeline.NextFunc) (*pipeline.Response, error) {
+// copyCompletion returns a copy of r that later stages can change without
+// touching r. Choices and State are copied too: output guards and output
+// transforms replace a choice's message or content in place, and stages add
+// to State. A message's content is replaced, never edited, so copying the
+// choices by value is enough.
+func copyCompletion(r *provider.CompletionResponse) *provider.CompletionResponse {
+	cp := *r
+	cp.Choices = slices.Clone(r.Choices)
+	cp.State = maps.Clone(r.State)
+	return &cp
+}
+
+// tenantScoped returns the request the cache key is computed from: the
+// request itself when it names a tenant, or a copy carrying the context's
+// tenant when only the context names one. Without this, a pipeline with no
+// identity stage would key two context-only tenants to the same entry. ok is
+// false when the request and the context name different tenants: such a
+// request bypasses the cache.
+func tenantScoped(ctx context.Context, req *provider.CompletionRequest) (*provider.CompletionRequest, bool) {
+	fromCtx := pipeline.TenantID(ctx)
+	switch {
+	case fromCtx == "" || fromCtx == req.TenantID:
+		return req, true
+	case req.TenantID != "":
+		return nil, false
+	}
+	keyReq := *req
+	keyReq.TenantID = fromCtx
+	return &keyReq, true
+}
+
+func (m *CacheMiddleware) handleStream(ctx context.Context, req *pipeline.Request, keyReq *provider.CompletionRequest, next pipeline.NextFunc) (*pipeline.Response, error) {
 	if m.streamCache == nil {
-		// No stream cache configured — pass through.
+		// No stream cache configured: pass through.
 		return next(ctx)
 	}
 
-	key := cache.StreamKey(req.Completion)
+	key := cache.StreamKey(keyReq)
 
 	// Cache hit: replay stored frames as a synthesized stream.
 	if frames, err := m.streamCache.GetStream(ctx, key); err == nil && len(frames) > 0 {
+		req.State[pipeline.StateCacheHit] = true
 		return &pipeline.Response{Stream: newReplayStream(frames, m.streamOpts)}, nil
 	}
 

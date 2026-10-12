@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xraph/nexus/id"
+	"github.com/xraph/nexus/money"
 )
 
 // Tenant represents an isolated customer / team / project.
@@ -32,27 +33,45 @@ const (
 
 // Quota defines limits for a tenant.
 type Quota struct {
-	RPM              int     `json:"rpm"`                // requests per minute
-	TPM              int     `json:"tpm"`                // tokens per minute
-	DailyRequests    int     `json:"daily_requests"`     // max requests per day (0 = unlimited)
-	MonthlyBudgetUSD float64 `json:"monthly_budget_usd"` // max spend per month (0 = unlimited)
-	MaxTokensPerReq  int     `json:"max_tokens_per_req"` // max tokens per single request
+	RPM              int       `json:"rpm"`                // requests per minute
+	TPM              int       `json:"tpm"`                // tokens per minute
+	DailyRequests    int       `json:"daily_requests"`     // max requests per day (0 = unlimited)
+	MonthlyBudgetUSD money.USD `json:"monthly_budget_usd"` // max spend per month, exact; zero means no budget
+	MaxTokensPerReq  int       `json:"max_tokens_per_req"` // max tokens per single request
 
-	// Streaming-specific limits. Enforced by middlewares.NewStreamLifecycle
-	// when wired with a QuotaResolver.
+	// Streaming-specific limits. The gateway enforces them by default,
+	// through the stream lifecycle stage reading the tenant's quota.
 	MaxStreamDuration time.Duration `json:"max_stream_duration,omitempty"` // wall-clock cap per stream (0 = unlimited)
 	MaxStreamTokens   int           `json:"max_stream_tokens,omitempty"`   // output-token cap per stream (0 = unlimited)
 }
 
 // Config holds per-tenant overrides.
 type Config struct {
-	AllowedModels   []string          `json:"allowed_models,omitempty"`
-	BlockedModels   []string          `json:"blocked_models,omitempty"`
-	DefaultModel    string            `json:"default_model,omitempty"`
-	RoutingStrategy string            `json:"routing_strategy,omitempty"`
-	GuardrailPolicy string            `json:"guardrail_policy,omitempty"`
-	CacheEnabled    *bool             `json:"cache_enabled,omitempty"`
-	Metadata        map[string]string `json:"metadata,omitempty"`
+	// AllowedModels, when not empty, limits the tenant to these models. A
+	// request is admitted when the model it asked for, or the model an
+	// alias resolved it to, is listed. Names are case-sensitive and match
+	// exactly; surrounding spaces are trimmed when the tenant is saved. An
+	// alias with several targets is checked against the target picked for
+	// that request, so list every target when it matters.
+	AllowedModels []string `json:"allowed_models,omitempty"`
+	// BlockedModels refuses a request when the model it asked for, or the
+	// model an alias resolved it to, is listed. Blocks win over allows. An
+	// alias with several targets is checked against the target picked for
+	// that request, so list every target when it matters.
+	BlockedModels []string `json:"blocked_models,omitempty"`
+	// DefaultModel is the model a request gets when it names none. It is
+	// filled before alias resolution, so it may be an alias.
+	DefaultModel string `json:"default_model,omitempty"`
+	// RoutingStrategy is stored for the dashboard; not enforced by the
+	// gateway yet.
+	RoutingStrategy string `json:"routing_strategy,omitempty"`
+	// GuardrailPolicy is stored for the dashboard; not enforced by the
+	// gateway yet.
+	GuardrailPolicy string `json:"guardrail_policy,omitempty"`
+	// CacheEnabled false turns the response cache off for this tenant, for
+	// reading and for writing. Nil follows the gateway setting.
+	CacheEnabled *bool             `json:"cache_enabled,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
 // CreateInput is the input for creating a tenant.
@@ -72,11 +91,19 @@ type UpdateInput struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
-// ListOptions configures tenant listing.
+// ListOptions configures tenant listing. Search matches name or slug,
+// anywhere, ignoring case. Lists are newest first and cursor paged.
 type ListOptions struct {
 	Status string `json:"status,omitempty"`
+	Search string `json:"search,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
-	Offset int    `json:"offset,omitempty"`
+	Cursor string `json:"cursor,omitempty"`
+}
+
+// ListResult is one page of tenants. NextCursor is "" on the last page.
+type ListResult struct {
+	Items      []*Tenant `json:"items"`
+	NextCursor string    `json:"next_cursor"`
 }
 
 // Service manages tenant lifecycle.
@@ -86,17 +113,18 @@ type Service interface {
 	GetBySlug(ctx context.Context, slug string) (*Tenant, error)
 	Update(ctx context.Context, id string, input *UpdateInput) (*Tenant, error)
 	Delete(ctx context.Context, id string) error
-	List(ctx context.Context, opts *ListOptions) ([]*Tenant, int, error)
+	List(ctx context.Context, opts *ListOptions) (*ListResult, error)
 	UpdateQuota(ctx context.Context, id string, quota *Quota) error
 	SetStatus(ctx context.Context, id string, status Status) error
 }
 
 // Store is the persistence interface for tenants.
+// Finders and Update return ErrNotFound when no tenant matches; Delete of an unknown id is a no-op.
 type Store interface {
 	Insert(ctx context.Context, t *Tenant) error
 	FindByID(ctx context.Context, id string) (*Tenant, error)
 	FindBySlug(ctx context.Context, slug string) (*Tenant, error)
 	Update(ctx context.Context, t *Tenant) error
 	Delete(ctx context.Context, id string) error
-	List(ctx context.Context, opts *ListOptions) ([]*Tenant, int, error)
+	List(ctx context.Context, opts *ListOptions) (*ListResult, error)
 }

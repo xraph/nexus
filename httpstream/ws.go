@@ -12,6 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/provider"
 )
 
@@ -27,7 +28,8 @@ import (
 //	server → client (text JSON):
 //	  StreamEvent objects (same shape as NDJSON)
 //	  Final {"type":"done"} then graceful close.
-//	  {"type":"error", error:{...}} on failure then close StatusInternalError.
+//	  {"type":"error", error:{...}} on failure then close StatusInternalError,
+//	  or StatusPolicyViolation when the gateway refused the request.
 //
 // The handler is constructed with a CompletionStreamer — typically the
 // gateway engine — that produces the provider.Stream for a parsed request.
@@ -58,6 +60,11 @@ type WSOptions struct {
 	// HeartbeatInterval, when > 0, sends WS pings on the configured cadence
 	// to keep the connection alive across idle proxies. Default: 20s.
 	HeartbeatInterval time.Duration
+
+	// OnError is called once when a stream fails, with the error as the
+	// stream returned it. The client sees only the sanitized envelope, so
+	// this is where the cause is logged. ctx carries the request id.
+	OnError func(ctx context.Context, err error)
 }
 
 // NewWSHandler returns a WebSocket handler.
@@ -103,9 +110,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	stream, err := h.streamer.CompleteStream(ctx, startEnv.Request)
 	if err != nil {
-		errEv := &StreamEvent{Type: EventTypeError, Err: SanitizeError(err, "")}
-		_ = writeJSONFrame(ctx, conn, errEv) //nolint:errcheck // best-effort: connection may already be torn
-		_ = conn.Close(websocket.StatusInternalError, "stream init failed")
+		h.fail(ctx, conn, err, "stream init failed")
 		return
 	}
 	defer func() { _ = stream.Close() }()
@@ -132,19 +137,33 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			ev := &StreamEvent{Type: EventTypeError, Err: SanitizeError(err, "")}
-			_ = writeJSONFrame(ctx, conn, ev) //nolint:errcheck // best-effort
-			_ = conn.Close(websocket.StatusInternalError, "stream error")
+			h.fail(ctx, conn, err, "stream error")
 			return
 		}
 		if chunk == nil {
 			continue
 		}
-		ev := FromChunk(chunk, "")
+		ev := FromChunk(chunk, pipeline.RequestID(ctx))
 		if err := writeJSONFrame(ctx, conn, ev); err != nil {
 			cancel()
 			return
 		}
+	}
+}
+
+// fail tells the client the sanitized error, closes the connection (1008 for
+// a refusal, 1011 for anything else) and hands the real error to OnError.
+func (h *WSHandler) fail(ctx context.Context, conn *websocket.Conn, err error, reason string) {
+	ev := &StreamEvent{Type: EventTypeError, Err: SanitizeError(err, pipeline.RequestID(ctx))}
+	_ = writeJSONFrame(ctx, conn, ev) //nolint:errcheck // best-effort: connection may already be torn
+	code := websocket.StatusInternalError
+	var refused pipeline.Refusal
+	if errors.As(err, &refused) {
+		code = websocket.StatusPolicyViolation
+	}
+	_ = conn.Close(code, reason)
+	if h.opts.OnError != nil {
+		h.opts.OnError(ctx, err)
 	}
 }
 

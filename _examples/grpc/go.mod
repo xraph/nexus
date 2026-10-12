@@ -3,21 +3,22 @@ module github.com/xraph/nexus/_examples/grpc
 go 1.26.0
 
 require (
-	github.com/xraph/nexus v1.6.2
+	github.com/xraph/nexus v1.7.1
 	github.com/xraph/nexus/grpcsrv v0.0.0
 	github.com/xraph/nexus/providers/openai v0.0.0
 	google.golang.org/grpc v1.83.2
 )
 
 require (
+	github.com/coder/websocket v1.8.14 // indirect
 	github.com/gofrs/uuid/v5 v5.3.2 // indirect
-	github.com/xraph/go-utils v1.2.2 // indirect
+	github.com/shopspring/decimal v1.4.0 // indirect
+	github.com/xraph/go-utils v1.3.0 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
-	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.28.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect
 )

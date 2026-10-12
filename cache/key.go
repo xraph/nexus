@@ -11,8 +11,12 @@ import (
 
 // Key generates a deterministic cache key from a request.
 // The key is a SHA-256 hash of the relevant request fields.
+// The tenant is part of the key, so tenants never share entries.
 func Key(req *provider.CompletionRequest) string {
 	h := sha256.New()
+
+	// Tenant: one tenant must never be served another's cached completion.
+	_, _ = fmt.Fprintf(h, "tenant:%s\n", req.TenantID)
 
 	// Model
 	_, _ = fmt.Fprintf(h, "model:%s\n", req.Model)

@@ -25,10 +25,8 @@ func (a *API) handleCreateCompletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Model == "" {
-		writeError(w, http.StatusBadRequest, "model is required")
-		return
-	}
+	// An empty model is not refused here: the access stage fills the
+	// tenant's default model, and refuses the request when there is none.
 
 	ctx := r.Context()
 
@@ -40,7 +38,7 @@ func (a *API) handleCreateCompletion(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.gw.Engine().Complete(ctx, &req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writePipelineError(w, r, err)
 		return
 	}
 
@@ -52,7 +50,7 @@ func (a *API) handleStreamCompletion(_ context.Context, w http.ResponseWriter, r
 	defer cancel()
 	stream, err := a.gw.Engine().CompleteStream(ctx, req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writePipelineError(w, r, err)
 		return
 	}
 
@@ -65,5 +63,6 @@ func (a *API) handleStreamCompletion(_ context.Context, w http.ResponseWriter, r
 
 	httpstream.Run(ctx, w, stream, encoder, httpstream.RunOptions{
 		RequestID: pipeline.RequestID(ctx),
+		OnError:   func(err error) { a.onStreamError(ctx, err) },
 	})
 }

@@ -61,7 +61,7 @@ func TestAPI_ShutdownCancelsInFlightStreams(t *testing.T) {
 	t.Parallel()
 
 	bp := &blockingProvider{}
-	gw := nexus.New(nexus.WithProvider(bp))
+	gw := nexus.New(nexus.WithProvider(bp), nexus.WithRequireAPIKey(false)) // these tests are about shutdown, not auth
 	if err := gw.Initialize(context.Background()); err != nil {
 		t.Fatalf("init: %v", err)
 	}

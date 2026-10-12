@@ -19,6 +19,11 @@ type Config struct {
 	// EnableCache enables caching (default: false, must provide cache).
 	EnableCache bool
 
+	// RequireAPIKey makes the HTTP edges (api, proxy) refuse a request
+	// without a valid nxs_ key. Default true. False keeps an open gateway
+	// for local work; a key that is presented is still checked.
+	RequireAPIKey bool
+
 	// GlobalRateLimit is the global rate limit in requests per minute (0 = unlimited).
 	GlobalRateLimit int
 
@@ -34,6 +39,7 @@ func DefaultConfig() *Config {
 		DefaultMaxRetries: 2,
 		EnableUsage:       true,
 		EnableCache:       false,
+		RequireAPIKey:     true,
 		GlobalRateLimit:   0,
 		LogLevel:          "info",
 	}

@@ -1,55 +1,108 @@
 ---
 title: Identity & Auth
-description: Authentication providers, API key validation, and the Authsome adapter.
+description: Gateway keys, scopes, tenant status, and how a request is authenticated over HTTP and gRPC.
 ---
 
-## Auth Interface
+Every request to a Nexus gateway carries a gateway key. You make keys with the key service, the HTTP routes and the gRPC interceptor check them, and the pipeline holds each request to its key's tenant and scopes. The `api` and `proxy` packages wire all of this for you. This page is for when you want to know what they do, or need the same checks on routes of your own.
+
+## Making a key
 
 ```go
-type Provider interface {
-    Authenticate(ctx context.Context) (Claims, error)
-    AuthenticateAPIKey(ctx context.Context, apiKey string) (Claims, error)
+k, raw, err := gw.Keys().Create(ctx, &key.CreateInput{
+    TenantID: tenantID,
+    Name:     "billing-service",
+    Scopes:   []string{key.ScopeCompletions, key.ScopeEmbeddings},
+})
+// raw is shown once. Only its hash is stored, so hand it to its owner now.
+```
+
+A key is `nxs_` followed by 64 lowercase hex characters. It belongs to one tenant and holds scopes:
+
+| Scope | Constant | What it lets the key do |
+|-------|----------|-------------------------|
+| `completions` | `key.ScopeCompletions` | Chat completions, streamed or not, and `/v1/realtime` |
+| `embeddings` | `key.ScopeEmbeddings` | Embeddings |
+| `models` | `key.ScopeModels` | List models, when keys are required |
+| `admin` | `key.ScopeAdmin` | The `/admin` API, for every tenant |
+
+A key made without scopes gets `completions`, `embeddings` and `models`. Any other name is refused with `key.ErrInvalid`, so a typo such as `completion` fails at creation instead of making a key that can do nothing. An `admin` key administers every tenant, whichever tenant it belongs to. Keep it out of application code.
+
+With keys required, no HTTP route can make the first admin key, because making one takes an admin key. Create it in Go, once, from the process that owns the gateway. The [HTTP API page](/docs/api-reference/http-api#your-first-admin-key) has the snippet.
+
+## The request flow
+
+Over HTTP, a request passes these steps in order. Each one can refuse it with a typed refusal (see [Errors](/docs/concepts/errors)).
+
+1. `auth.RequestID` gives the request an id of its own and returns it in `X-Request-Id`.
+2. `auth.KeyAuth` reads the key from `x-api-key` or `Authorization: Bearer`. A missing, malformed, unknown, revoked or expired key is a 401. Then it reads the key's tenant: a tenant that is not active is a 403, and a store it cannot read is a 503.
+3. `auth.RequireScope` guards the routes that need a scope of their own (`admin`, and `models` when keys are required). No key is a 401 and the wrong scope is a 403.
+4. The pipeline runs. The identity stage makes the tenant and key in the context agree with the request's own fields, the access stage checks the tenant is active and the key holds `completions` or `embeddings`, and the quota stage applies the tenant's limits.
+
+The refusals in steps 2 and 3 happen before the pipeline and are not written to the usage store, since they have no tenant to charge. Refusals in step 4 are recorded with outcome `refused`.
+
+## Protecting your own routes
+
+The same middleware works on any `net/http` mux:
+
+```go
+keyAuth := auth.KeyAuth(auth.KeyAuthOptions{
+    Keys:     gw.Keys(),
+    Tenants:  gw.Tenants(),
+    Required: true,
+})
+rid := auth.RequestID()
+
+mux.Handle("POST /v1/summarize", rid(keyAuth(summarize)))
+mux.Handle("GET /ops/report", rid(keyAuth(auth.RequireScope(key.ScopeAdmin, nil)(report))))
+```
+
+Always pass `Tenants`. Without it the edge checks the key alone, and a key whose tenant you suspended still gets through any route that does not reach the pipeline.
+
+`Required: false` lets a request without a key through, anonymous. A key that is presented is still checked, and any non-empty `Authorization` header counts as presented, so a Basic credential or a forwarded Bearer JWT gets a 401. `RequireScope` fails closed: a route behind it always needs a key, whatever `Required` says.
+
+## Tenant status
+
+A tenant is `active`, `disabled` or `suspended`. Only an active tenant's keys work. Set the status with `gw.Tenants().SetStatus` and every key of that tenant is refused at the next request, admin keys included:
+
+| Tenant | Refusal |
+|--------|---------|
+| `disabled` or `suspended` | 403 `forbidden`, "tenant is disabled" or "tenant is suspended" |
+| deleted | 403 `forbidden`, "unknown tenant" |
+| store unreadable | 503 `unavailable`, cause logged |
+
+The edge reads the tenant on every authenticated request. That is one extra store read per request, on top of the key lookup.
+
+## In-process callers
+
+A Go caller that holds a raw key can run the same check and get a context the pipeline trusts:
+
+```go
+ctx, err := auth.AuthenticateWithTenants(ctx, gw.Keys(), gw.Tenants(), rawKey)
+if err != nil {
+    return err // a pipeline.Refusal: 401, 403 or 503
 }
+resp, err := gw.Engine().Complete(ctx, req)
 ```
 
-## Claims
+`auth.Authenticate(ctx, keys, rawKey)` is the same without the tenant check.
+
+A trusted caller can also skip the raw key and name the tenant and key on the request (`CompletionRequest.TenantID` and `KeyID`), or put the tenant in the context with `pipeline.WithTenantID`. The access stage then reads the key from the store and checks its status, tenant and scopes. A request that names a key and no tenant is refused `invalid_request`.
+
+## gRPC
+
+`grpcsrv.Register` does not authenticate. Install the interceptor, which runs the same check as the HTTP edge:
 
 ```go
-type Claims struct {
-    TenantID string
-    Subject  string
-    Scopes   []string
-}
+srv := grpc.NewServer(grpc.StreamInterceptor(grpcsrv.KeyAuth(gw.Keys(), gw.Tenants())))
+grpcsrv.Register(srv, gw.Engine())
 ```
 
-## Default (Noop)
+The key goes in the `x-api-key` metadata or in `authorization: Bearer nxs_...`. A refusal comes back as a gRPC status: `Unauthenticated`, `PermissionDenied` or `Unavailable`.
 
-By default, Nexus uses a noop auth provider that allows all requests:
+Without the interceptor the gRPC surface is anonymous, whatever `RequireAPIKey` says. That setting covers the HTTP `api` and `proxy` routes only. Every gRPC call is then unattributed, so no tenant budget, RPM, TPM or scope applies, and only `GlobalRateLimit` limits it.
 
-```go
-gw := nexus.New() // auth.NewNoop() is set automatically
-```
+## Deprecated: `auth.Provider` and `nexus.WithAuth`
 
-## API Key Auth
+`auth.Provider`, `auth.Claims`, `auth.NewNoop`, `nexus.WithAuth` and the `auth/authsome` adapter are deprecated. Nothing consults them: `WithAuth` stores the provider and the gateway never calls it. They stay so existing code compiles, and they go in the v1 break.
 
-Use the built-in key service for API key authentication:
-
-```go
-keyService := key.NewService(store)
-gw := nexus.New(
-    nexus.WithAuth(keyService),
-)
-```
-
-## Authsome Adapter
-
-If you use Authsome in a Forge application, Nexus provides an adapter:
-
-```go
-import "github.com/xraph/nexus/auth/authsome"
-
-adapter := authsome.NewAdapter(authsomeInstance)
-gw := nexus.New(
-    nexus.WithAuth(adapter),
-)
-```
+If you followed an older version of this page and wired Authsome through `WithAuth`, it did nothing then and does nothing now. An Authsome Bearer token sent to the gateway counts as a presented key and gets a 401. Callers need a gateway key.

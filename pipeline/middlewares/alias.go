@@ -42,7 +42,7 @@ func (m *AliasMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	}
 
 	// Store original model name for logging/metrics
-	req.State["original_model"] = req.Completion.Model
+	req.State[pipeline.StateOriginalModel] = req.Completion.Model
 	req.State["alias_target_provider"] = target.Provider
 	req.State["alias_target_model"] = target.Model
 

@@ -1,38 +1,42 @@
 package model
 
-import "github.com/xraph/nexus/provider"
+import (
+	"github.com/xraph/nexus/money"
+	"github.com/xraph/nexus/provider"
+	"github.com/xraph/nexus/usage"
+)
 
-// CostEstimate represents the estimated cost of a request.
-type CostEstimate struct {
-	InputCost  float64 `json:"input_cost"`  // USD
-	OutputCost float64 `json:"output_cost"` // USD
-	TotalCost  float64 `json:"total_cost"`  // USD
-	Currency   string  `json:"currency"`    // always "USD"
-}
-
-// EstimateCost calculates the estimated cost for a request based on
-// token usage and model pricing.
-func EstimateCost(usage provider.Usage, pricing provider.Pricing) *CostEstimate {
-	inputCost := float64(usage.PromptTokens) / 1_000_000 * pricing.InputPerMillion
-	outputCost := float64(usage.CompletionTokens) / 1_000_000 * pricing.OutputPerMillion
-
-	return &CostEstimate{
-		InputCost:  inputCost,
-		OutputCost: outputCost,
-		TotalCost:  inputCost + outputCost,
-		Currency:   "USD",
+// Cost prices usage at a model's list prices, exactly: prompt tokens at the
+// input price plus completion tokens at the output price, or prompt tokens
+// at the embedding price for an embedding. An embedding provider that
+// reports only a total (Voyage does) is priced from the total, since every
+// token of an embedding is input. When the model has no price for
+// the tokens used it returns nil and PricingUnpricedModel, so an unknown
+// cost is never reported as $0. A Free price list costs exactly $0.
+//
+// The result is only as good as the token counts the provider reported.
+// Providers do not report cache or thinking tokens today, so those are not
+// priced.
+func Cost(u provider.Usage, p provider.Pricing, embedding bool) (*money.USD, usage.PricingStatus) {
+	if p.Free {
+		zero := money.Zero
+		return &zero, usage.PricingPriced
 	}
-}
-
-// EstimateCostFromTokens calculates the estimated cost from raw token counts.
-func EstimateCostFromTokens(inputTokens, outputTokens int, pricing provider.Pricing) *CostEstimate {
-	inputCost := float64(inputTokens) / 1_000_000 * pricing.InputPerMillion
-	outputCost := float64(outputTokens) / 1_000_000 * pricing.OutputPerMillion
-
-	return &CostEstimate{
-		InputCost:  inputCost,
-		OutputCost: outputCost,
-		TotalCost:  inputCost + outputCost,
-		Currency:   "USD",
+	if embedding {
+		if p.EmbeddingPerMillion.IsZero() {
+			return nil, usage.PricingUnpricedModel
+		}
+		tokens := u.PromptTokens
+		if tokens == 0 {
+			tokens = u.TotalTokens
+		}
+		c := p.EmbeddingPerMillion.PerMillion(int64(tokens))
+		return &c, usage.PricingPriced
 	}
+	if p.InputPerMillion.IsZero() && p.OutputPerMillion.IsZero() {
+		return nil, usage.PricingUnpricedModel
+	}
+	c := p.InputPerMillion.PerMillion(int64(u.PromptTokens)).
+		Add(p.OutputPerMillion.PerMillion(int64(u.CompletionTokens)))
+	return &c, usage.PricingPriced
 }

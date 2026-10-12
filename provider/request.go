@@ -116,4 +116,5 @@ type EmbeddingRequest struct {
 	Model    string   `json:"model"`
 	Input    []string `json:"input"`
 	TenantID string   `json:"-"`
+	KeyID    string   `json:"-"`
 }

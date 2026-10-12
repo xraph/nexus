@@ -3,40 +3,114 @@ title: Errors
 description: Error values and HTTP status code mapping.
 ---
 
-Nexus defines sentinel errors in the root package. These are used throughout the codebase and mapped to HTTP status codes in the API layer.
+The root package exports a set of sentinel errors you can match with `errors.Is`. They are for your own code. The gateway's HTTP status never comes from them: it comes from the refusals described below.
+
+Today the engine itself returns only one of them, `ErrProviderNotFound`, when it has no pipeline to run a request through. The rest are exported and unused by the gateway, so wrapping one of your own errors in them is safe, and so is ignoring them.
 
 ## Error Values
 
 ```go
 var (
+    // Provider errors
     ErrProviderNotFound    = errors.New("nexus: provider not found")
-    ErrModelNotFound       = errors.New("nexus: model not found")
-    ErrNoProviderAvailable = errors.New("nexus: no provider available")
-    ErrAuthRequired        = errors.New("nexus: authentication required")
-    ErrForbidden           = errors.New("nexus: forbidden")
-    ErrTenantRequired      = errors.New("nexus: tenant context required")
-    ErrTenantNotFound      = errors.New("nexus: tenant not found")
-    ErrTenantDisabled      = errors.New("nexus: tenant disabled")
-    ErrGuardrailBlocked    = errors.New("nexus: blocked by guardrail")
-    ErrCacheMiss           = errors.New("nexus: cache miss")
-    ErrRateLimited         = errors.New("nexus: rate limit exceeded")
-    ErrBudgetExceeded      = errors.New("nexus: budget exceeded")
-    ErrTokenOverflow       = errors.New("nexus: token limit exceeded")
-    ErrAliasNotFound       = errors.New("nexus: alias not found")
+    ErrProviderUnavailable = errors.New("nexus: provider unavailable")
+    ErrModelNotSupported   = errors.New("nexus: model not supported by provider")
+    ErrAllProvidersFailed  = errors.New("nexus: all providers failed")
+
+    // Auth errors
+    ErrUnauthorized  = errors.New("nexus: unauthorized")
+    ErrAPIKeyInvalid = errors.New("nexus: invalid API key")
+    ErrAPIKeyRevoked = errors.New("nexus: API key revoked")
+
+    // Tenant errors
+    ErrTenantNotFound = errors.New("nexus: tenant not found")
+    ErrTenantDisabled = errors.New("nexus: tenant disabled")
+    ErrQuotaExceeded  = errors.New("nexus: quota exceeded")
+    ErrBudgetExceeded = errors.New("nexus: budget exceeded")
+
+    // Rate limiting
+    ErrRateLimited = errors.New("nexus: rate limited")
+
+    // Guardrail errors
+    ErrContentBlocked    = errors.New("nexus: content blocked by guardrail")
+    ErrPIIDetected       = errors.New("nexus: PII detected in request")
+    ErrInjectionDetected = errors.New("nexus: prompt injection detected")
+
+    // Cache errors
+    ErrCacheNotConfigured = errors.New("nexus: cache not configured")
+
+    // Pipeline errors
+    ErrPipelineAborted = errors.New("nexus: pipeline aborted")
+    ErrCircuitOpen     = errors.New("nexus: circuit breaker open")
+
+    // Context and tokens
+    ErrContextOverflow     = errors.New("nexus: request exceeds context window")
+    ErrTokenEstimateFailed = errors.New("nexus: token estimation failed")
+
+    // Model aliases
+    ErrAliasNotFound      = errors.New("nexus: model alias not found")
+    ErrNoTargetsAvailable = errors.New("nexus: no alias targets available")
+
+    // Extended thinking
+    ErrThinkingNotSupported = errors.New("nexus: provider does not support extended thinking")
+
+    // Batch
+    ErrBatchTooLarge = errors.New("nexus: batch exceeds maximum size")
+    ErrBatchNotFound = errors.New("nexus: batch job not found")
+
+    // Credentials
+    ErrCredentialExpired  = errors.New("nexus: provider credential expired")
+    ErrCredentialNotFound = errors.New("nexus: provider credential not found")
 )
 ```
 
-## HTTP Mapping
+## Refusals
 
-The API layer maps these errors to standard HTTP responses:
+When a stage turns a request away before any provider is called, it returns a `*nexus.RefusalError` with a code and an HTTP status. You can match one with `errors.As`, or read the code and status through the `pipeline.Refusal` interface.
 
-| Error | HTTP Status |
-|-------|-------------|
-| `ErrAuthRequired` | 401 Unauthorized |
-| `ErrForbidden` | 403 Forbidden |
-| `ErrProviderNotFound` | 404 Not Found |
-| `ErrTenantNotFound` | 404 Not Found |
-| `ErrGuardrailBlocked` | 400 Bad Request |
-| `ErrRateLimited` | 429 Too Many Requests |
-| `ErrBudgetExceeded` | 402 Payment Required |
-| `ErrTokenOverflow` | 413 Payload Too Large |
+| Code | Status | Raised when |
+|------|--------|-------------|
+| `unauthenticated` | 401 | No key, an unknown key, or a revoked or expired key |
+| `forbidden` | 403 | The tenant is disabled, suspended or unknown, the key belongs to another tenant, or the key lacks the scope the route needs |
+| `invalid_request` | 400 | `max_tokens` is above the tenant's cap, the tenant and key ids do not parse or name different tenants, or a streaming request went to `Engine.Complete` |
+| `rate_limited` | 429 | The tenant's RPM or TPM, or the gateway-wide `global_rate_limit`, is used up for this minute |
+| `quota_exceeded` | 429 | The tenant's daily request quota is used up, or a stream was cut at its duration or token cap |
+| `budget_exceeded` | 429 | The tenant has spent its monthly budget |
+| `unavailable` | 503 | A store the check needs (tenant, key, daily count, monthly spend) could not be read |
+| `content_blocked` | 400 | A guardrail blocked the input or the output. Recorded as outcome `blocked`, not `refused` (see below) |
+
+Over HTTP the body is the OpenAI error shape with the code added:
+
+```json
+{
+  "error": {
+    "message": "nexus: 60 requests a minute",
+    "type": "rate_limit_error",
+    "code": "rate_limited"
+  }
+}
+```
+
+A 429 that knows how long to wait carries `Retry-After` in whole seconds, rounded up. The wait is the rest of the minute for a rate limit, until midnight UTC for the daily quota, and until the first of the next month for the budget. `quota_exceeded` for the daily quota is a hard cap, even for requests that arrive together. `budget_exceeded` is not: requests already in flight when the spend crosses the budget are still served, so the overshoot can reach every request in flight times its cost. [Multi-Tenancy](/docs/concepts/multi-tenancy#quotas) has the full bound. A 401 carries `WWW-Authenticate: Bearer`.
+
+Anything that is not a refusal is a 500 with the message `internal error`. A provider error can carry a URL, a response body or a connection string, so none of it reaches the client. The cause goes to the gateway log, and the `X-Request-Id` on the response matches the usage record.
+
+### Errors inside a stream
+
+Once a stream has started the status is already sent, so the error travels in the stream as an event. A refusal has `type: refused` and `code` set to the refusal code, and it is marked retryable when it is a 429. A cancel reads `request canceled` and a deadline reads `request timed out`. Any other failure reads `upstream error` and nothing more. A WebSocket session that is refused by the pipeline after it has started closes with code 1008. A bad or missing key never gets that far: see [Authentication](/docs/api-reference/http-api#authentication).
+
+### What gets recorded
+
+Every refusal raised inside the pipeline writes a usage record with outcome `refused`, at exactly $0, under its code. That covers quota, budget, scope, tenant and identity refusals. `refused` rows do not count toward the tenant's daily request quota.
+
+A guardrail block is a different row. It is recorded with outcome `blocked`, the name of the guard in `BlockedBy`, and status 400. An input block costs $0. An output block happens after the provider answered, so the row carries the cost of the tokens it used, and when the provider reported none the cost is unknown rather than free. Blocked rows count toward the daily request quota, because only `refused` is left out.
+
+Three refusals are not recorded, because they happen before the pipeline runs and there is no tenant to charge:
+
+- the 401 from the HTTP edge (no key, a malformed key, a key that does not validate);
+- the 403 from a route scope check (`admin`, `models`);
+- the edge 503 `key check is unavailable`, when the key store cannot be read.
+
+A streaming request sent to `Engine.Complete` is refused `invalid_request` before the chain starts, so it is not recorded either. Recording an edge refusal would let anyone write rows into your usage store. Watch your reverse proxy or the gateway log for them.
+
+A stream cut at `max_stream_duration` or `max_stream_tokens` is a different case. The client already got part of it, so it is recorded as an `error` with status 429 and code `quota_exceeded`, and it is priced from the tokens it used.

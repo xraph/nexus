@@ -40,6 +40,10 @@ func New(opts ...Option) *Provider {
 // Name returns the provider identifier.
 func (p *Provider) Name() string { return "lmstudio" }
 
+// FreeOfCharge reports that local inference costs nothing per token, for
+// every model the server runs, listed or not.
+func (p *Provider) FreeOfCharge() bool { return true }
+
 // Capabilities returns what this provider supports.
 func (p *Provider) Capabilities() provider.Capabilities {
 	return provider.Capabilities{

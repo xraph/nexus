@@ -3,28 +3,109 @@ title: Multi-Tenancy
 description: Tenant-scoped requests, per-tenant configuration, quotas, and usage isolation.
 ---
 
-Every request in Nexus is scoped to a tenant via context. This provides complete isolation for API keys, rate limits, usage tracking, and model aliases.
+A request in Nexus is attributed to a tenant, and the tenant decides what it may do: whether it is served at all, its quotas, its budget and its aliases. Over HTTP the gateway key does this for you, because a key belongs to one tenant (see [Identity & Auth](/docs/concepts/identity)).
 
-## Setting Tenant Context
+## Attributing an in-process request
+
+When you call the engine from Go, you say who the request is for. Put the tenant, and the key if there is one, on the request:
 
 ```go
-ctx = nexus.WithTenant(ctx, "tenant-1")
+resp, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{
+    Model:    "gpt-4o",
+    TenantID: tenantID,
+    KeyID:    keyID, // optional; access then checks the key's status and scopes
+    Messages: msgs,
+})
 ```
 
-All downstream operations (routing, caching, usage, guardrails) automatically respect the tenant scope.
+Or put the tenant in the context, which is what the HTTP edge does:
+
+```go
+ctx = pipeline.WithTenantID(ctx, tenantID)
+```
+
+The access stage refuses a tenant that is not active or does not exist, and a key that is revoked, expired, on another tenant or without the scope. A request that names a key and no tenant is refused `invalid_request`. A request that names neither is unattributed: it is served, recorded under no tenant, and only `GlobalRateLimit` applies to it. Caching, usage and the quota stage all read the same tenant.
+
+## Quotas
+
+A tenant carries a `Quota`. A field left at zero means no limit. With usage tracking off (`enable_usage: false`), the monthly budget cannot apply because no spend is recorded. The daily cap still applies through the limiter, as do RPM, TPM and token caps. Memory windows reset on restart and apply per replica; use Redis to share them.
+
+```go
+type Quota struct {
+    RPM               int           // requests per minute
+    TPM               int           // tokens per minute
+    DailyRequests     int           // requests per UTC day
+    MonthlyBudgetUSD  money.USD     // spend per UTC month
+    MaxTokensPerReq   int           // cap on one request's max_tokens
+    MaxStreamDuration time.Duration // wall-clock cap on one stream
+    MaxStreamTokens   int           // output-token cap on one stream
+}
+```
+
+The checks run in the quota stage, after the access stage has confirmed the tenant is active and the key holds the scope the route needs.
+
+| Field | What it does | Refusal |
+|-------|--------------|---------|
+| `MaxTokensPerReq` | Refuses a `max_tokens` above the cap. A request that sets none gets the cap. | 400 `invalid_request` |
+| `DailyRequests` | Counts the tenant's requests since midnight UTC, in the usage store and in the limiter. A hard cap. | 429 `quota_exceeded` |
+| `MonthlyBudgetUSD` | Compares the month's spend, in exact decimals, with the budget. Only a positive budget limits. | 429 `budget_exceeded` |
+| `RPM` | Counts requests in a one minute window. | 429 `rate_limited` |
+| `TPM` | Counts the tokens that finished requests used in a one minute window. | 429 `rate_limited` |
+| `MaxStreamDuration`, `MaxStreamTokens` | Cut a stream that runs too long or writes too much. | 429 `quota_exceeded`, in the stream |
+
+The daily count leaves out refused requests. If it did not, a tenant held at its RPM would burn through its daily quota on the refusals. TPM is charged when a response ends, or when a stream closes, so the request that crosses the line completes and the next one is refused. A cache hit used no tokens and is never charged. A failed request is not charged to TPM either, though it still counts against RPM.
+
+The daily cap is hard. Each request is charged to a UTC-day window in the limiter as the last check before the provider call, and it is refused when either the limiter or the usage store says the day is full. Send 50 requests at once to a tenant with `DailyRequests: 5` and exactly 5 are served. With the memory limiter that holds per replica, and with Redis it holds across all of them. A request refused by an earlier check never reaches the charge, so it does not use up the day.
+
+The budget is soft, and softer than it looks. A request's cost is only known once it ends and nothing is reserved up front, so every request admitted while the stored spend is under the budget gets served. Sent one at a time, the request that crosses the budget finishes and the next one gets `budget_exceeded`. Sent together, they all pass the check, and the overshoot can reach every request in flight times its cost. Some spend is late or never counted at all:
+
+- a stream is counted when it closes, so a long realtime session is invisible to the budget until it ends;
+- a model with no price records no cost, so a budget never binds a tenant that only uses unpriced models;
+- a record whose insert failed adds nothing (watch `gw.UsageInsertErrors()`).
+
+If the budget has to hold, pair it with `RPM` and `MaxTokensPerReq`. Those two bound how many requests can be in flight and what each one can cost. Cost is read from the usage store, so every replica sees the same total.
+
+A stream is checked once, when it starts. The daily cap and the budget see it then, and its cost reaches the budget only when it closes, so a long stream is never cut for budget or daily reasons while it runs. `MaxStreamDuration` is what bounds it, and it counts from the first chunk, not from the request: time spent waiting for the provider to answer does not count. A realtime session on a tenant without `MaxStreamDuration` runs as long as the client keeps it open.
+
+Stream limits come from the tenant's own quota. A stream cut at either limit is recorded as an `error` with status 429 and code `quota_exceeded`, and it is priced from the tokens it used, because the client got part of it.
+
+### When a check cannot run
+
+The two kinds of check fail in opposite directions on purpose.
+
+The rate limiter fails open. If it errors (Redis is down, say), the request goes through, the gateway logs it, and `gw.LimiterErrors()` counts it. A limiter outage should not take your gateway down with it, so watch that counter.
+
+The usage store fails closed. If the daily count or the month's spend cannot be read, the request is refused with 503 `unavailable`. Letting it through would mean spending past a budget you cannot see.
+
+### Windows and replicas
+
+The default limiter lives in the process, so each replica keeps its own RPM and TPM windows. Use `WithLimiter(redislimit.New(client))` to share them. The budget comes from the usage store and is shared already. The daily cap reads the store too, so it is never looser than the shared count, but the limiter charge that makes it hard is per replica unless you share the limiter. `GlobalRateLimit` goes through the same limiter under one key, so with the memory limiter it is a per-replica limit too. See [Configuration](/docs/concepts/configuration#sharing-rate-limit-windows-between-replicas).
 
 ## Tenant Configuration
 
-Each tenant can have custom settings:
+You can restrict the models a tenant uses, supply its default model and disable its response cache:
 
 ```go
-type TenantConfig struct {
-    RateLimit     int
-    BudgetLimit   float64
-    AllowedModels []string
-    Metadata      map[string]any
+type Config struct {
+    AllowedModels   []string
+    BlockedModels   []string
+    DefaultModel    string
+    RoutingStrategy string
+    GuardrailPolicy string
+    CacheEnabled    *bool
+    Metadata        map[string]string
 }
 ```
+
+Model names are case-sensitive and match exactly. The service trims surrounding spaces when you save them and refuses blank names or a name present in both lists. A block wins: either the requested name or the resolved alias target being blocked refuses the request with 403 `forbidden`. A non-empty allow list admits a request when either name is listed. An alias with several targets is checked against the target selected for that request, so list every target when you need predictable access.
+
+`DefaultModel` fills an omitted model before alias resolution, for HTTP and in-process requests alike. An explicit model keeps its value. `CacheEnabled: false` bypasses both cache reads and writes, including stream replay. A nil value follows the gateway setting.
+
+`RoutingStrategy` and `GuardrailPolicy` are stored but not enforced. Saving them does not change routing or guard execution.
+
+## Deleting a tenant
+
+You cannot delete a tenant that has keys or usage history. The gateway returns `tenant.ErrInUse`, and the admin API answers 409 `conflict`. Disable the tenant instead to stop its traffic while retaining its records. Custom tenant services must supply their own in-use check.
 
 ## Per-Tenant Aliases
 
@@ -38,19 +119,21 @@ nexus.WithTenantAlias("premium", "fast",
 
 ## Usage Isolation
 
-Usage records are always scoped to a tenant. Query per-tenant usage:
+A usage record carries the tenant the request was attributed to. Unattributed requests are recorded too, under no tenant, and so are refusals of an unknown tenant. Passing `""` as the tenant id to a usage query or aggregate means every tenant, unattributed rows included. Query one tenant's usage:
 
 ```go
 summary, _ := usageService.Summary(ctx, tenantID, timeRange)
 // summary.TotalTokens, summary.TotalCost
 ```
 
-## Budget Enforcement
+## Budget events
 
-Set budget limits per tenant. Nexus fires lifecycle events at 80% (warning) and 100% (exceeded):
+Nexus fires a lifecycle event when a tenant's spend reaches 80% of its budget and another when it reaches 100%:
 
 ```go
 // Plugin hooks
 OnBudgetWarning(ctx, tenantID, usedPct)
 OnBudgetExceeded(ctx, tenantID)
 ```
+
+Each fires once per tenant per month per replica, while the next request after spend crosses the line is being evaluated. The event does not fire at the moment of the spend. Without the once-only rule, every request above the line would fire it again. Two replicas can each fire once, and a restart forgets what was already sent. A single request that jumps a tenant from under 80% to over 100% fires `OnBudgetExceeded` only, since a warning about a limit already passed adds nothing.

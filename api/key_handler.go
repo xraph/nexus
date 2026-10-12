@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -29,7 +30,7 @@ func (a *API) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 
 	k, rawKey, err := a.gw.Keys().Create(r.Context(), &input)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writeAdminError(w, r, err)
 		return
 	}
 
@@ -54,7 +55,7 @@ func (a *API) handleListKeys(w http.ResponseWriter, r *http.Request) {
 
 	keys, err := a.gw.Keys().List(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		a.writeAdminError(w, r, err)
 		return
 	}
 
@@ -70,8 +71,13 @@ func (a *API) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := r.PathValue("id")
-	if err := a.gw.Keys().Revoke(r.Context(), id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	err := a.gw.Keys().Revoke(r.Context(), id)
+	if errors.Is(err, key.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "key not found")
+		return
+	}
+	if err != nil {
+		a.writeAdminError(w, r, err)
 		return
 	}
 

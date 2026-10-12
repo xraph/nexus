@@ -6,21 +6,27 @@ import (
 	"github.com/xraph/nexus/auth"
 	"github.com/xraph/nexus/cache"
 	"github.com/xraph/nexus/guard"
+	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/model"
 	"github.com/xraph/nexus/observability"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/pipeline/middlewares"
 	"github.com/xraph/nexus/plugin"
 	"github.com/xraph/nexus/provider"
+	"github.com/xraph/nexus/ratelimit"
 	"github.com/xraph/nexus/router"
 	"github.com/xraph/nexus/store"
+	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/transform"
+	"github.com/xraph/nexus/usage"
 )
 
 // Option configures a Gateway.
 type Option func(*Gateway)
 
-// WithConfig sets the gateway configuration.
+// WithConfig replaces the whole gateway configuration. Start from
+// DefaultConfig() and change fields: a zero Config has EnableUsage false, so
+// the gateway records no usage, and no timeout or retries.
 func WithConfig(cfg *Config) Option {
 	return func(gw *Gateway) { gw.config = cfg }
 }
@@ -31,6 +37,10 @@ func WithDatabase(s store.Store) Option {
 }
 
 // WithAuth sets the auth provider.
+//
+// Deprecated: the provider is stored and never consulted. Gateway keys are
+// checked by auth.KeyAuth on the HTTP routes and grpcsrv.KeyAuth on gRPC,
+// and WithAuth changes neither. It stays only so existing code compiles.
 func WithAuth(a auth.Provider) Option {
 	return func(gw *Gateway) { gw.auth = a }
 }
@@ -44,6 +54,7 @@ func WithProvider(p provider.Provider) Option {
 func WithRouter(r router.Strategy) Option {
 	return func(gw *Gateway) {
 		gw.router = router.NewService(r)
+		gw.routerStrategy = r.Name()
 	}
 }
 
@@ -72,7 +83,13 @@ func WithMiddleware(m pipeline.Middleware) Option {
 	}
 }
 
-// WithPipeline sets a fully custom pipeline, replacing the default.
+// WithPipeline sets a fully custom pipeline, replacing the default. The
+// default carries the access stage (tenant status and key scopes) and the
+// quota stage (token cap, daily requests, budget, RPM, TPM). A custom
+// pipeline without them enforces none of that, while the HTTP edge still
+// authenticates keys, so a key without the completions scope is served.
+// Include middlewares.NewAccess ahead of middlewares.NewQuota: quota reads
+// the tenant access publishes.
 func WithPipeline(p pipeline.Service) Option {
 	return func(gw *Gateway) { gw.pipeline = p }
 }
@@ -134,6 +151,16 @@ func WithTransforms(r *transform.Registry) Option {
 // WithHealthTracker sets the provider health tracker.
 func WithHealthTracker(h provider.HealthTracker) Option {
 	return func(gw *Gateway) { gw.healthTrack = h }
+}
+
+// WithBootstrapAdminKey sets the raw value of the first admin key. After
+// Initialize and Store().Migrate(), EnsureBootstrapAdminKey stores it under
+// the "operator" tenant with the admin scope, so the admin API is reachable
+// without writing Go. The value must be "nxs_" and 64 lowercase hex digits,
+// for example "nxs_" + the output of `openssl rand -hex 32`. It is a secret:
+// keep it out of source control.
+func WithBootstrapAdminKey(raw string) Option {
+	return func(gw *Gateway) { gw.bootstrapAdminKey = raw }
 }
 
 // WithTimeout sets the default request timeout.
@@ -202,3 +229,27 @@ func WithTenantAlias(tenantID, name string, targets ...model.AliasTarget) Option
 		}
 	}
 }
+
+// WithTenantService replaces the tenant service Initialize would build.
+func WithTenantService(s tenant.Service) Option { return func(gw *Gateway) { gw.tenant = s } }
+
+// WithKeyService replaces the API key service Initialize would build.
+func WithKeyService(s key.Service) Option { return func(gw *Gateway) { gw.key = s } }
+
+// WithUsageService replaces the usage service Initialize would build.
+func WithUsageService(s usage.Service) Option { return func(gw *Gateway) { gw.usage = s } }
+
+// WithUsageEnabled turns usage recording on or off (default on). Off is the
+// one way to stop recording; the usage service is still built for reads.
+func WithUsageEnabled(on bool) Option { return func(gw *Gateway) { gw.config.EnableUsage = on } }
+
+// WithRequireAPIKey turns key enforcement at the HTTP edges on or off.
+func WithRequireAPIKey(on bool) Option { return func(gw *Gateway) { gw.config.RequireAPIKey = on } }
+
+// WithLimiter sets the RPM and TPM limiter. The default is in-process
+// (ratelimit.NewMemory), which applies per replica.
+func WithLimiter(l ratelimit.Limiter) Option { return func(gw *Gateway) { gw.limiter = l } }
+
+// WithCacheEnabled turns the response cache on. Without WithCache it is an
+// in-memory cache with the default size and TTL.
+func WithCacheEnabled(on bool) Option { return func(gw *Gateway) { gw.config.EnableCache = on } }

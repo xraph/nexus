@@ -1,12 +1,14 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 
+	"github.com/xraph/nexus/auth"
 	"github.com/xraph/nexus/httpstream"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/provider"
@@ -27,10 +29,8 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Model == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
-		return
-	}
+	// An empty model is not refused here: the access stage fills the
+	// tenant's default model, and refuses the request when there is none.
 
 	if len(req.Messages) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "messages is required")
@@ -48,7 +48,7 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Non-streaming response
 	resp, err := p.engine.Complete(ctx, &req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		p.writePipelineError(w, r, err)
 		return
 	}
 
@@ -63,7 +63,7 @@ func (p *Proxy) handleStreamingCompletion(w http.ResponseWriter, r *http.Request
 	defer cancel()
 	stream, err := p.engine.CompleteStream(ctx, req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		p.writePipelineError(w, r, err)
 		return
 	}
 
@@ -76,6 +76,7 @@ func (p *Proxy) handleStreamingCompletion(w http.ResponseWriter, r *http.Request
 
 	httpstream.Run(ctx, w, stream, encoder, httpstream.RunOptions{
 		RequestID: pipeline.RequestID(ctx),
+		OnError:   func(err error) { p.onStreamError(ctx, err) },
 	})
 }
 
@@ -111,10 +112,8 @@ func (p *Proxy) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if req.Model == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
-		return
-	}
+	// An empty model is not refused here: the access stage fills the
+	// tenant's default model, and refuses the request when there is none.
 	if len(req.Input) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "input is required")
 		return
@@ -122,7 +121,7 @@ func (p *Proxy) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := p.engine.Embed(r.Context(), &req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		p.writePipelineError(w, r, err)
 		return
 	}
 
@@ -135,7 +134,7 @@ func (p *Proxy) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) handleListModels(w http.ResponseWriter, r *http.Request) {
 	models, err := p.engine.ListModels(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		p.writePipelineError(w, r, err)
 		return
 	}
 
@@ -165,7 +164,7 @@ func (p *Proxy) handleGetModel(w http.ResponseWriter, r *http.Request) {
 
 	models, err := p.engine.ListModels(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		p.writePipelineError(w, r, err)
 		return
 	}
 
@@ -322,10 +321,34 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, errType, message string) {
+	code := errType
+	if status == http.StatusBadRequest {
+		code = pipeline.CodeInvalidRequest
+	}
 	writeJSON(w, status, openAIError{
 		Error: openAIErrorBody{
 			Message: message,
 			Type:    errType,
+			Code:    code,
 		},
 	})
+}
+
+// writePipelineError answers an error from the engine with the refusal's
+// status and code, or a fixed 500, and Retry-After when the refusal says how
+// long to wait. auth.WriteFailure writes the OpenAI error shape this proxy
+// uses everywhere else. The cause of a server-side failure never reaches the
+// client; it goes to the gateway log, with the request id.
+func (p *Proxy) writePipelineError(w http.ResponseWriter, r *http.Request, err error) {
+	auth.WriteFailure(w, r, p.engine.Gateway().Logger(), err)
+}
+
+// onStreamError logs the cause of a stream that failed after the response
+// began, where the client was told only the sanitized envelope. A client
+// that left is not a failure and is not logged.
+func (p *Proxy) onStreamError(ctx context.Context, err error) {
+	if httpstream.ClientGone(ctx, err) {
+		return
+	}
+	auth.LogServerError(ctx, p.engine.Gateway().Logger(), "", err)
 }

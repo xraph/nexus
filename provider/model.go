@@ -1,5 +1,7 @@
 package provider
 
+import "github.com/xraph/nexus/money"
+
 // Model describes an available LLM model.
 type Model struct {
 	ID            string       `json:"id"`       // e.g., "gpt-4o"
@@ -11,9 +13,20 @@ type Model struct {
 	Pricing       Pricing      `json:"pricing"`
 }
 
-// Pricing per million tokens in USD.
+// Pricing is a model's list price per million tokens. When Free is set the
+// model costs exactly $0. Otherwise a model with both InputPerMillion and
+// OutputPerMillion at zero is unpriced (its cost is unknown, never $0); when
+// only one of them is set, the other kind of token is charged at $0.
+// Embeddings use EmbeddingPerMillion.
 type Pricing struct {
-	InputPerMillion     float64 `json:"input_per_million"`
-	OutputPerMillion    float64 `json:"output_per_million"`
-	EmbeddingPerMillion float64 `json:"embedding_per_million,omitempty"`
+	InputPerMillion     money.USD `json:"input_per_million"`
+	OutputPerMillion    money.USD `json:"output_per_million"`
+	EmbeddingPerMillion money.USD `json:"embedding_per_million,omitzero"`
+	Free                bool      `json:"free,omitempty"`
+}
+
+// FreeOfCharge is implemented by a provider whose every model, listed or
+// not, costs exactly $0, such as local inference.
+type FreeOfCharge interface {
+	FreeOfCharge() bool
 }

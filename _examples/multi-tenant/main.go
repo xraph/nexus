@@ -23,6 +23,7 @@ import (
 	nexus "github.com/xraph/nexus"
 	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/model"
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/providers/openai"
 	"github.com/xraph/nexus/tenant"
@@ -52,8 +53,9 @@ func main() {
 	}
 	defer gw.Shutdown(ctx)
 
-	// Create a tenant via the service.
-	tenantSvc := tenant.NewService(gw.Store().Tenants())
+	// Create a tenant through the gateway's own service, so the gateway sees it
+	// (the access stage refuses a request for a tenant it cannot find).
+	tenantSvc := gw.Tenants()
 	t, err := tenantSvc.Create(ctx, &tenant.CreateInput{
 		Name: "Acme Corp",
 		Slug: "acme",
@@ -61,7 +63,7 @@ func main() {
 			RPM:              60,
 			TPM:              100000,
 			DailyRequests:    1000,
-			MonthlyBudgetUSD: 100.0,
+			MonthlyBudgetUSD: money.MustParse("100"),
 		},
 	})
 	if err != nil {
@@ -69,8 +71,11 @@ func main() {
 	}
 	fmt.Printf("Created tenant: %s (%s)\n", t.Name, t.ID)
 
-	// Issue an API key for the tenant.
-	keySvc := key.NewService(gw.Store().Keys())
+	// Issue a gateway key for the tenant. A key carries scopes: this one may
+	// call completions and embeddings, but not list models or use the admin API.
+	// Over HTTP the key goes in "Authorization: Bearer nxs_..." or "x-api-key",
+	// and the api and proxy packages refuse a request without one.
+	keySvc := gw.Keys()
 	apiKeyRecord, rawKey, err := keySvc.Create(ctx, &key.CreateInput{
 		TenantID: t.ID.String(),
 		Name:     "production-key",
@@ -79,6 +84,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create API key: %v", err)
 	}
+	// Examples may print the key. It is shown once; never log a key in a real
+	// service.
 	fmt.Printf("API Key: %s (save this!)\n", rawKey)
 	fmt.Printf("Key ID: %s, Prefix: %s\n", apiKeyRecord.ID, apiKeyRecord.Prefix)
 
@@ -89,7 +96,8 @@ func main() {
 	}
 	fmt.Printf("Validated key for tenant: %s\n", validated.TenantID)
 
-	// Send a request scoped to the tenant.
+	// Send a request scoped to the tenant. Naming the key makes the access
+	// stage check its status and scopes; the tenant's quota applies too.
 	resp, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{
 		Model:    "default",
 		TenantID: t.ID.String(),

@@ -7,13 +7,22 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
+
+	// Registers the "sqlite" migration executor that Migrate looks up.
+	_ "github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate"
 	"github.com/xraph/grove/migrate"
 
+	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/key"
+	"github.com/xraph/nexus/money"
+	"github.com/xraph/nexus/paging"
 	"github.com/xraph/nexus/store"
+	"github.com/xraph/nexus/store/internal/conv"
 	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/nexus/usage"
 )
@@ -50,11 +59,21 @@ func (s *Store) Migrate() error {
 	if _, err := orch.Migrate(ctx); err != nil {
 		return fmt.Errorf("nexus/sqlite: migration failed: %w", err)
 	}
-	return nil
+	if err := s.normaliseUsageTimes(ctx); err != nil {
+		return err
+	}
+	return s.normaliseKeyExpiry(ctx)
 }
 
 // Close closes the database connection.
 func (s *Store) Close() error { return s.db.Close() }
+
+// isUniqueViolation reports whether err is SQLite refusing a duplicate on a
+// UNIQUE constraint or index. The driver exposes no typed code here, so it
+// matches the message SQLite documents.
+func isUniqueViolation(err error) bool {
+	return strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
 
 // isNoRows returns true if the error is sql.ErrNoRows.
 func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
@@ -71,6 +90,9 @@ func (s *tenantStore) Insert(ctx context.Context, t *tenant.Tenant) error {
 	m := tenantToModel(t)
 	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("nexus/sqlite: insert tenant: %w", tenant.ErrDuplicate)
+		}
 		return fmt.Errorf("nexus/sqlite: insert tenant: %w", err)
 	}
 	return nil
@@ -81,7 +103,7 @@ func (s *tenantStore) FindByID(ctx context.Context, tid string) (*tenant.Tenant,
 	err := s.sdb.NewSelect(m).Where("id = ?", tid).Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
-			return nil, nil
+			return nil, tenant.ErrNotFound
 		}
 		return nil, fmt.Errorf("nexus/sqlite: find tenant by id: %w", err)
 	}
@@ -93,7 +115,7 @@ func (s *tenantStore) FindBySlug(ctx context.Context, slug string) (*tenant.Tena
 	err := s.sdb.NewSelect(m).Where("slug = ?", slug).Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
-			return nil, nil
+			return nil, tenant.ErrNotFound
 		}
 		return nil, fmt.Errorf("nexus/sqlite: find tenant by slug: %w", err)
 	}
@@ -102,9 +124,15 @@ func (s *tenantStore) FindBySlug(ctx context.Context, slug string) (*tenant.Tena
 
 func (s *tenantStore) Update(ctx context.Context, t *tenant.Tenant) error {
 	m := tenantToModel(t)
-	_, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("nexus/sqlite: update tenant: %w", tenant.ErrDuplicate)
+		}
 		return fmt.Errorf("nexus/sqlite: update tenant: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return tenant.ErrNotFound
 	}
 	return nil
 }
@@ -119,35 +147,39 @@ func (s *tenantStore) Delete(ctx context.Context, tid string) error {
 	return nil
 }
 
-func (s *tenantStore) List(ctx context.Context, opts *tenant.ListOptions) ([]*tenant.Tenant, int, error) {
+func (s *tenantStore) List(ctx context.Context, opts *tenant.ListOptions) (*tenant.ListResult, error) {
+	if opts == nil {
+		opts = &tenant.ListOptions{}
+	}
+	if err := paging.CheckCursor(opts.Cursor, id.PrefixTenant); err != nil {
+		return nil, err
+	}
+	limit := paging.Limit(opts.Limit)
 	var models []tenantModel
-	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC")
-
-	if opts != nil {
-		if opts.Status != "" {
-			q = q.Where("status = ?", opts.Status)
-		}
-		if opts.Limit > 0 {
-			q = q.Limit(opts.Limit)
-		}
-		if opts.Offset > 0 {
-			q = q.Offset(opts.Offset)
-		}
+	q := s.sdb.NewSelect(&models).OrderExpr("id DESC").Limit(limit + 1)
+	if opts.Status != "" {
+		q = q.Where("status = ?", opts.Status)
 	}
-
+	if opts.Search != "" {
+		p := conv.LikePattern(opts.Search)
+		q = q.Where(`(name LIKE ? ESCAPE '\' OR slug LIKE ? ESCAPE '\')`, p, p)
+	}
+	if opts.Cursor != "" {
+		q = q.Where("id < ?", opts.Cursor)
+	}
 	if err := q.Scan(ctx); err != nil {
-		return nil, 0, fmt.Errorf("nexus/sqlite: list tenants: %w", err)
+		return nil, fmt.Errorf("nexus/sqlite: list tenants: %w", err)
 	}
-
-	tenants := make([]*tenant.Tenant, 0, len(models))
+	rows := make([]*tenant.Tenant, 0, len(models))
 	for i := range models {
 		t, err := tenantFromModel(&models[i])
 		if err != nil {
-			return nil, 0, fmt.Errorf("nexus/sqlite: convert tenant model: %w", err)
+			return nil, fmt.Errorf("nexus/sqlite: convert tenant model: %w", err)
 		}
-		tenants = append(tenants, t)
+		rows = append(rows, t)
 	}
-	return tenants, len(tenants), nil
+	page, next := paging.Trim(rows, limit, func(t *tenant.Tenant) string { return t.ID.String() })
+	return &tenant.ListResult{Items: page, NextCursor: next}, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -162,6 +194,9 @@ func (s *keyStore) Insert(ctx context.Context, k *key.APIKey) error {
 	m := apiKeyToModel(k)
 	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("nexus/sqlite: insert key: %w", key.ErrDuplicate)
+		}
 		return fmt.Errorf("nexus/sqlite: insert key: %w", err)
 	}
 	return nil
@@ -172,33 +207,50 @@ func (s *keyStore) FindByID(ctx context.Context, kid string) (*key.APIKey, error
 	err := s.sdb.NewSelect(m).Where("id = ?", kid).Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
-			return nil, nil
+			return nil, key.ErrNotFound
 		}
 		return nil, fmt.Errorf("nexus/sqlite: find key by id: %w", err)
 	}
 	return apiKeyFromModel(m)
 }
 
-func (s *keyStore) FindByPrefix(ctx context.Context, prefix string) (*key.APIKey, error) {
-	m := new(apiKeyModel)
-	err := s.sdb.NewSelect(m).
-		Where("prefix = ?", prefix).
-		Where("status = ?", "active").
-		Scan(ctx)
-	if err != nil {
-		if isNoRows(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("nexus/sqlite: find key by prefix: %w", err)
+func (s *keyStore) FindByPrefix(ctx context.Context, prefix string) ([]*key.APIKey, error) {
+	var models []apiKeyModel
+	if err := s.sdb.NewSelect(&models).Where("prefix = ?", prefix).Scan(ctx); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("nexus/sqlite: find keys by prefix: %w", err)
 	}
-	return apiKeyFromModel(m)
+	out := make([]*key.APIKey, 0, len(models))
+	for i := range models {
+		k, err := apiKeyFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("nexus/sqlite: convert key model: %w", err)
+		}
+		out = append(out, k)
+	}
+	return out, nil
+}
+
+func (s *keyStore) TouchLastUsed(ctx context.Context, kid string, at time.Time) error {
+	text := conv.TimeText(at)
+	m := &apiKeyModel{ID: kid, LastUsedAt: &text}
+	res, err := s.sdb.NewUpdate(m).Column("last_used_at").WherePK().Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("nexus/sqlite: touch key: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return key.ErrNotFound
+	}
+	return nil
 }
 
 func (s *keyStore) Update(ctx context.Context, k *key.APIKey) error {
 	m := apiKeyToModel(k)
-	_, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("nexus/sqlite: update key: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return key.ErrNotFound
 	}
 	return nil
 }
@@ -217,7 +269,7 @@ func (s *keyStore) ListByTenant(ctx context.Context, tenantID string) ([]*key.AP
 	var models []apiKeyModel
 	err := s.sdb.NewSelect(&models).
 		Where("tenant_id = ?", tenantID).
-		OrderExpr("created_at DESC").
+		OrderExpr("id DESC").
 		Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("nexus/sqlite: list keys by tenant: %w", err)
@@ -232,6 +284,65 @@ func (s *keyStore) ListByTenant(ctx context.Context, tenantID string) ([]*key.AP
 		keys = append(keys, k)
 	}
 	return keys, nil
+}
+
+// keyFilter applies opts' tenant and status filters to q, with expiry derived
+// against now. The status clauses mirror key.Effective. expires_at is conv.TimeText, so it compares as text in time order.
+func keyFilter(q *sqlitedriver.SelectQuery, opts *key.ListOptions, now time.Time) *sqlitedriver.SelectQuery {
+	if opts.TenantID != "" {
+		q = q.Where("tenant_id = ?", opts.TenantID)
+	}
+	switch opts.Status {
+	case "":
+	case key.KeyActive:
+		q = q.Where(`status = 'active' AND (expires_at IS NULL OR expires_at > ?)`, conv.TimeText(now))
+	case key.KeyExpired:
+		q = q.Where(`(status = 'expired' OR (status = 'active' AND expires_at <= ?))`, conv.TimeText(now))
+	default:
+		q = q.Where("status = ?", string(opts.Status))
+	}
+	return q
+}
+
+func (s *keyStore) List(ctx context.Context, opts *key.ListOptions) (*key.ListResult, error) {
+	if opts == nil {
+		opts = &key.ListOptions{}
+	}
+	if err := paging.CheckCursor(opts.Cursor, id.PrefixKey); err != nil {
+		return nil, err
+	}
+	limit := paging.Limit(opts.Limit)
+	now := opts.At()
+	var models []apiKeyModel
+	q := keyFilter(s.sdb.NewSelect(&models), opts, now).OrderExpr("id DESC").Limit(limit + 1)
+	if opts.Cursor != "" {
+		q = q.Where("id < ?", opts.Cursor)
+	}
+	if err := q.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("nexus/sqlite: list keys: %w", err)
+	}
+	rows := make([]*key.APIKey, 0, len(models))
+	for i := range models {
+		k, err := apiKeyFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("nexus/sqlite: convert key model: %w", err)
+		}
+		k.Status = key.Effective(k, now)
+		rows = append(rows, k)
+	}
+	page, next := paging.Trim(rows, limit, func(k *key.APIKey) string { return k.ID.String() })
+	return &key.ListResult{Items: page, NextCursor: next}, nil
+}
+
+func (s *keyStore) Count(ctx context.Context, opts *key.ListOptions) (int, error) {
+	if opts == nil {
+		opts = &key.ListOptions{}
+	}
+	n, err := keyFilter(s.sdb.NewSelect((*apiKeyModel)(nil)), opts, opts.At()).Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("nexus/sqlite: count keys: %w", err)
+	}
+	return int(n), nil
 }
 
 // ──────────────────────────────────────────────────
@@ -251,123 +362,171 @@ func (s *usageStore) Insert(ctx context.Context, rec *usage.Record) error {
 	return nil
 }
 
-func (s *usageStore) MonthlySpend(ctx context.Context, tenantID string) (float64, error) {
-	var total float64
-	row := s.sdb.QueryRow(ctx,
-		"SELECT COALESCE(SUM(cost_usd), 0) FROM usage_records"+
-			" WHERE tenant_id = ? AND created_at >= strftime('%Y-%m-01', 'now')",
-		tenantID)
-	err := row.Scan(&total)
-	return total, err
+func (s *usageStore) MonthlySpend(ctx context.Context, tenantID string) (money.USD, error) {
+	since, err := usage.PeriodStart("month", time.Now())
+	if err != nil {
+		return money.Zero, err
+	}
+	q := `SELECT cost_usd FROM usage_records WHERE created_at >= ? AND cost_usd IS NOT NULL`
+	args := []any{conv.TimeText(since)}
+	if tenantID != "" {
+		q += ` AND tenant_id = ?`
+		args = append(args, tenantID)
+	}
+	rows, err := s.sdb.Query(ctx, q, args...)
+	if err != nil {
+		return money.Zero, fmt.Errorf("nexus/sqlite: monthly spend: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	total := money.Zero
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			return money.Zero, fmt.Errorf("nexus/sqlite: monthly spend scan: %w", err)
+		}
+		c, err := conv.ParseCost(&text)
+		if err != nil {
+			return money.Zero, err
+		}
+		total = total.Add(*c)
+	}
+	return total, rows.Err()
 }
 
 func (s *usageStore) DailyRequests(ctx context.Context, tenantID string) (int, error) {
+	since, err := usage.PeriodStart("day", time.Now())
+	if err != nil {
+		return 0, err
+	}
+	q := `SELECT COUNT(*) FROM usage_records WHERE created_at >= ? AND outcome <> 'refused'`
+	args := []any{conv.TimeText(since)}
+	if tenantID != "" {
+		q += ` AND tenant_id = ?`
+		args = append(args, tenantID)
+	}
 	var count int
-	row := s.sdb.QueryRow(ctx,
-		"SELECT COUNT(*) FROM usage_records"+
-			" WHERE tenant_id = ? AND created_at >= date('now')",
-		tenantID)
-	err := row.Scan(&count)
-	return count, err
+	if err = s.sdb.QueryRow(ctx, q, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("nexus/sqlite: daily requests: %w", err)
+	}
+	return count, nil
 }
 
 func (s *usageStore) Summary(ctx context.Context, tenantID, period string) (*usage.Summary, error) {
-	var interval string
-	switch period {
-	case "day":
-		interval = "date('now')"
-	case "week":
-		interval = "datetime('now', '-7 days')"
-	default:
-		interval = "strftime('%Y-%m-01', 'now')"
-	}
-
-	summary := &usage.Summary{
-		TenantID:   tenantID,
-		Period:     period,
-		ByProvider: make(map[string]*usage.ProviderUsage),
-		ByModel:    make(map[string]*usage.ModelUsage),
-	}
-
-	rows, err := s.sdb.Query(ctx,
-		fmt.Sprintf("SELECT provider, model, COUNT(*), SUM(total_tokens), SUM(cost_usd), SUM(CASE WHEN cached = 1 THEN 1 ELSE 0 END)"+
-			" FROM usage_records WHERE tenant_id = ? AND created_at >= %s"+
-			" GROUP BY provider, model", interval), tenantID)
+	since, err := usage.PeriodStart(period, time.Now())
 	if err != nil {
-		return nil, fmt.Errorf("nexus/sqlite: summary query: %w", err)
+		return nil, err
+	}
+	rows, err := s.sdb.Query(ctx,
+		`SELECT provider, model, outcome, pricing_status, cached, total_tokens, latency_ns, cost_usd
+		   FROM usage_records WHERE (? = '' OR tenant_id = ?) AND created_at >= ?`,
+		tenantID, tenantID, conv.TimeText(since))
+	if err != nil {
+		return nil, fmt.Errorf("nexus/sqlite: summary: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-
+	var out []usage.SummaryRow
 	for rows.Next() {
-		var prov, mdl string
-		var requests, tokens int
-		var cost float64
-		var cached int
-		if err := rows.Scan(&prov, &mdl, &requests, &tokens, &cost, &cached); err != nil {
+		r := usage.SummaryRow{Requests: 1}
+		var outcome, status string
+		var cost *string
+		if err := rows.Scan(&r.Provider, &r.Model, &outcome, &status, &r.Cached, &r.Tokens, &r.LatencyNs, &cost); err != nil {
 			return nil, fmt.Errorf("nexus/sqlite: summary scan: %w", err)
 		}
-
-		summary.TotalRequests += requests
-		summary.TotalTokens += tokens
-		summary.TotalCostUSD += cost
-
-		if _, ok := summary.ByProvider[prov]; !ok {
-			summary.ByProvider[prov] = &usage.ProviderUsage{}
+		r.Outcome, r.PricingStatus = usage.Outcome(outcome), usage.PricingStatus(status)
+		c, err := conv.ParseCost(cost)
+		if err != nil {
+			return nil, err
 		}
-		summary.ByProvider[prov].Requests += requests
-		summary.ByProvider[prov].Tokens += tokens
-		summary.ByProvider[prov].CostUSD += cost
-
-		if _, ok := summary.ByModel[mdl]; !ok {
-			summary.ByModel[mdl] = &usage.ModelUsage{}
+		if c != nil {
+			r.Cost = *c
 		}
-		summary.ByModel[mdl].Requests += requests
-		summary.ByModel[mdl].Tokens += tokens
-		summary.ByModel[mdl].CostUSD += cost
+		out = append(out, r)
 	}
-
-	return summary, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return usage.BuildSummary(tenantID, period, out), nil
 }
 
-func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) ([]*usage.Record, int, error) {
+func (s *usageStore) Series(ctx context.Context, opts *usage.SeriesOptions) ([]usage.SeriesPoint, error) {
+	if _, err := usage.FillSeries(opts, nil); err != nil {
+		return nil, err
+	}
+	rows, err := s.sdb.Query(ctx,
+		`SELECT created_at, total_tokens, cost_usd, pricing_status FROM usage_records
+		  WHERE (? = '' OR tenant_id = ?) AND created_at >= ? AND created_at < ?`,
+		opts.TenantID, opts.TenantID, conv.TimeText(usage.BucketStart(opts.Start, opts.Bucket)), conv.TimeText(opts.End))
+	if err != nil {
+		return nil, fmt.Errorf("nexus/sqlite: series: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var points []usage.SeriesPoint
+	for rows.Next() {
+		var created, status string
+		var cost *string
+		p := usage.SeriesPoint{Requests: 1}
+		if err = rows.Scan(&created, &p.Tokens, &cost, &status); err != nil {
+			return nil, fmt.Errorf("nexus/sqlite: series scan: %w", err)
+		}
+		if p.Start, err = conv.ParseTimeText(created); err != nil {
+			return nil, err
+		}
+		c, err := conv.ParseCost(cost)
+		if err != nil {
+			return nil, err
+		}
+		if c != nil {
+			p.CostUSD = *c
+		}
+		if usage.PricingStatus(status).CostUnknown() {
+			p.Unpriced = 1
+		}
+		points = append(points, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return usage.FillSeries(opts, points)
+}
+
+func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) (*usage.QueryResult, error) {
+	if opts == nil {
+		opts = &usage.QueryOptions{}
+	}
+	if err := paging.CheckCursor(opts.Cursor, id.PrefixUsage); err != nil {
+		return nil, err
+	}
+	limit := paging.Limit(opts.Limit)
 	var models []usageModel
-	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC")
-
-	if opts != nil {
-		if opts.TenantID != "" {
-			q = q.Where("tenant_id = ?", opts.TenantID)
-		}
-		if opts.Provider != "" {
-			q = q.Where("provider = ?", opts.Provider)
-		}
-		if opts.Model != "" {
-			q = q.Where("model = ?", opts.Model)
-		}
-		if !opts.StartTime.IsZero() {
-			q = q.Where("created_at >= ?", opts.StartTime)
-		}
-		if !opts.EndTime.IsZero() {
-			q = q.Where("created_at <= ?", opts.EndTime)
-		}
-		if opts.Limit > 0 {
-			q = q.Limit(opts.Limit)
-		}
-		if opts.Offset > 0 {
-			q = q.Offset(opts.Offset)
+	q := s.sdb.NewSelect(&models).OrderExpr("id DESC").Limit(limit + 1)
+	for col, v := range map[string]string{
+		"tenant_id": opts.TenantID, "key_id": opts.KeyID, "provider": opts.Provider,
+		"model": opts.Model, "outcome": string(opts.Outcome),
+	} {
+		if v != "" {
+			q = q.Where(col+" = ?", v)
 		}
 	}
-
+	if !opts.StartTime.IsZero() {
+		q = q.Where("created_at >= ?", conv.TimeText(opts.StartTime))
+	}
+	if !opts.EndTime.IsZero() {
+		q = q.Where("created_at < ?", conv.TimeText(opts.EndTime))
+	}
+	if opts.Cursor != "" {
+		q = q.Where("id < ?", opts.Cursor)
+	}
 	if err := q.Scan(ctx); err != nil {
-		return nil, 0, fmt.Errorf("nexus/sqlite: query usage: %w", err)
+		return nil, fmt.Errorf("nexus/sqlite: query usage: %w", err)
 	}
-
-	records := make([]*usage.Record, 0, len(models))
+	rows := make([]*usage.Record, 0, len(models))
 	for i := range models {
 		rec, err := usageFromModel(&models[i])
 		if err != nil {
-			return nil, 0, fmt.Errorf("nexus/sqlite: convert usage model: %w", err)
+			return nil, fmt.Errorf("nexus/sqlite: convert usage model: %w", err)
 		}
-		records = append(records, rec)
+		rows = append(rows, rec)
 	}
-	return records, len(records), nil
+	page, next := paging.Trim(rows, limit, func(r *usage.Record) string { return r.ID.String() })
+	return &usage.QueryResult{Items: page, NextCursor: next}, nil
 }

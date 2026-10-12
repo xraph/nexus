@@ -63,7 +63,7 @@ func (m *TracingMiddleware) Process(ctx context.Context, req *pipeline.Request, 
 	resp, err := next(ctx)
 
 	span.SetAttribute("nexus.request.duration_ms", time.Since(start).Milliseconds())
-	if providerName, ok := req.State["provider_name"].(string); ok {
+	if providerName, ok := req.State[pipeline.StateProviderName].(string); ok {
 		span.SetAttribute("nexus.provider.name", providerName)
 	}
 	if resp != nil && resp.Completion != nil {
