@@ -1,68 +1,94 @@
 ---
 title: Transforms
-description: Modify requests and responses with system prompts, RAG injection, anonymization, and normalization.
+description: Modify requests and responses with system prompts, RAG context, anonymization and output normalization.
 ---
 
-Transforms modify requests before they reach the provider (input transforms) or responses before they reach the client (output transforms).
-
-## Transform Interface
-
-```go
-type Transform interface {
-    Name() string
-    Phase() Phase   // Input or Output
-    Apply(ctx context.Context, data *TransformData) error
-}
-```
-
-## Built-in Transforms
-
-### System Prompt Injection
-
-Prepend a system prompt to every request:
+Transforms change a request before it reaches the provider (input transforms) or a response before it reaches the client (output transforms). You put them in a `transform.Registry` and hand that to the gateway. The transform stage runs at priority 200, after guardrails.
 
 ```go
 import "github.com/xraph/nexus/transform"
 
 registry := transform.NewRegistry()
-registry.Register(transform.NewSystemPrompt(
-    "You are a helpful assistant for Acme Corp.",
-))
+registry.Register(transform.NewSystemPrompt("You are a helpful assistant for Acme Corp."))
+registry.Register(transform.NewNormalizer())
 
-nexus.WithTransforms(registry)
+gw := nexus.New(
+    nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
+    nexus.WithTransforms(registry),
+)
 ```
 
-### RAG Context Injection
+## Transform Interfaces
 
-Inject retrieval-augmented generation context:
+Every transform has a name and a phase. What it does depends on which of these it implements:
 
 ```go
-registry.Register(transform.NewRAG(ragRetriever))
+type Transform interface {
+    Name() string
+    Phase() Phase // transform.PhaseInput or transform.PhaseOutput
+}
+
+type InputTransform interface {
+    Transform
+    TransformInput(ctx context.Context, req *provider.CompletionRequest) error
+}
+
+type OutputTransform interface {
+    Transform
+    TransformOutput(ctx context.Context, req *provider.CompletionRequest, resp *provider.CompletionResponse) error
+}
+
+type StreamingOutputTransform interface {
+    OutputTransform
+    TransformChunk(ctx context.Context, req *provider.CompletionRequest, chunk *provider.StreamChunk) (*provider.StreamChunk, error)
+    TransformAccumulated(ctx context.Context, req *provider.CompletionRequest, resp *provider.CompletionResponse) error
+}
 ```
 
-### Data Anonymization
+`Register` sorts each transform by the interfaces it implements. Output transforms run on complete responses. On a stream, only a `StreamingOutputTransform` runs: `TransformChunk` sees every chunk (return nil to drop it) and `TransformAccumulated` sees the merged response at the end.
 
-Strip sensitive data before sending to the provider:
+## Built-in Transforms
+
+### System Prompt
 
 ```go
-registry.Register(transform.NewAnonymizer())
+sp := transform.NewSystemPrompt("You are a helpful assistant.").
+    WithTenantPrompt(tenantID, "You are the support agent for Acme Corp.")
+registry.Register(sp)
 ```
 
-### Output Normalization
+Puts a system message at the front of every request. A tenant with its own prompt (keyed by tenant ID) gets that instead of the global one. Set the `Append` field to true to add the message at the end instead.
 
-Normalize response format across providers:
+### RAG Context
+
+```go
+registry.Register(transform.NewRAG(retriever).WithMaxResults(3))
+```
+
+`retriever` implements `transform.RAGProvider`:
+
+```go
+type RAGProvider interface {
+    Retrieve(ctx context.Context, query string, maxResults int) ([]RAGChunk, error)
+}
+```
+
+The query is the last user message. The chunks go into one system message, placed after any existing system messages, using a default template you can replace with `WithTemplate` (one `%s` for the context). It asks for 5 results unless you change it. A retrieval error is ignored and the request goes on without context.
+
+### Anonymizer
+
+```go
+anon := transform.NewAnonymizer()
+anon.AddPattern("employee_id", `EMP-\d{6}`, "[EMPLOYEE_ID]")
+registry.Register(anon)
+```
+
+Replaces email addresses, phone numbers, social security numbers, card numbers and IPv4 addresses in string message content before the provider sees it. `transform.NewAnonymizerOutput()` is the output-phase version: it applies the same patterns to the content of each response choice, and takes `AddPattern` too.
+
+### Normalizer
 
 ```go
 registry.Register(transform.NewNormalizer())
 ```
 
-## Per-Tenant Transforms
-
-Combine transforms with tenant context for per-customer system prompts:
-
-```go
-registry.Register(transform.NewSystemPrompt(
-    "You are a support agent for {{tenant}}.",
-    transform.WithTenantAware(true),
-))
-```
+An output transform that trims whitespace from response content and maps provider finish reasons to the standard ones. The `TrimWhitespace` and `NormalizeFinishReason` fields turn each part on or off. `StripProviderMeta` exists but does nothing yet.

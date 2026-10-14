@@ -1,71 +1,94 @@
 ---
 title: Routing
-description: Route requests across providers using priority, cost-optimized, or round-robin strategies.
+description: Pick which registered provider answers a request, with priority, round-robin, weighted, cost or latency strategies.
 ---
 
-The router selects which provider handles each request. Nexus includes three built-in strategies and supports custom routing logic.
-
-## Strategies
-
-### Priority (Default)
-
-Routes to the first registered provider that supports the requested model. If it fails, falls through to the next:
+The router picks which registered provider handles each request. You set one strategy for the whole gateway with `nexus.WithRouter`. If you don't, Nexus uses the priority strategy, which goes by the order you registered providers in.
 
 ```go
 import "github.com/xraph/nexus/router/strategies"
 
-nexus.WithRouter(strategies.NewPriority())
+gw := nexus.New(
+    nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
+    nexus.WithProvider(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"))),
+    nexus.WithRouter(strategies.NewRoundRobin()),
+)
 ```
 
-### Cost-Optimized
+## What the router sees
 
-Routes to the cheapest provider that supports the requested model:
+Read this before you register more than one provider. Every registered provider is a candidate for every request, and the router doesn't look at the model. It doesn't filter providers by the model they serve, it ignores `CompletionRequest.Provider`, and it ignores the `Provider` field of an alias target. So with OpenAI and Anthropic both registered, a request for `claude-3-5-haiku-20241022` can go to OpenAI, which rejects the model.
 
-```go
-nexus.WithRouter(strategies.NewCostOptimized())
-```
+Until routing takes the model into account, you have two ways to keep requests on the right provider:
 
-### Round-Robin
+- Run one provider per gateway, or one per group of models that share a provider.
+- Write your own strategy (below) that reads `req.Model` and picks the matching candidate.
 
-Distributes requests evenly across providers:
+The router also builds every candidate with `Healthy: true` and zero `Cost` and `Latency`. Nothing fills those fields in yet, which matters for the cost and latency strategies.
 
-```go
-nexus.WithRouter(strategies.NewRoundRobin())
-```
+## Strategies
+
+| Strategy | Constructor | What it does today |
+| --- | --- | --- |
+| Priority (default) | `strategies.NewPriority(order ...string)` | The first provider named in `order`, otherwise the first one you registered |
+| Round-robin | `strategies.NewRoundRobin()` | Rotates through the providers, one request at a time |
+| Weighted | `strategies.NewWeighted(map[string]float64{"openai": 0.7, "anthropic": 0.3})` | Random pick by weight; a provider missing from the map gets weight 1 |
+| Cost-optimized | `strategies.NewCostOptimized()` | Picks the lowest `Candidate.Cost`. Every candidate has cost 0, so it picks the first registered provider |
+| Latency-optimized | `strategies.NewLatencyOptimized()` | Picks the lowest `Candidate.Latency`. Every candidate has latency 0, so it picks the first registered provider |
+
+`gw.RoutingStrategy()` returns the name of the strategy in use (`priority`, `round_robin`, `weighted`, `cost_optimized` or `latency_optimized`).
+
+Embedding requests don't go through the strategy. They go to the first registered provider whose capabilities include embeddings.
 
 ## Custom Strategy
 
-Implement the `router.Strategy` interface:
+Implement `router.Strategy`:
 
 ```go
 type Strategy interface {
-    Route(ctx context.Context, req *provider.CompletionRequest, providers []provider.Provider) (provider.Provider, error)
+    Name() string
+    Select(ctx context.Context, req *provider.CompletionRequest, candidates []Candidate) (*Candidate, error)
 }
 ```
 
-Example — route based on model prefix:
+`Candidate` carries the `Provider` plus `Weight`, `Priority`, `Healthy`, `Latency` and `Cost` fields. Only `Provider` and `Healthy` (always true) are set by the gateway today.
+
+This one sends each request to the provider that lists the requested model in its catalog, and falls back to the first candidate:
 
 ```go
-type prefixRouter struct{}
+type byModel struct{}
 
-func (r *prefixRouter) Route(ctx context.Context, req *provider.CompletionRequest, providers []provider.Provider) (provider.Provider, error) {
-    for _, p := range providers {
-        if strings.HasPrefix(req.Model, p.Name()) {
-            return p, nil
+func (byModel) Name() string { return "by_model" }
+
+func (byModel) Select(ctx context.Context, req *provider.CompletionRequest, candidates []router.Candidate) (*router.Candidate, error) {
+    for i := range candidates {
+        models, err := candidates[i].Provider.Models(ctx)
+        if err != nil {
+            continue
+        }
+        for _, m := range models {
+            if m.ID == req.Model {
+                return &candidates[i], nil
+            }
         }
     }
-    return nil, nexus.ErrProviderNotFound
+    if len(candidates) == 0 {
+        return nil, nexus.ErrProviderNotFound
+    }
+    return &candidates[0], nil
 }
-```
 
-## Fallback & Circuit Breaking
-
-When a provider fails, Nexus automatically retries with fallback providers. Circuit breakers prevent cascading failures:
-
-```go
 gw := nexus.New(
-    nexus.WithMaxRetries(3),
-    nexus.WithProvider(openai.New(key)),     // primary
-    nexus.WithProvider(anthropic.New(key)),   // fallback
+    nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
+    nexus.WithProvider(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"))),
+    nexus.WithRouter(byModel{}),
 )
 ```
+
+A strategy error is permanent: the retry stage doesn't retry it.
+
+## Retries and fallback
+
+The retry stage (priority 340) retries a failed provider call twice by default, with a 500ms delay that doubles each time. Change the count with `nexus.WithMaxRetries(n)`. It doesn't retry refusals, guardrail blocks or permanent errors. Each attempt runs the strategy again, so with the priority strategy every retry goes to the same provider. Round-robin and weighted can land on a different one.
+
+The `fallback` package has a circuit breaker and a service that tries a primary provider and then a list of fallbacks, but the gateway doesn't use it. Nothing in the default pipeline opens a circuit or fails over to another provider, and the `OnCircuitOpened` and `OnFallbackTriggered` hooks never fire.

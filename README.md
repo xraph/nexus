@@ -248,12 +248,14 @@ The admin API needs a first admin key, and no route can create one. Set `NEXUS_B
 | Option | What it does |
 | --- | --- |
 | `WithProvider(p)` | Registers an LLM provider |
-| `WithDatabase(s)` | Uses this store and skips Grove discovery |
+| `WithDatabase(s)` | Uses this store, unless the container has a `*grove.DB` (see below) |
 | `WithGroveDatabase(name)` | Resolves a named `*grove.DB` from the container |
 | `WithGatewayOption(opt)` | Passes any `nexus.Option` through to the gateway |
 | `WithStreamCache(sc, opts)`, `WithStreamLifecycleConfig(cfg)` | Stream caching and hook tuning |
 | `WithConfig(cfg)`, `WithRequireConfig(true)` | Sets config in code, or fails `Register` when the YAML key is missing |
 | `WithDisableMigrate()` | Leaves migrations to you |
+
+`WithDatabase` doesn't stop Grove discovery. `Register` still looks for a `*grove.DB` (the named one from `WithGroveDatabase`, or the default one) and, when it finds it, builds a store from it after your options, so the container's store wins over the one you passed. If you want your own store, keep a `*grove.DB` out of the container.
 
 The [Forge extension guide](https://www.xraph.com/docs/nexus/guides/forge-extension) covers how YAML and code options merge.
 

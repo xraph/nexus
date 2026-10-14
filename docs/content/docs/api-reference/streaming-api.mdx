@@ -75,7 +75,7 @@ func (a *Accumulator) Finalize(usageFallback func() *Usage) *CompletionResponse
 ```
 
 Drains a stream (or accepts incremental chunks) and produces the merged
-`CompletionResponse` — the same shape `Provider.Complete` would have
+`CompletionResponse`, the same shape `Provider.Complete` would have
 returned.
 
 ### `provider.NewChannelAdapter`
@@ -83,7 +83,7 @@ returned.
 ```go
 type ChannelOptions struct {
     Buffer         int  // default 16
-    EmitErrorChunk bool // default true
+    EmitErrorChunk bool // always treated as true, see below
 }
 
 func NewChannelAdapter(ctx context.Context, s Stream, opts ChannelOptions) <-chan StreamChunk
@@ -91,7 +91,8 @@ func NewChannelAdapter(ctx context.Context, s Stream, opts ChannelOptions) <-cha
 
 Spawns a goroutine that reads chunks and publishes them on the returned
 channel. Closes on `io.EOF` or ctx cancel. On error, emits a final
-`EventError` chunk before close.
+`EventError` chunk before close. Setting `EmitErrorChunk` to false doesn't
+turn that off today: the adapter treats false as "use the default".
 
 ### `provider.Capabilities` (streaming flags)
 
@@ -125,9 +126,9 @@ type StreamEncoder interface {
 
 Built-in encoders:
 
-- `httpstream.NewSSEOpenAIEncoder()` — `text/event-stream`, OpenAI envelope (default).
-- `httpstream.NewSSENativeEncoder()` — `application/vnd.nexus.events+sse`, named events.
-- `httpstream.NewNDJSONEncoder()` — `application/x-ndjson`, one event per line.
+- `httpstream.NewSSEOpenAIEncoder()`: `text/event-stream`, OpenAI envelope (default).
+- `httpstream.NewSSENativeEncoder()`: `application/vnd.nexus.events+sse`, named events.
+- `httpstream.NewNDJSONEncoder()`: `application/x-ndjson`, one event per line.
 
 ### `httpstream.Run`
 
@@ -151,8 +152,9 @@ events, and one-shot `Stream.Close`.
 func Negotiate(r *http.Request, reg *Registry) StreamEncoder
 ```
 
-Picks an encoder by precedence: `?stream_format=` query →
-`X-Nexus-Stream-Format` header → `Accept` → registry default.
+Picks an encoder by precedence: the `?stream_format=` query, then the
+`X-Nexus-Stream-Format` header, then `Accept`, then the registry default.
+Values match content types or aliases (`sse`, `nexus`, `ndjson`), case-insensitively.
 
 ### `httpstream.WSHandler`
 
@@ -161,6 +163,7 @@ type WSOptions struct {
     AcceptOrigins     []string      // OriginPatterns; ["*"] disables verify
     SendBuffer        int           // default 64
     HeartbeatInterval time.Duration // default 20s
+    OnError           func(ctx context.Context, err error)
 }
 
 func NewWSHandler(streamer CompletionStreamer, opts WSOptions) *WSHandler
@@ -190,14 +193,14 @@ type StreamCacheOptions struct {
     MaxFrames int
     MaxBytes  int
     Mode      ReplayMode
-    FFDivisor float64 // ReplayFastForward — defaults to 4 if non-positive
+    FFDivisor float64 // ReplayFastForward; defaults to 4 if non-positive
 }
 ```
 
 Built-in backends:
 
-- `cache/stores.NewMemoryStream()` — in-memory with TTL + soft max-keys cap.
-- `cache/stores.NewRedisStream(client)` — Redis-backed, gob-serialized.
+- `cache/stores.NewMemoryStream()`: in-memory with TTL and a soft cap on keys.
+- `cache/stores.NewRedisStream(client)`: Redis-backed, gob-serialized.
 
 ## `pipeline/middlewares` package
 
@@ -217,8 +220,10 @@ type StreamQuota struct {
 func NewStreamLifecycle(r *plugin.Registry, cfg StreamLifecycleConfig) *StreamLifecycleMiddleware
 ```
 
-Priority 545. Fires the four streaming plugin hooks and (when configured)
-enforces per-request stream quotas.
+Priority 60. Fires the four streaming plugin hooks and enforces per-request
+stream quotas. The gateway always adds this stage, and when `QuotaResolver`
+is nil it uses `middlewares.TenantStreamQuota`, which reads the tenant's
+`MaxStreamDuration` and `MaxStreamTokens`.
 
 ### `middlewares.IsQuotaExceeded`
 
@@ -258,7 +263,7 @@ func WithWebSocket(opts httpstream.WSOptions) Option
 func WithoutWebSocket() Option
 ```
 
-`Proxy.Shutdown(ctx)` cancels every in-flight streaming request.
+`Proxy.Shutdown(ctx)` and `API.Shutdown(ctx)` cancel every in-flight streaming request.
 
 ## `tenant` (streaming quotas)
 
@@ -270,4 +275,5 @@ type Quota struct {
 }
 ```
 
-Read by your `QuotaResolver` and surfaced via `StreamLifecycleConfig`.
+Read by the default resolver, `middlewares.TenantStreamQuota`. Pass your own
+`QuotaResolver` in `StreamLifecycleConfig` to take limits from somewhere else.

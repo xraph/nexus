@@ -1,6 +1,6 @@
 ---
 title: LM Studio
-description: Run models locally with LM Studio and connect to Nexus — no API key required.
+description: Run models locally with LM Studio and connect them to Nexus. No API key required.
 ---
 
 LM Studio runs models locally and exposes an OpenAI-compatible API. No API key is required.
@@ -28,6 +28,7 @@ No API key is needed. LM Studio connects to `http://localhost:1234/v1` by defaul
 | Option | Description |
 |--------|-------------|
 | `lmstudio.WithBaseURL(url)` | Override the API base URL (default: `http://localhost:1234/v1`) |
+| `lmstudio.WithToolCallExtraction()` | Turn tool calls that a local model writes as plain text (`<tool_call>{...}</tool_call>` and similar markers) into real tool-call deltas at the end of a stream |
 
 ## Capabilities
 
@@ -46,4 +47,4 @@ No API key is needed. LM Studio connects to `http://localhost:1234/v1` by defaul
 |-------|---------|-----------|-------|
 | `lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF` | 131K | 4,096 | Free (local) |
 | `lmstudio-community/Mistral-7B-Instruct-v0.3-GGUF` | 32,768 | 4,096 | Free (local) |
-| `nomic-ai/nomic-embed-text-v1.5-GGUF` | 8,192 | — | Free (local) |
+| `nomic-ai/nomic-embed-text-v1.5-GGUF` | 8,192 | n/a | Free (local) |

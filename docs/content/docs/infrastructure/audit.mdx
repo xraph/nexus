@@ -18,6 +18,8 @@ gw := nexus.New(
 )
 ```
 
+`audit_hook.New(recorder, opts...)` takes any `audit_hook.Recorder` (a single `Record(ctx, event) error` method). `audit_hook.WithLogger(l)` gives it a go-utils logger for recorder errors.
+
 ## Audit Events
 
 Each event contains:
@@ -28,21 +30,27 @@ type AuditEvent struct {
     Action     Action
     Resource   Resource
     Category   Category
-    ActorID    string
+    ActorID    string // never set by audit_hook today
     ResourceID string
     Details    map[string]any
 }
 ```
 
+IDs such as the tenant or key go in `ResourceID`, and anything else the hook knows (model, provider, tenant) goes in `Details`.
+
 ## Actions
 
-14 audit actions across 5 categories:
+The package defines 18 actions in 5 categories:
 
-- **Request**: received, completed, failed, cached
-- **Provider**: failed, circuit opened, fallback triggered
-- **Security**: guardrail blocked, guardrail redacted
-- **Tenant**: created, disabled, key created, key revoked
-- **Budget**: warning, exceeded
+| Category | Actions |
+|----------|---------|
+| `request` | `request.received`, `request.completed`, `request.failed`, `request.cached`, `stream.started`, `stream.completed`, `stream.failed` |
+| `provider` | `provider.failed`, `circuit.opened`, `fallback.triggered` |
+| `security` | `guardrail.blocked`, `guardrail.redacted` |
+| `tenant` | `tenant.created`, `tenant.disabled`, `key.created`, `key.revoked` |
+| `budget` | `budget.warning`, `budget.exceeded` |
+
+Only the actions whose hooks the gateway fires show up today: the tenant and key actions, the two budget actions and the three stream actions. The request, provider and guardrail actions are defined, but their hooks don't fire yet. See [Plugins](/docs/infrastructure/plugins#lifecycle-hooks).
 
 ## Filtering
 
@@ -51,17 +59,12 @@ Record only specific actions:
 ```go
 audit_hook.New(recorder,
     audit_hook.WithActions(
-        audit_hook.ActionGuardrailBlocked,
+        audit_hook.ActionKeyRevoked,
         audit_hook.ActionBudgetExceeded,
     ),
 )
 ```
 
-## Chronicle Integration
+## Sending events to Chronicle
 
-In a Forge application, wire audit events to Chronicle automatically:
-
-```go
-// The forge extension auto-discovers Chronicle
-// and wires audit_hook.New(chronicle.RecorderFunc(...))
-```
+Nothing wires `audit_hook` to Chronicle for you, in Forge or out of it. Write a `Recorder` that writes each `AuditEvent` to your Chronicle instance (or any other audit store) and pass it to `audit_hook.New`. In a Forge app, add it with `nexusext.WithGatewayOption(nexus.WithExtension(audit_hook.New(recorder)))`.

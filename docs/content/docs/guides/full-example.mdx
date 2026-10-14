@@ -1,6 +1,6 @@
 ---
 title: Full Example
-description: A complete multi-tenant AI gateway with all features enabled.
+description: A multi-tenant gateway with caching, guardrails, aliases, audit hooks and the HTTP proxy.
 ---
 
 ```go
@@ -9,6 +9,7 @@ package main
 import (
     "context"
     "fmt"
+    "log"
     "log/slog"
     "net/http"
     "os"
@@ -17,99 +18,103 @@ import (
     "github.com/xraph/nexus"
     "github.com/xraph/nexus/audit_hook"
     "github.com/xraph/nexus/cache/stores"
+    "github.com/xraph/nexus/guard"
     "github.com/xraph/nexus/guard/guards"
     "github.com/xraph/nexus/key"
     "github.com/xraph/nexus/model"
+    "github.com/xraph/nexus/money"
     "github.com/xraph/nexus/observability"
-    "github.com/xraph/nexus/providers/anthropic"
     "github.com/xraph/nexus/providers/openai"
     "github.com/xraph/nexus/proxy"
-    "github.com/xraph/nexus/router/strategies"
-    "github.com/xraph/nexus/store/memory"
     "github.com/xraph/nexus/tenant"
 )
 
 func main() {
     ctx := context.Background()
 
-    // Audit recorder
+    // Audit recorder: here it just logs. In production, write to your audit store.
     recorder := audit_hook.RecorderFunc(func(ctx context.Context, event audit_hook.AuditEvent) error {
         slog.Info("audit", "action", event.Action, "resource", event.ResourceID)
         return nil
     })
 
-    // Build the gateway
+    metrics := observability.NewMetricsExtension()
+
     gw := nexus.New(
-        // Storage
-        nexus.WithDatabase(memory.New()),
+        // Provider. The router doesn't pick a provider by model, so this
+        // gateway keeps to one provider and points every alias at it.
+        nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
 
-        // Providers
-        nexus.WithProvider(openai.New(os.Getenv("OPENAI_KEY"))),
-        nexus.WithProvider(anthropic.New(os.Getenv("ANTHROPIC_KEY"))),
-
-        // Routing
-        nexus.WithRouter(strategies.NewCostOptimized()),
-
-        // Caching
-        nexus.WithCache(stores.NewMemory(5000)),
+        // Caching: LRU, 5000 entries, 10 minute TTL
+        nexus.WithCache(stores.NewMemory(stores.WithMaxSize(5000))),
 
         // Guardrails
-        nexus.WithGuard(guards.NewPII(guards.ActionRedact)),
+        nexus.WithGuard(guards.NewPII(guard.ActionRedact)),
         nexus.WithGuard(guards.NewInjection()),
 
         // Model aliases
-        nexus.WithAlias("fast", model.AliasTarget{
-            Provider: "anthropic",
-            Model:    "claude-3.5-haiku",
-        }),
-        nexus.WithAlias("smart", model.AliasTarget{
-            Provider: "openai",
-            Model:    "gpt-4o",
-        }),
+        nexus.WithAlias("fast", model.AliasTarget{Provider: "openai", Model: "gpt-4o-mini"}),
+        nexus.WithAlias("smart", model.AliasTarget{Provider: "openai", Model: "gpt-4o"}),
 
         // Plugins
         nexus.WithExtension(audit_hook.New(recorder)),
-        nexus.WithExtension(observability.NewMetricsExtension()),
+        nexus.WithExtension(metrics),
 
         // Resilience
-        nexus.WithTimeout(30 * time.Second),
+        nexus.WithTimeout(30*time.Second),
         nexus.WithMaxRetries(3),
 
-        // Logging
-        nexus.WithLogger(nexus.NewDefaultLogger("info")),
+        // Logging: *slog.Logger satisfies nexus.Logger
+        nexus.WithLogger(slog.Default()),
     )
 
-    // Initialize
     if err := gw.Initialize(ctx); err != nil {
-        panic(err)
+        log.Fatal(err)
     }
     defer gw.Shutdown(ctx)
 
-    // The proxy refuses a request without a gateway key, so create a tenant
-    // and a key to call it with.
-    t, err := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Demo", Slug: "demo"})
+    // A tenant with its own limits.
+    t, err := gw.Tenants().Create(ctx, &tenant.CreateInput{
+        Name: "Demo",
+        Slug: "demo",
+        Quota: &tenant.Quota{
+            RPM:              60,
+            DailyRequests:    1000,
+            MonthlyBudgetUSD: money.MustParse("50"),
+        },
+    })
     if err != nil {
-        panic(err)
+        log.Fatal(err)
     }
+
+    // The proxy refuses a request without a gateway key, so make one.
     _, raw, err := gw.Keys().Create(ctx, &key.CreateInput{TenantID: t.ID.String(), Name: "demo"})
     if err != nil {
-        panic(err)
+        log.Fatal(err)
     }
     // Shown once; only the hash is stored. Never log a key in a real service.
     fmt.Println("gateway key:", raw)
 
-    // Run as OpenAI-compatible proxy
-    p := proxy.New(gw.Engine())
-    slog.Info("nexus gateway listening", "addr", ":8080")
-    http.ListenAndServe(":8080", p)
+    srv := &http.Server{
+        Addr:              ":8080",
+        Handler:           proxy.New(gw.Engine()),
+        ReadHeaderTimeout: 10 * time.Second,
+    }
+    slog.Info("nexus gateway listening", "addr", srv.Addr)
+    log.Fatal(srv.ListenAndServe())
 }
 ```
 
 This gateway:
-- Routes to OpenAI and Anthropic with cost-optimized strategy
-- Caches responses in memory (5000 entries)
-- Redacts PII and blocks prompt injection
-- Maps `"fast"` to Claude Haiku, `"smart"` to GPT-4o
-- Records audit events and tracks metrics
-- Retries failed requests up to 3 times
-- Serves as an OpenAI-compatible proxy on port 8080, for clients that send the `nxs_` key it printed
+
+- Sends every request to OpenAI, rewriting `"fast"` to `gpt-4o-mini` and `"smart"` to `gpt-4o`
+- Caches responses in memory (5000 entries), per tenant
+- Redacts PII and blocks prompt injection on the way in, and redacts PII on the way out
+- Gives the `demo` tenant 60 requests a minute, 1000 a day and a $50 monthly budget
+- Records tenant, key, budget and stream events with the audit hook, and counts them in the metrics extension
+- Retries a failed provider call up to 3 times
+- Serves an OpenAI-compatible proxy on port 8080 for clients that send the `nxs_` key it printed
+
+Everything lives in memory, so tenants, keys and usage are gone on restart. Pass `nexus.WithDatabase` with a [PostgreSQL](/docs/stores/postgres), [SQLite](/docs/stores/sqlite) or [MongoDB](/docs/stores/mongo) store to keep them.
+
+The audit and metrics hooks for individual requests (received, completed, failed, cached), provider failures and guardrail blocks don't fire yet. See [Plugins](/docs/infrastructure/plugins).

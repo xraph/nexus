@@ -112,18 +112,20 @@ You cannot delete a tenant that has keys or usage history. The gateway returns `
 Override model aliases per tenant:
 
 ```go
-nexus.WithTenantAlias("premium", "fast",
+nexus.WithTenantAlias(premiumTenantID, "fast",
     model.AliasTarget{Provider: "openai", Model: "gpt-4o"},
 )
 ```
+
+The first argument is the tenant's ID, not its slug. See [Model Aliases](/docs/core/aliases#per-tenant-overrides).
 
 ## Usage Isolation
 
 A usage record carries the tenant the request was attributed to. Unattributed requests are recorded too, under no tenant, and so are refusals of an unknown tenant. Passing `""` as the tenant id to a usage query or aggregate means every tenant, unattributed rows included. Query one tenant's usage:
 
 ```go
-summary, _ := usageService.Summary(ctx, tenantID, timeRange)
-// summary.TotalTokens, summary.TotalCost
+summary, err := gw.Usage().Summary(ctx, tenantID, "month") // "day", "week" or "month"
+// summary.TotalTokens, summary.TotalCostUSD
 ```
 
 ## Budget events

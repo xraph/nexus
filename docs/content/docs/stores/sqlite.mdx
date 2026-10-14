@@ -3,7 +3,7 @@ title: SQLite Store
 description: Lightweight SQLite store for development, testing, and single-node deployments.
 ---
 
-The `store/sqlite` package implements Nexus's `store.Store` interface using the grove ORM with the SQLite driver. It requires no external database process, making it ideal for development, integration tests, and single-node deployments.
+The `store/sqlite` package implements Nexus's `store.Store` interface on [Grove](https://github.com/xraph/grove) with its SQLite driver. It needs no database server, which makes it a good fit for development, integration tests and single-node deployments.
 
 ## Usage
 
@@ -14,7 +14,11 @@ import (
     "github.com/xraph/nexus/store/sqlite"
 )
 
-db, err := grove.Open(sqlitedriver.Open("nexus.db"))
+drv := sqlitedriver.New()
+if err := drv.Open(ctx, "nexus.db"); err != nil {
+    log.Fatal(err)
+}
+db, err := grove.Open(drv)
 if err != nil {
     log.Fatal(err)
 }
@@ -29,23 +33,17 @@ gw := nexus.New(
 )
 ```
 
-Pass `":memory:"` for a fully in-process, zero-persistence store useful in tests:
-
-```go
-db, err := grove.Open(sqlitedriver.Open(":memory:"))
-```
-
 ## Internals
 
 | Aspect | Detail |
 |--------|--------|
-| Driver | grove ORM + sqlitedriver |
-| Migrations | grove orchestrator with programmatic migrations |
-| Transactions | SQLite-level transactions |
-| Concurrency | Multiple readers, single writer (WAL mode) |
+| Driver | Grove with `sqlitedriver` |
+| Migrations | `sqlite.Migrations`, run by Grove's orchestrator in `Migrate()` |
+| Tables | `tenants`, `api_keys`, `usage_records` (no `nexus_` prefix) |
+| Close | `s.Close()` closes the `grove.DB`, and `gw.Shutdown` calls it |
 
 ## When to use
 
 - Development and local testing without external dependencies.
 - Single-process or embedded deployments.
-- CI pipelines where spinning up PostgreSQL is impractical.
+- CI pipelines where running PostgreSQL is impractical. The store's own tests always run.

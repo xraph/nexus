@@ -62,13 +62,22 @@ if err != nil {
 
 ## OpenAI-Compatible Endpoints
 
+Two packages serve these routes, and both are plain `net/http` handlers you mount wherever you like:
+
+| Handler | Routes |
+|---------|--------|
+| `proxy.New(gw.Engine())` | The `/v1` routes below, `GET /health` and `/v1/realtime` |
+| `api.New(gw).Handler()` | The same, plus the `/admin` API |
+
+Neither the gateway nor the Forge extension mounts them for you. Both take `WithStreamEncoder`, `WithWebSocket(opts)` and `WithoutWebSocket()` options, and the proxy also has `WithStreamEncoderAlias`.
+
 ### Chat Completions
 
 ```
 POST /v1/chat/completions
 ```
 
-Request and response format follows the OpenAI API specification. Supports streaming via `stream: true`.
+The request and response follow OpenAI's chat completions format. Set `stream: true` to stream; the wire format comes from `?stream_format=` or the `Accept` header (see the [Streaming API](/docs/api-reference/streaming-api)).
 
 ### Embeddings
 
@@ -76,13 +85,24 @@ Request and response format follows the OpenAI API specification. Supports strea
 POST /v1/embeddings
 ```
 
+Embeddings go to the first registered provider that supports them.
+
 ### Models
 
 ```
 GET /v1/models
+GET /v1/models/{model}
 ```
 
-Returns all models from all registered providers, plus model aliases. It needs the `models` scope when keys are required.
+Lists the built-in model catalog of every registered provider, in OpenAI's list shape. Aliases aren't included. The `id` field currently holds each model's display name (`GPT-4o`) rather than its model ID (`gpt-4o`), and `GET /v1/models/{model}` matches on that same display name. Both need the `models` scope when keys are required.
+
+### Realtime
+
+```
+GET /v1/realtime   (WebSocket upgrade)
+```
+
+A bidirectional WebSocket session over the same pipeline. See the [Streaming API](/docs/api-reference/streaming-api).
 
 ## Admin Endpoints
 
@@ -92,11 +112,11 @@ Bad input (a missing name, a tenant id that does not parse, an unknown scope) is
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/admin/tenants` | List all tenants |
+| `GET` | `/admin/tenants` | List tenants, newest first; filter with `?status=` and `?search=`, page with `?cursor=` |
 | `POST` | `/admin/tenants` | Create a tenant |
-| `GET` | `/admin/tenants/:id` | Get a tenant |
-| `PATCH` | `/admin/tenants/:id` | Update a tenant |
-| `DELETE` | `/admin/tenants/:id` | Delete a tenant |
+| `GET` | `/admin/tenants/{id}` | Get a tenant |
+| `PATCH` | `/admin/tenants/{id}` | Update a tenant |
+| `DELETE` | `/admin/tenants/{id}` | Delete a tenant |
 
 Deleting a tenant that still has keys or usage history answers 409 `conflict`: disable it instead. This check applies across the built-in stores when you use the gateway's tenant service.
 
@@ -104,15 +124,15 @@ Deleting a tenant that still has keys or usage history answers 409 `conflict`: d
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/admin/keys` | List keys for a tenant |
-| `POST` | `/admin/keys` | Create an API key |
-| `DELETE` | `/admin/keys/:id` | Revoke an API key |
+| `GET` | `/admin/keys?tenant_id=...` | List a tenant's keys (`tenant_id` is required) |
+| `POST` | `/admin/keys` | Create a key; the response carries the raw key once |
+| `DELETE` | `/admin/keys/{id}` | Revoke a key |
 
 ### Usage
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/admin/usage?tenant_id=...&period=month` | Usage summary for one tenant |
+| `GET` | `/admin/usage?tenant_id=...&period=month` | Usage summary for one tenant. `tenant_id` is required; `period` is `day`, `week` or `month` (the default) |
 
 ### Providers
 

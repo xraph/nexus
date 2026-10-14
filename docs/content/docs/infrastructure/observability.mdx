@@ -1,11 +1,11 @@
 ---
 title: Observability
-description: Metrics, tracing, and monitoring for your AI gateway.
+description: Counters, tracing and usage records for your AI gateway.
 ---
 
 ## Metrics Extension
 
-The built-in metrics extension tracks operational counters:
+The built-in metrics extension keeps an atomic counter per lifecycle event:
 
 ```go
 import "github.com/xraph/nexus/observability"
@@ -16,25 +16,42 @@ gw := nexus.New(
 )
 
 // Read counters
-metrics.RequestsCompleted.Value() // int64
-metrics.ProviderFailures.Value()
-metrics.GuardrailBlocks.Value()
+metrics.StreamsCompleted.Value() // int64
+metrics.KeysCreated.Value()
+metrics.BudgetExceeded.Value()
 ```
+
+The counters are `RequestsReceived`, `RequestsCompleted`, `RequestsFailed`, `RequestsCached`, `ProviderFailures`, `CircuitOpens`, `Fallbacks`, `GuardrailBlocks`, `GuardrailRedacts`, `TenantsCreated`, `TenantsDisabled`, `KeysCreated`, `KeysRevoked`, `BudgetWarnings`, `BudgetExceeded`, `StreamsStarted`, `StreamsCompleted`, `StreamsFailed`, `ChunksEmitted` and `ChunkBytes`.
+
+The request, provider and guardrail counters stay at zero today, because their hooks don't fire (see [Plugins](/docs/infrastructure/plugins#lifecycle-hooks)). The counters are in-process values. Nothing exports them to Prometheus or a Forge metrics backend for you.
 
 ## Tracing
 
-Add OpenTelemetry spans to every request:
+`nexus.WithTracer(t)` adds a tracing stage at priority 10. `t` implements `observability.Tracer`, so to use OpenTelemetry you write a small adapter around your OTel tracer:
 
 ```go
-nexus.WithTracer(otelTracer)
+type Tracer interface {
+    StartSpan(ctx context.Context, name string, attrs ...SpanAttribute) (context.Context, SpanFinisher)
+}
+
+type SpanFinisher interface {
+    Finish(err error)
+    SetAttribute(key string, value any)
+}
 ```
 
-The tracing middleware (priority 10) creates spans with:
-- Request model and provider
-- Tenant ID
-- Token counts
-- Cache hit/miss status
+Each request gets one span, `nexus.request`, with these attributes:
+
+- `nexus.request.type`, `nexus.request.model`, `nexus.request.id` and `nexus.tenant.id` when it starts
+- `nexus.request.duration_ms` and `nexus.provider.name` when it ends
+- `nexus.tokens.input` and `nexus.tokens.output` for a non-streamed completion
+
+The span is finished with the request's error, if any. `observability.NoopTracer` does nothing. The stage runs before the identity stage, so `nexus.tenant.id` is only set when the HTTP edge (or your own code) put the tenant in the context.
+
+## Usage records
+
+The most complete record of what happened is the usage store. The usage stage writes one record per request: the request id, tenant and key, model and provider, tokens, exact cost, latency, cache hit and outcome (including refusals and guardrail blocks). Query it with `gw.Usage()`, or over the admin API at `/admin/usage`.
 
 ## Response Headers
 
-The gateway does not set diagnostic response headers. The request id, the provider that served the request, whether it was a cache hit, and the latency are all recorded on the usage record for that request. If you want them, query the usage store.
+The gateway does not set diagnostic response headers. The request id, the provider that served the request, whether it was a cache hit, and the latency are all on the usage record for that request.

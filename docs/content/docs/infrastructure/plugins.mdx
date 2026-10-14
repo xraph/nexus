@@ -1,9 +1,9 @@
 ---
 title: Plugins
-description: Extend Nexus with 15 lifecycle hooks for audit, metrics, webhooks, and custom processing.
+description: React to gateway lifecycle events with hook interfaces for audit, metrics and webhooks.
 ---
 
-The plugin system lets you react to lifecycle events without modifying engine code. Each hook is a separate Go interface — implement only the events you care about.
+The plugin system lets you react to lifecycle events without touching the pipeline. Each hook is its own Go interface, so you implement only the events you care about, and register the plugin with `nexus.WithExtension`.
 
 ## Base Interface
 
@@ -13,60 +13,63 @@ type Extension interface {
 }
 ```
 
+`Register` checks the plugin against every hook interface once, so an event only reaches the plugins that implement it. Plugins are called in registration order, synchronously, on the goroutine that raised the event. A hook that returns an error doesn't stop anything, and the gateway's registry has a no-op logger, so the error goes nowhere. Keep hooks fast, and hand slow work to a goroutine or queue.
+
 ## Lifecycle Hooks
 
-### Request Events
+The `plugin` package defines 19 hook interfaces. The gateway fires 10 of them today. The other 9 exist so plugins can implement them, but nothing in the pipeline calls them yet.
 
-| Hook | When |
-|------|------|
-| `OnRequestReceived` | Request enters the pipeline |
-| `OnRequestCompleted` | Provider returns a response |
-| `OnRequestFailed` | Request fails |
-| `OnRequestCached` | Response served from cache |
+### Fired today
 
-### Provider Events
+| Interface | Method | When |
+|-----------|--------|------|
+| `TenantCreated` | `OnTenantCreated` | The tenant service creates a tenant |
+| `TenantDisabled` | `OnTenantDisabled` | A tenant's status changes from active to anything else |
+| `KeyCreated` | `OnKeyCreated` | The key service creates a key |
+| `KeyRevoked` | `OnKeyRevoked` | A key is revoked |
+| `BudgetWarning` | `OnBudgetWarning` | A tenant's monthly spend reaches 80% of its budget, once per tenant per month per replica |
+| `BudgetExceeded` | `OnBudgetExceeded` | A tenant's monthly spend reaches its budget, once per tenant per month per replica |
+| `StreamStarted` | `OnStreamStarted` | The first chunk of a stream arrives from the provider |
+| `ChunkReceived` | `OnChunkReceived` | Each chunk (or every Nth, see `StreamLifecycleConfig.EmitEveryNChunks`), with its kind and size |
+| `StreamCompleted` | `OnStreamCompleted` | A stream drains, with the merged response |
+| `StreamFailed` | `OnStreamFailed` | A stream fails to start or errors partway |
 
-| Hook | When |
-|------|------|
-| `OnProviderFailed` | Provider call fails |
-| `OnCircuitOpened` | Circuit breaker opens |
-| `OnFallbackTriggered` | Fallback provider used |
+### Not fired yet
 
-### Guardrail Events
+| Interface | Method |
+|-----------|--------|
+| `RequestReceived` | `OnRequestReceived` |
+| `RequestCompleted` | `OnRequestCompleted` |
+| `RequestFailed` | `OnRequestFailed` |
+| `RequestCached` | `OnRequestCached` |
+| `ProviderFailed` | `OnProviderFailed` |
+| `CircuitOpened` | `OnCircuitOpened` |
+| `FallbackTriggered` | `OnFallbackTriggered` |
+| `GuardrailBlocked` | `OnGuardrailBlocked` |
+| `GuardrailRedacted` | `OnGuardrailRedacted` |
 
-| Hook | When |
-|------|------|
-| `OnGuardrailBlocked` | Request blocked by guardrail |
-| `OnGuardrailRedacted` | Content redacted by guardrail |
-
-### Tenant & Key Events
-
-| Hook | When |
-|------|------|
-| `OnTenantCreated` | New tenant created |
-| `OnTenantDisabled` | Tenant disabled |
-| `OnKeyCreated` | API key created |
-| `OnKeyRevoked` | API key revoked |
-
-### Budget Events
-
-| Hook | When |
-|------|------|
-| `OnBudgetWarning` | 80% budget threshold |
-| `OnBudgetExceeded` | Budget exceeded |
+For per-request data today, read the usage records (`gw.Usage()`), which carry the outcome, tokens, cost, latency, provider and cache hit for every request, or add your own stage with `nexus.WithMiddleware`.
 
 ## Registering Plugins
 
 ```go
+import (
+    "github.com/xraph/nexus/audit_hook"
+    "github.com/xraph/nexus/observability"
+    "github.com/xraph/nexus/relay_hook"
+)
+
 gw := nexus.New(
-    nexus.WithExtension(audithook.New(recorder)),
+    nexus.WithExtension(audit_hook.New(recorder)),
     nexus.WithExtension(observability.NewMetricsExtension()),
-    nexus.WithExtension(relayhook.NewWebhook("https://hooks.example.com/nexus")),
+    nexus.WithExtension(relay_hook.NewWebhook("https://hooks.example.com/nexus")),
 )
 ```
 
 ## Built-in Plugins
 
-- **audit_hook** — Records lifecycle events for audit trails (Chronicle integration)
-- **observability** — Increments atomic counters for operational metrics
-- **relay_hook** — Forwards events as webhooks to external systems
+- `audit_hook`: turns events into `AuditEvent` values and hands them to your `Recorder`. See [Audit](/docs/infrastructure/audit).
+- `observability`: `MetricsExtension` keeps an atomic counter per event. See [Observability](/docs/infrastructure/observability).
+- `relay_hook`: sends events to a `Sender`, or as JSON webhooks with `NewWebhook(url)`.
+
+None of them is connected to Chronicle, Relay or any other forgery service for you. You write the recorder or sender that does that.

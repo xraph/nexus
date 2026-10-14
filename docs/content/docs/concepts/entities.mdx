@@ -1,65 +1,90 @@
 ---
 title: Entities
-description: Core entity types — Tenants, API Keys, Usage Records, and TypeID identifiers.
+description: Core entity types. Tenants, API keys, usage records and TypeID identifiers.
 ---
 
 ## TypeID Identifiers
 
-All Nexus entities use type-prefixed, K-sortable, UUIDv7-based identifiers via the `typeid` library:
+Every Nexus entity has a type-prefixed, sortable, UUIDv7-based identifier from the `id` package. All of them are the same `id.ID` struct; the aliases only document intent:
 
 ```go
 import "github.com/xraph/nexus/id"
 
-type TenantID  = typeid.TypeID[TenantPrefix]   // tnt_...
-type KeyID     = typeid.TypeID[KeyPrefix]       // key_...
-type RequestID = typeid.TypeID[RequestPrefix]   // req_...
-type UsageID   = typeid.TypeID[UsagePrefix]     // usg_...
+type TenantID  = ID // tenant_...
+type KeyID     = ID // key_...
+type UsageID   = ID // usage_...
+type RequestID = ID // req_...
 ```
+
+See [Identity (TypeID)](/docs/concepts/type-ids) for creating and parsing them.
 
 ## Tenant
 
-Represents an isolated customer or workspace:
+An isolated customer or workspace, from the `tenant` package:
 
 ```go
 type Tenant struct {
     ID        id.TenantID
     Name      string
-    Enabled   bool
-    Config    TenantConfig
+    Slug      string // URL-safe, unique
+    Status    Status // tenant.StatusActive, StatusDisabled or StatusSuspended
+    Quota     Quota
+    Config    Config
+    Metadata  map[string]string
     CreatedAt time.Time
     UpdatedAt time.Time
 }
 ```
 
+`Quota` holds the limits (`RPM`, `TPM`, `DailyRequests`, `MonthlyBudgetUSD`, `MaxTokensPerReq`, `MaxStreamDuration`, `MaxStreamTokens`), and `Config` holds per-tenant overrides (`AllowedModels`, `BlockedModels`, `DefaultModel`, `CacheEnabled` and more). See [Multi-Tenancy](/docs/concepts/multi-tenancy).
+
 ## API Key
 
-Authentication credentials scoped to a tenant:
+A gateway key belongs to one tenant, from the `key` package:
 
 ```go
-type Key struct {
-    ID        id.KeyID
-    TenantID  id.TenantID
-    Name      string
-    Hash      string    // bcrypt hash of the key
-    Enabled   bool
-    ExpiresAt *time.Time
+type APIKey struct {
+    ID         id.KeyID
+    TenantID   id.TenantID
+    Name       string
+    Prefix     string     // "nxs_" plus the first 8 characters, for display
+    Hash       string     // SHA-256 of the raw key, hex; never serialized
+    Scopes     []string   // completions, embeddings, models, admin
+    Status     Status     // key.KeyActive, KeyRevoked or KeyExpired
+    ExpiresAt  *time.Time
+    LastUsedAt *time.Time
+    Metadata   map[string]string
+    CreatedAt  time.Time
 }
 ```
+
+The raw key is `nxs_` plus 64 lowercase hex digits. `Keys().Create` returns it once, and only its hash is stored.
 
 ## Usage Record
 
-Tracks token consumption per request:
+One record per request, from the `usage` package:
 
 ```go
 type Record struct {
-    ID           id.UsageID
-    TenantID     id.TenantID
-    RequestID    id.RequestID
-    Model        string
-    Provider     string
-    InputTokens  int
-    OutputTokens int
-    Cost         float64
-    CreatedAt    time.Time
+    ID               id.UsageID
+    TenantID         id.TenantID  // id.Nil when unattributed
+    KeyID            id.KeyID
+    RequestID        id.RequestID
+    Provider         string
+    Model            string
+    PromptTokens     int
+    CompletionTokens int
+    TotalTokens      int
+    CostUSD          *money.USD   // nil when the request couldn't be priced
+    PricingStatus    PricingStatus
+    Outcome          Outcome      // ok, cached, blocked, refused or error
+    BlockedBy        string
+    RefusalCode      string
+    Latency          time.Duration
+    Cached           bool
+    StatusCode       int
+    CreatedAt        time.Time
 }
 ```
+
+Cost is a `money.USD`, an exact decimal. Compare amounts with `Equal` or `Cmp`, never `==`.

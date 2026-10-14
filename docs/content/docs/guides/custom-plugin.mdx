@@ -5,7 +5,7 @@ description: Build a custom lifecycle plugin for Nexus.
 
 ## Implement the Interface
 
-A plugin must implement `plugin.Extension` (the `Name()` method) plus any lifecycle hooks it wants to handle:
+A plugin implements `plugin.Extension` (the `Name()` method) plus whichever hook interfaces it wants:
 
 ```go
 package myplugin
@@ -17,28 +17,29 @@ import (
 
     "github.com/xraph/nexus/id"
     "github.com/xraph/nexus/plugin"
+    "github.com/xraph/nexus/provider"
 )
 
 type LogPlugin struct{}
 
 func (p *LogPlugin) Name() string { return "log_plugin" }
 
-func (p *LogPlugin) OnRequestReceived(ctx context.Context, requestID id.RequestID, model string, tenantID string) error {
-    log.Printf("request %s: model=%s tenant=%s", requestID, model, tenantID)
+func (p *LogPlugin) OnKeyCreated(ctx context.Context, keyID id.KeyID, tenantID id.TenantID) error {
+    log.Printf("key %s created for tenant %s", keyID, tenantID)
     return nil
 }
 
-func (p *LogPlugin) OnRequestCompleted(ctx context.Context, requestID id.RequestID, model string, providerName string, elapsed time.Duration, inputTokens int, outputTokens int) error {
-    log.Printf("completed %s: provider=%s tokens=%d+%d elapsed=%s",
-        requestID, providerName, inputTokens, outputTokens, elapsed)
+func (p *LogPlugin) OnStreamCompleted(ctx context.Context, requestID id.RequestID, model, providerName string, elapsed time.Duration, final *provider.CompletionResponse) error {
+    log.Printf("stream %s: provider=%s model=%s tokens=%d elapsed=%s",
+        requestID, providerName, model, final.Usage.TotalTokens, elapsed)
     return nil
 }
 
 // Compile-time checks
 var (
-    _ plugin.Extension        = (*LogPlugin)(nil)
-    _ plugin.RequestReceived  = (*LogPlugin)(nil)
-    _ plugin.RequestCompleted = (*LogPlugin)(nil)
+    _ plugin.Extension       = (*LogPlugin)(nil)
+    _ plugin.KeyCreated      = (*LogPlugin)(nil)
+    _ plugin.StreamCompleted = (*LogPlugin)(nil)
 )
 ```
 
@@ -50,10 +51,14 @@ gw := nexus.New(
 )
 ```
 
+In a Forge app, pass it through the extension: `nexusext.WithGatewayOption(nexus.WithExtension(&myplugin.LogPlugin{}))`.
+
 ## Error Handling
 
-Hook errors are logged but never propagate. Plugins must not block the request pipeline. Return `nil` even if the hook encounters a non-fatal error.
+A hook's error never reaches the request. Hooks run synchronously in the request path, though, so a slow hook slows the request (and a per-chunk hook slows the stream). Keep them quick, and move slow work to a goroutine or a queue. The gateway's registry logs hook errors to a no-op logger, so if you care about a failure, log it inside the hook.
 
 ## Available Hooks
 
-You can implement any combination of 15 lifecycle interfaces: `RequestReceived`, `RequestCompleted`, `RequestFailed`, `RequestCached`, `ProviderFailed`, `CircuitOpened`, `FallbackTriggered`, `GuardrailBlocked`, `GuardrailRedacted`, `TenantCreated`, `TenantDisabled`, `KeyCreated`, `KeyRevoked`, `BudgetWarning`, `BudgetExceeded`.
+The `plugin` package has 19 hook interfaces. These fire today: `TenantCreated`, `TenantDisabled`, `KeyCreated`, `KeyRevoked`, `BudgetWarning`, `BudgetExceeded`, `StreamStarted`, `ChunkReceived`, `StreamCompleted` and `StreamFailed`.
+
+These exist but nothing calls them yet: `RequestReceived`, `RequestCompleted`, `RequestFailed`, `RequestCached`, `ProviderFailed`, `CircuitOpened`, `FallbackTriggered`, `GuardrailBlocked` and `GuardrailRedacted`. A plugin that implements them compiles and registers, but those methods won't run. See [Plugins](/docs/infrastructure/plugins).

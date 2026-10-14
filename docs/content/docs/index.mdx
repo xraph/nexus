@@ -3,32 +3,32 @@ title: Introduction
 description: Composable AI gateway library for Go.
 ---
 
-Nexus is a Go library for building AI gateways. Route requests across multiple LLM providers, enforce content guardrails, cache responses, and manage multi-tenant access — all from a single composable API.
+Nexus is a Go library for building AI gateways. You put it in front of OpenAI, Anthropic, Gemini, Bedrock, Ollama and 25 other LLM providers, and every request goes through one pipeline: routing, model aliases, caching, guardrails, tenant keys, rate limits, budgets and usage tracking.
 
-Nexus is a **library** — not a service. You bring your own providers, database, and HTTP server. Nexus provides the gateway orchestration plumbing.
+Nexus is a library, not a service. You bring your own providers, database and HTTP server, and Nexus does the gateway plumbing inside your process.
 
 ## What it does
 
-- **Multi-provider routing** — Route to OpenAI, Anthropic, or any OpenAI-compatible API with priority, cost-optimized, or round-robin strategies.
-- **Content guardrails** — PII detection, prompt injection blocking, content filtering with block/redact/warn actions.
-- **Response caching** — Deterministic cache keys with optional semantic matching. Memory and Redis backends.
-- **Multi-tenant isolation** — Tenant-scoped requests, API keys, rate limits, usage tracking, and model aliases.
-- **Model aliases** — Map virtual model names to provider targets with per-tenant overrides and weighted routing.
-- **Input/output transforms** — System prompt injection, RAG context, data anonymization, output normalization.
-- **Plugin system** — 15 lifecycle hooks for metrics, audit trails, and custom processing.
-- **Three storage backends** — PostgreSQL, SQLite, and in-memory.
-- **Forge integration** — Drop-in `forge.Extension` with auto-discovery and DI-registered Gateway.
-- **OpenAI-compatible proxy** — Drop-in replacement for the OpenAI API. Point any SDK at your gateway.
+- Multi-provider routing: register OpenAI, Anthropic or any OpenAI-compatible API, and pick a priority, round-robin, weighted, cost or latency strategy. Routing doesn't take the requested model into account yet, see [Routing](/docs/core/routing).
+- Content guardrails: PII detection, prompt injection blocking, blocklists and your own regex rules, with block, redact or warn actions.
+- Response caching: exact-match cache keys per tenant, in memory or Redis, plus record-and-replay for streamed responses.
+- Multi-tenant isolation: tenants, `nxs_` gateway keys with scopes, RPM and TPM windows, daily request caps, monthly budgets and usage records with exact cost.
+- Model aliases: map virtual model names to concrete models, with weighted targets and per-tenant overrides.
+- Input and output transforms: system prompts, RAG context, anonymization and output normalization.
+- Plugin hooks: 19 lifecycle hook interfaces for audit trails, webhooks and metrics. The gateway fires 10 of them today, see [Plugins](/docs/infrastructure/plugins).
+- Storage: PostgreSQL, SQLite and MongoDB through [Grove](https://github.com/xraph/grove), or in memory.
+- Forge integration: a `forge.Extension` that builds a store from your app's `grove.DB` and registers `*nexus.Gateway` in the DI container.
+- OpenAI-compatible proxy: `/v1/chat/completions`, `/v1/embeddings` and `/v1/models` in OpenAI's shapes, so any OpenAI SDK can point at your gateway.
 
 ## Design philosophy
 
-**Library, not service.** Nexus is a set of Go packages you import. You control `main`, the database connection, and the process lifecycle.
+You control `main`, the database connection and the process lifecycle. Nexus is a set of Go packages you import.
 
-**Interfaces over implementations.** Every subsystem defines a Go interface. Swap any provider, store, or cache with a single type change.
+Every subsystem is a Go interface: providers, stores, caches, guards, routing strategies and pipeline middleware. Swap one by passing a different implementation to its option.
 
-**Tenant-scoped by design.** `nexus.WithTenant` injects context enforced at every layer — routing, caching, usage, and guardrails.
+Requests carry their tenant through the pipeline. The HTTP edge reads the gateway key and puts the tenant, key and scopes into the context, and the access, quota, cache and usage stages all use it.
 
-**Pipeline-driven.** Every request flows through a priority-sorted middleware chain. Add, remove, or reorder middleware without touching engine code.
+Every request goes through a priority-sorted middleware chain, whether it came over HTTP, gRPC or `Engine`. You add your own stage with `nexus.WithMiddleware`.
 
 ## Quick look
 
@@ -37,23 +37,27 @@ package main
 
 import (
     "context"
+    "log"
     "os"
 
     "github.com/xraph/nexus"
     "github.com/xraph/nexus/providers/openai"
-    "github.com/xraph/nexus/store/memory"
 )
 
 func main() {
+    ctx := context.Background()
+
     gw := nexus.New(
-        nexus.WithDatabase(memory.New()),
-        nexus.WithProvider(openai.New(os.Getenv("OPENAI_KEY"))),
+        nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
     )
-    if err := gw.Initialize(context.Background()); err != nil {
-        panic(err)
+    if err := gw.Initialize(ctx); err != nil {
+        log.Fatal(err)
     }
+    defer gw.Shutdown(ctx)
 }
 ```
+
+With no store passed, the gateway keeps its data in memory. The [quick start](/docs/getting-started) sends a request and serves the proxy.
 
 ## Where to go next
 

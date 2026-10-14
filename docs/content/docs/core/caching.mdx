@@ -1,20 +1,9 @@
 ---
 title: Caching
-description: Cache LLM responses with deterministic keys and optional semantic matching.
+description: Cache LLM responses by an exact request hash, in memory or Redis, and replay streamed responses.
 ---
 
-Caching avoids redundant provider calls for identical or similar requests. Nexus generates deterministic cache keys from the request content and supports semantic matching for near-duplicate detection.
-
-## Cache Interface
-
-```go
-type Cache interface {
-    Get(ctx context.Context, key string) (*provider.CompletionResponse, error)
-    Set(ctx context.Context, key string, resp *provider.CompletionResponse, ttl time.Duration) error
-    Delete(ctx context.Context, key string) error
-    Clear(ctx context.Context) error
-}
-```
+Caching saves a provider call when the same tenant sends the same request again. The cache key is a SHA-256 hash of the request, and the cache stage sits at priority 280 in the pipeline, after guardrails, transforms and alias resolution.
 
 ## Enabling Caching
 
@@ -22,30 +11,62 @@ type Cache interface {
 import "github.com/xraph/nexus/cache/stores"
 
 gw := nexus.New(
-    nexus.WithCache(stores.NewMemory(1000)), // LRU, 1000 entries
+    nexus.WithCache(stores.NewMemory()), // LRU, 1000 entries, 10 minute TTL
 )
 ```
+
+`stores.NewMemory` takes `stores.WithMaxSize(n)` and `stores.WithTTL(d)`. If you'd rather not pick a store, `nexus.WithCacheEnabled(true)` (or `enable_cache: true` in the Forge extension's config) gives you the same in-memory cache with its defaults.
+
+A tenant can opt out: when its `tenant.Config.CacheEnabled` is set to false, its requests neither read nor write the cache.
 
 ### Redis Cache
 
 ```go
 gw := nexus.New(
-    nexus.WithCache(stores.NewRedis(redisClient)),
+    nexus.WithCache(stores.NewRedis(client,
+        stores.WithRedisTTL(time.Hour),      // default 10 minutes
+        stores.WithRedisPrefix("myapp:"),    // default "nexus:"
+    )),
 )
 ```
 
-## Cache Keys
+`client` is a `stores.RedisClient`, a small interface whose `Get`, `Set` and `Del` return a `stores.RedisResult` (`Bytes() ([]byte, error)` and `Err() error`). A go-redis `*redis.Client` doesn't satisfy it directly, because its methods return `*redis.StringCmd`, `*redis.StatusCmd` and `*redis.IntCmd`, so you write a few lines of adapter around it. `Clear` does nothing on the Redis cache.
 
-Keys are generated from a SHA-256 hash of the request model, messages, temperature, and other parameters. This ensures identical requests always hit the same cache entry.
+## Cache Interface
 
-## Semantic Matching
-
-For near-duplicate detection, provide a `SemanticMatcher`:
+To use another backend, implement `cache.Cache`:
 
 ```go
-type SemanticMatcher interface {
-    Match(ctx context.Context, key string, threshold float64) (string, bool, error)
+type Cache interface {
+    Get(ctx context.Context, key string) (*provider.CompletionResponse, error)
+    Set(ctx context.Context, key string, resp *provider.CompletionResponse) error
+    Delete(ctx context.Context, key string) error
+    Clear(ctx context.Context) error
 }
 ```
 
-When enabled, cache lookups first try an exact key match, then fall back to semantic similarity.
+There's no TTL argument: each store applies its own. `Get` returns `nil, nil` on a miss.
+
+## Cache Keys
+
+`cache.Key(req)` hashes the tenant ID, the model, every message's role and content, and the temperature, `max_tokens`, `top_p`, stop sequences and tools when they're set. The tenant is part of the key, so one tenant is never served another's cached completion. If the request and the context name different tenants, the request skips the cache entirely.
+
+A hit comes back with `Cached: true` on the response. The cache stores a copy, so an output guard's redaction or an output transform never changes the stored entry.
+
+## Semantic Matching
+
+`cache.NewSemanticCache(c, matcher, threshold)` wraps another `Cache`: on a miss it asks a `SemanticMatcher` for a close key, and on `Set` it indexes the key. The threshold defaults to 0.85.
+
+```go
+type SemanticMatcher interface {
+    Match(ctx context.Context, key string, threshold float64) (matchedKey string, score float64, err error)
+    Index(ctx context.Context, key string) error
+    Remove(ctx context.Context, key string) error
+}
+```
+
+Nexus ships no matcher. Bear in mind that the matcher only ever sees the cache key, which is already a SHA-256 hash, not the prompt text, so it can't compare prompts by meaning as it stands.
+
+## Streamed responses
+
+`nexus.WithStreamCache(sc, opts)` records a streamed response frame by frame and replays it on the next identical streaming request. `stores.NewMemoryStream()` and `stores.NewRedisStream(client)` implement `cache.StreamCache`. `cache.StreamCacheOptions` sets the `TTL`, caps on `MaxFrames` and `MaxBytes` (a recording that goes over is dropped), and the replay `Mode`: `ReplayBurst` (all at once, the default), `ReplayPaced` (original timing) or `ReplayFastForward` (original timing divided by `FFDivisor`, 4 by default). See the [streaming guide](/docs/guides/streaming).

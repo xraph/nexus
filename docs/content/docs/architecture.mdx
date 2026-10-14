@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: How Nexus packages fit together — Gateway, Engine, Pipeline, Providers, and Plugins.
+description: How Nexus packages fit together. Gateway, Engine, Pipeline, Providers and Plugins.
 ---
 
 ## Overview
@@ -32,21 +32,22 @@ Nexus is organized as a set of composable Go packages. The `Gateway` is the root
 
 Every request flows through the pipeline middleware chain, sorted by priority:
 
-1. **Request ID** (5): assign the request id
-2. **Tracing** (10): OpenTelemetry span creation
-3. **Usage** (15): record, price and attribute every request
-4. **Timeout** (20): request deadline enforcement
-5. **Identity** (30): tenant and key ids, so the cache and usage agree on who asked
-6. **Access** (40): the tenant must be active and the key must hold the scope the route needs
-7. **Quota** (50): token cap, daily requests, monthly budget, RPM and TPM, and the gateway-wide rate limit
-8. **Stream Lifecycle** (60): extension hooks for streams, and the tenant's stream duration and token caps
-9. **Guardrails** (150): input content validation
-10. **Transforms** (200): input modifications (system prompt, RAG)
-11. **Alias Resolution** (250): virtual model to concrete provider/model
-12. **Cache** (280): check for a cached response
-13. **Retry** (340): retry logic with backoff
-14. **Custom middleware**: yours, sorted into this list by its own priority
-15. **Provider Call**: route and call the selected provider. Always last.
+1. Request ID (5): assign the request id
+2. Tracing (10): a span per request, only with `WithTracer`
+3. Usage (15): record, price and attribute every request, unless usage is off
+4. Timeout (20): the request deadline, when the timeout is above zero (30s by default)
+5. Identity (30): tenant and key ids, so the cache and usage agree on who asked
+6. Access (40): the tenant must be active and the key must hold the scope the route needs
+7. Quota (50): token cap, daily requests, monthly budget, RPM and TPM, and the gateway-wide rate limit
+8. Stream Lifecycle (60): extension hooks for streams, and the tenant's stream duration and token caps
+9. Guardrails (150): input checks before the call, output checks on a complete response, only with `WithGuard`
+10. Transforms (200): input and output transforms, only with `WithTransforms`
+11. Alias Resolution (250): rewrite a virtual model name to a concrete model, only with `WithAlias`
+12. Model Policy (260): the tenant's allowed and blocked models
+13. Cache (280): serve or store a cached response, only with a cache configured
+14. Retry (340): retry a failed provider call with backoff, when retries are above zero (2 by default)
+15. Custom middleware: yours, sorted into this list by its own priority
+16. Provider Call (350): pick a provider with the routing strategy and call it. Always last.
 
 The usage stage sits above everything that can refuse, replay or retry a request, so one request produces one usage record whatever happens below it. That includes a request the access or quota stage refuses, which is recorded as `refused` at $0.
 
@@ -56,25 +57,29 @@ The HTTP edge runs before this chain. It reads the gateway key, checks it, and p
 
 | Package | Purpose |
 |---------|---------|
-| `nexus` | Root Gateway, Engine, Config, Options |
-| `provider` | Provider interface, Request/Response types |
-| `providers/*` | OpenAI, Anthropic, OpenAI-compatible implementations |
-| `router` | Routing service and strategy interface |
-| `pipeline` | Middleware chain builder and executor |
-| `guard` | Guardrail interface and service |
-| `cache` | Cache interface, key generation, semantic matching |
-| `transform` | Input/output transform interface and registry |
-| `model` | Alias registry, token counting, cost estimation |
-| `plugin` | Extension system — 15 lifecycle hooks |
-| `store` | Persistence interface (memory, SQLite, Postgres) |
-| `tenant` | Tenant entity and service |
-| `key` | API key entity, generation, and hashing |
-| `usage` | Usage tracking and cost calculation |
-| `audit_hook` | Audit event recording extension |
-| `observability` | Metrics counters extension |
-| `relay_hook` | Webhook relay extension |
+| `nexus` | `Gateway`, `Engine`, `Config`, options, sentinel errors, `RefusalError` |
+| `provider` | `Provider` interface, request and response types, streams, the registry |
+| `providers/*` | One Go module per provider (30 released) |
+| `router`, `router/strategies` | Routing service, `Strategy` interface and the built-in strategies |
+| `pipeline`, `pipeline/middlewares` | Middleware chain builder and the built-in stages |
+| `guard`, `guard/guards` | Guardrail interface, service and the built-in guards |
+| `cache`, `cache/stores` | Cache interface, key generation, semantic wrapper, stream cache; memory and Redis stores |
+| `transform` | Input and output transform interfaces and registry |
+| `model` | Alias registry, price book, cost calculation |
+| `ratelimit`, `ratelimit/redislimit` | RPM and TPM limiter, in memory or Redis |
+| `plugin` | Extension registry and 19 lifecycle hook interfaces |
+| `store`, `store/postgres`, `store/sqlite`, `store/mongo` | Persistence interface and the memory, PostgreSQL, SQLite and MongoDB stores |
+| `tenant`, `key`, `usage` | Tenants, gateway keys, usage records and summaries |
+| `auth` | Gateway key authentication for the HTTP edges |
+| `audit_hook` | Audit event recording plugin |
+| `observability` | Tracing stage and metrics counters plugin |
+| `relay_hook` | Webhook relay plugin |
+| `fallback` | Circuit breaker and fallback service (not used by the default pipeline) |
 | `proxy` | OpenAI-compatible HTTP proxy |
-| `api` | Forge-compatible HTTP handlers |
+| `api` | `net/http` handlers for the `/v1` routes plus the `/admin` API |
+| `httpstream` | Wire formats for streamed responses (SSE, Nexus SSE, NDJSON) |
+| `extension` | The Forge extension |
+| `grpcsrv` | Server-streaming completions over gRPC (separate, untagged module) |
 
 ## Pipeline Middleware
 
@@ -84,15 +89,15 @@ All middleware implements:
 type Middleware interface {
     Name() string
     Priority() int
-    Process(ctx context.Context, req *Request, next NextFunc) (*provider.CompletionResponse, error)
+    Process(ctx context.Context, req *Request, next NextFunc) (*Response, error)
 }
 ```
 
-Lower priority numbers execute first. Custom middleware can be inserted at any priority level.
+Lower priority numbers run first and sit further out, wrapping everything after them. Add your own with `nexus.WithMiddleware(m)`. A stage with a priority below 340 runs once per request. One above 340 runs inside the retry loop, so once per attempt. `gw.PipelineStages()` lists the stages a gateway ended up with.
 
 ## Plugin System
 
-Plugins implement lifecycle hooks as separate interfaces. The registry type-caches hooks at registration time for zero-overhead dispatch:
+Plugins implement lifecycle hooks as separate interfaces. The registry checks each plugin against every hook interface once, when you register it, so an event only reaches the plugins that implement it:
 
 ```go
 type Extension interface {
@@ -100,9 +105,9 @@ type Extension interface {
 }
 
 // Opt in to specific events
-type RequestReceived interface {
-    OnRequestReceived(ctx context.Context, ...) error
+type KeyCreated interface {
+    OnKeyCreated(ctx context.Context, keyID id.KeyID, tenantID id.TenantID) error
 }
 ```
 
-15 hooks cover: request lifecycle, provider events, guardrail events, tenant/key management, and budget alerts.
+19 hook interfaces cover requests, streams, provider events, guardrails, tenants and keys, and budgets. The gateway fires 10 of them today: tenant, key, budget and stream events. See [Plugins](/docs/infrastructure/plugins).

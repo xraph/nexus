@@ -1,9 +1,9 @@
 ---
 title: Providers
-description: Register and manage LLM providers — 30 built-in providers covering all major LLM APIs.
+description: Register LLM providers. Nexus ships 30 provider modules.
 ---
 
-Nexus supports 30+ LLM providers simultaneously. Each provider implements a unified interface for chat completions, streaming, embeddings, and model listing.
+Nexus has 30 released provider modules, and you can register as many as you like on one gateway. Each one implements the same interface for chat completions, streaming, embeddings and model listing.
 
 ## Provider Interface
 
@@ -12,57 +12,60 @@ Every provider implements `provider.Provider`:
 ```go
 type Provider interface {
     Name() string
-    Complete(ctx context.Context, req *CompletionRequest) (*CompletionResponse, error)
-    Stream(ctx context.Context, req *CompletionRequest) (Stream, error)
-    Embed(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error)
-    Models(ctx context.Context) ([]Model, error)
     Capabilities() Capabilities
+    Models(ctx context.Context) ([]Model, error)
+    Complete(ctx context.Context, req *CompletionRequest) (*CompletionResponse, error)
+    CompleteStream(ctx context.Context, req *CompletionRequest) (Stream, error)
+    Embed(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error)
+    Healthy(ctx context.Context) bool
 }
 ```
 
+`Models` returns a built-in catalog for each provider (IDs, context window, max output and list prices). The gateway prices usage from it. It isn't a live list from the provider's API, and a model that isn't in the catalog still gets sent through, it just records an unknown cost.
+
 ## Built-in Providers
 
-Nexus includes 30 provider implementations out of the box. Each is an independent Go module that can be imported separately.
+Each provider is its own Go module under `providers/<name>`, so you only download what you import. The tables below come from each provider's `Capabilities()`.
 
 ### Major Providers
 
 | Provider | Package | Chat | Embed | Vision | Tools | Thinking |
 |----------|---------|------|-------|--------|-------|----------|
 | [OpenAI](/docs/providers/openai) | `providers/openai` | Yes | Yes | Yes | Yes | Yes |
-| [Anthropic](/docs/providers/anthropic) | `providers/anthropic` | Yes | — | Yes | Yes | Yes |
-| [Google Gemini](/docs/providers/gemini) | `providers/gemini` | Yes | Yes | Yes | Yes | — |
-| [Cohere](/docs/providers/cohere) | `providers/cohere` | Yes | Yes | — | Yes | — |
-| [DeepSeek](/docs/providers/deepseek) | `providers/deepseek` | Yes | — | — | Yes | Yes |
+| [Anthropic](/docs/providers/anthropic) | `providers/anthropic` | Yes | No | Yes | Yes | Yes |
+| [Google Gemini](/docs/providers/gemini) | `providers/gemini` | Yes | Yes | Yes | Yes | No |
+| [Cohere](/docs/providers/cohere) | `providers/cohere` | Yes | Yes | No | Yes | No |
+| [DeepSeek](/docs/providers/deepseek) | `providers/deepseek` | Yes | No | No | Yes | Yes |
 
 ### Cloud Providers
 
 | Provider | Package | Auth | Chat | Embed | Vision | Tools |
 |----------|---------|------|------|-------|--------|-------|
 | [Azure OpenAI](/docs/providers/azureopenai) | `providers/azureopenai` | API Key | Yes | Yes | Yes | Yes |
-| [Amazon Bedrock](/docs/providers/bedrock) | `providers/bedrock` | AWS SigV4 | Yes | — | — | Yes |
+| [Amazon Bedrock](/docs/providers/bedrock) | `providers/bedrock` | AWS SigV4 | Yes | No | No | Yes |
 | [Google Vertex AI](/docs/providers/vertex) | `providers/vertex` | GCP OAuth2 | Yes | Yes | Yes | Yes |
 
 ### Inference Providers
 
 | Provider | Package | Chat | Embed | Vision | Tools |
 |----------|---------|------|-------|--------|-------|
-| [Groq](/docs/providers/groq) | `providers/groq` | Yes | — | Yes | Yes |
-| [Together AI](/docs/providers/together) | `providers/together` | Yes | Yes | — | Yes |
+| [Groq](/docs/providers/groq) | `providers/groq` | Yes | No | Yes | Yes |
+| [Together AI](/docs/providers/together) | `providers/together` | Yes | Yes | No | Yes |
 | [Mistral](/docs/providers/mistral) | `providers/mistral` | Yes | Yes | Yes | Yes |
-| [Fireworks AI](/docs/providers/fireworks) | `providers/fireworks` | Yes | Yes | — | Yes |
-| [Perplexity](/docs/providers/perplexity) | `providers/perplexity` | Yes | — | — | — |
-| [xAI (Grok)](/docs/providers/xai) | `providers/xai` | Yes | — | Yes | Yes |
+| [Fireworks AI](/docs/providers/fireworks) | `providers/fireworks` | Yes | Yes | No | Yes |
+| [Perplexity](/docs/providers/perplexity) | `providers/perplexity` | Yes | No | No | No |
+| [xAI (Grok)](/docs/providers/xai) | `providers/xai` | Yes | No | Yes | Yes |
 | [OpenRouter](/docs/providers/openrouter) | `providers/openrouter` | Yes | Yes | Yes | Yes |
-| [Cerebras](/docs/providers/cerebras) | `providers/cerebras` | Yes | — | — | — |
-| [SambaNova](/docs/providers/sambanova) | `providers/sambanova` | Yes | — | — | — |
-| [Deepinfra](/docs/providers/deepinfra) | `providers/deepinfra` | Yes | Yes | — | Yes |
-| [NVIDIA NIM](/docs/providers/nvidia) | `providers/nvidia` | Yes | Yes | — | Yes |
-| [Lepton AI](/docs/providers/lepton) | `providers/lepton` | Yes | — | — | — |
-| [Novita AI](/docs/providers/novita) | `providers/novita` | Yes | — | — | — |
-| [Anyscale](/docs/providers/anyscale) | `providers/anyscale` | Yes | — | — | — |
-| [Hyperbolic](/docs/providers/hyperbolic) | `providers/hyperbolic` | Yes | — | — | — |
-| [Nebius](/docs/providers/nebius) | `providers/nebius` | Yes | Yes | — | Yes |
-| [AI21](/docs/providers/ai21) | `providers/ai21` | Yes | — | — | Yes |
+| [Cerebras](/docs/providers/cerebras) | `providers/cerebras` | Yes | No | No | No |
+| [SambaNova](/docs/providers/sambanova) | `providers/sambanova` | Yes | No | No | No |
+| [Deepinfra](/docs/providers/deepinfra) | `providers/deepinfra` | Yes | Yes | No | Yes |
+| [NVIDIA NIM](/docs/providers/nvidia) | `providers/nvidia` | Yes | Yes | No | Yes |
+| [Lepton AI](/docs/providers/lepton) | `providers/lepton` | Yes | No | No | No |
+| [Novita AI](/docs/providers/novita) | `providers/novita` | Yes | No | No | No |
+| [Anyscale](/docs/providers/anyscale) | `providers/anyscale` | Yes | No | No | No |
+| [Hyperbolic](/docs/providers/hyperbolic) | `providers/hyperbolic` | Yes | No | No | No |
+| [Nebius](/docs/providers/nebius) | `providers/nebius` | Yes | Yes | No | Yes |
+| [AI21](/docs/providers/ai21) | `providers/ai21` | Yes | No | No | Yes |
 
 ### Local Providers
 
@@ -102,22 +105,27 @@ gw := nexus.New(
 
 ## Capabilities
 
-Each provider reports what it supports:
+Each provider reports what it supports through `provider.Capabilities`:
 
 ```go
-caps := provider.Capabilities()
+caps := p.Capabilities()
 caps.Chat       // chat completions
-caps.Stream     // streaming responses
-caps.Embed      // embeddings
+caps.Streaming  // streamed completions
+caps.Embeddings // embeddings
 caps.Vision     // image inputs
 caps.Tools      // tool/function calling
-caps.Thinking   // extended thinking (Anthropic, DeepSeek R1)
+caps.Thinking   // extended thinking or reasoning
+caps.JSON       // structured JSON output
 ```
+
+The struct also carries `Images`, `Audio`, `Batch` and streaming-specific flags (`StreamingReasoning`, `StreamingTools`, `StreamingAudio`, `StreamingCitations`, `RealtimeAudio`). Embedding requests go to the first registered provider whose `Embeddings` flag is set.
 
 ## Provider Health
 
-Nexus tracks provider health automatically — success/failure counts, average latency, and P99 latency. Use this data for smart routing decisions:
+`provider.NewHealthTracker()` keeps success and failure counts, average latency and P99 latency per provider, and you can hand one to the gateway:
 
 ```go
-nexus.WithHealthTracker(provider.NewMemoryHealthTracker())
+nexus.WithHealthTracker(provider.NewHealthTracker())
 ```
+
+Nothing reads it yet. The gateway stores the tracker, but routing treats every provider as healthy and doesn't record calls into it, so this option has no effect on which provider answers today.

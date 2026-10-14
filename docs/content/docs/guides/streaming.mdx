@@ -3,23 +3,21 @@ title: Streaming Responses
 description: SSE, NDJSON, WebSocket, and the Go channel API for streamed completions.
 ---
 
-Nexus supports four wire formats for streamed completions, plus an idiomatic
-Go consumer API. The same gateway, the same `Engine.CompleteStream`, the
-same middleware pipeline — only the encoder at the HTTP boundary changes.
+Nexus has three HTTP encodings for streamed completions plus a WebSocket, and a Go API for consuming streams directly. The gateway, `Engine.CompleteStream` and the pipeline are the same in every case. Only the encoder at the HTTP boundary changes.
 
 ## Wire formats
 
 The proxy negotiates encoders from the request's `Accept` header,
 `?stream_format=` query parameter, or `X-Nexus-Stream-Format` header
-(precedence: query → header → Accept → default). The default registry
+(in that order: the query, then the header, then `Accept`, then the default). The default registry
 includes:
 
 | Encoder | Content type | Aliases | When to use |
 |---|---|---|---|
-| **SSE (OpenAI envelope)** | `text/event-stream` | `sse`, `openai` | Drop-in compatibility with OpenAI SDKs (default). |
-| **SSE (nexus-native)** | `application/vnd.nexus.events+sse` | `nexus`, `nexus-sse` | Named events for fine-grained client routing. |
-| **NDJSON** | `application/x-ndjson` | `ndjson`, `jsonl` | Line-delimited JSON. Friendly for `curl -N` and Go HTTP clients. |
-| **WebSocket** | `/v1/realtime` | n/a | Bidirectional. Required for multi-modal realtime. |
+| SSE (OpenAI envelope) | `text/event-stream` | `sse`, `openai` | Drop-in compatibility with OpenAI SDKs (default). |
+| SSE (nexus-native) | `application/vnd.nexus.events+sse` | `nexus`, `nexus-sse` | Named events for fine-grained client routing. |
+| NDJSON | `application/x-ndjson` | `ndjson`, `jsonl` | Line-delimited JSON. Friendly for `curl -N` and Go HTTP clients. |
+| WebSocket | `/v1/realtime` | n/a | Bidirectional. Required for multi-modal realtime. |
 
 Register additional encoders with `proxy.WithStreamEncoder("custom/type", &myEncoder{})`.
 
@@ -48,7 +46,7 @@ data: [DONE]
 
 One nexus-native `StreamEvent` per line, terminator `\n`. Discriminated by
 `type`. Heartbeats are `{"type":"heartbeat"}` lines; the stream ends with
-`{"type":"done"}` (no `[DONE]` sentinel — the discriminated event is
+`{"type":"done"}` (no `[DONE]` sentinel: the discriminated event is
 self-describing).
 
 ```jsonl
@@ -84,7 +82,7 @@ data: {"type":"done"}
 `start` envelope, then receives nexus-native `StreamEvent` frames as JSON
 text. Cancel mid-stream by sending an `abort` envelope. Multi-modal input
 (`audio_chunk`, `image`) is reserved for bidirectional providers like
-OpenAI Realtime — text deltas already flow through today.
+OpenAI Realtime. Text deltas already flow through today.
 
 ```
 client → server:
@@ -98,7 +96,7 @@ server → client:
   {"type":"reasoning","delta":{"reasoning":"…"}}
   {"type":"usage","usage":{…}}
   {"type":"done"}                        (graceful close)
-  {"type":"error","error":{…}}           (then close StatusInternalError)
+  {"type":"error","error":{…}}           (then close: 1008 for a refusal, 1011 otherwise)
 ```
 
 ## Event types
@@ -113,7 +111,7 @@ server → client:
 | `citation` | Anthropic citation deltas | `citation.url`, `citation.title`, `citation.quoted` |
 | `usage` | Token totals (typically the final pre-`done` frame) | `usage.prompt_tokens`, `usage.completion_tokens`, `usage.total_tokens` |
 | `error` | Mid-stream upstream failure | `error.type`, `error.message`, `error.retryable` |
-| `heartbeat` | Idle keepalive (15s default) | none — SSE comment / NDJSON line / WS ping |
+| `heartbeat` | Idle keepalive (15s default) | none: an SSE comment, an NDJSON line or a WS ping |
 | `done` | Stream complete | none |
 
 ## Go consumer API
@@ -166,10 +164,10 @@ For callers that want the merged final response (the same shape
 
 ```go
 resp, err := provider.Accumulate(ctx, stream)
-// resp.Choices[0].Message.Content   — concatenated text
-// resp.ThinkingContent              — concatenated reasoning
-// resp.Choices[0].Message.ToolCalls — merged tool calls
-// resp.Usage                        — final usage totals
+// resp.Choices[0].Message.Content:   concatenated text
+// resp.ThinkingContent:              concatenated reasoning
+// resp.Choices[0].Message.ToolCalls: merged tool calls
+// resp.Usage:                        final usage totals
 ```
 
 ## Stream cache (record-and-replay)
@@ -179,22 +177,28 @@ on subsequent identical requests. Useful for demos, integration tests, and
 deterministic latency benchmarks.
 
 ```go
-engine := nexus.NewEngine(
+gw := nexus.New(
     nexus.WithProvider(openai.New(apiKey)),
     nexus.WithStreamCache(stores.NewMemoryStream(), cache.StreamCacheOptions{
         TTL:       10 * time.Minute,
-        MaxFrames: 4096,         // abandon recording past this
+        MaxFrames: 4096, // abandon recording past this
         MaxBytes:  4 * 1024 * 1024,
         Mode:      cache.ReplayPaced, // preserve original cadence
     }),
 )
+if err := gw.Initialize(ctx); err != nil {
+    return err
+}
+engine := gw.Engine()
 ```
+
+`nexus.NewEngine(opts...)` builds and initializes a gateway in one call, but it returns nil when initialization fails and gives you no gateway to shut down, so prefer `nexus.New` plus `Initialize`.
 
 Replay modes:
 
-- `ReplayBurst` — emit all frames immediately. Default.
-- `ReplayPaced` — sleep between frames to reproduce upstream timing.
-- `ReplayFastForward` — divide gaps by `FFDivisor` (default 4×).
+- `ReplayBurst`: emit all frames immediately. Default.
+- `ReplayPaced`: sleep between frames to reproduce upstream timing.
+- `ReplayFastForward`: divide gaps by `FFDivisor` (default 4).
 
 ## Plugin lifecycle hooks
 
@@ -209,7 +213,7 @@ type StreamFailed    interface { OnStreamFailed(ctx, requestID, model, err) erro
 ```
 
 `StreamCompleted` receives the merged `*CompletionResponse` produced by
-`provider.Accumulate` — the same shape `Engine.Complete` would have
+`provider.Accumulate`, the same shape `Engine.Complete` would have
 returned, with content concatenated, tool calls merged by index/id, and
 usage from the final chunk. Use `WithStreamLifecycleConfig` to throttle
 `OnChunkReceived` (default: every chunk; recommended: 16 in production).
@@ -223,12 +227,9 @@ The runner closes provider streams when:
 - The provider returns an error (typed error event then `[DONE]`).
 - The consumer abandons the WebSocket connection.
 
-Each provider stream registers a `context.AfterFunc` that closes the
-upstream HTTP body the moment ctx cancels — so a 30-second cancellation
-tears the upstream socket within one TCP RTT, not at the next chunk
-boundary.
+The OpenAI stream (and every provider built on it) and the Anthropic stream register a `context.AfterFunc` that closes the upstream HTTP body the moment ctx cancels, so a cancellation tears down the upstream socket right away instead of at the next chunk boundary. The Bedrock, Cohere and Gemini streams notice the cancellation when they next read.
 
 ## See also
 
-- [`_examples/streaming`](https://github.com/xraph/nexus/tree/main/_examples/streaming) — channel API + accumulator demo.
-- [`_examples/proxy`](https://github.com/xraph/nexus/tree/main/_examples/proxy) — full proxy with stream cache + WebSocket + metrics.
+- [`_examples/streaming`](https://github.com/xraph/nexus/tree/main/_examples/streaming): iterator, channel and accumulator demo.
+- [`_examples/proxy`](https://github.com/xraph/nexus/tree/main/_examples/proxy): full proxy with stream cache, WebSocket and metrics.

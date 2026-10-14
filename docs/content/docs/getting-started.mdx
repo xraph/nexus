@@ -5,8 +5,11 @@ description: Install Nexus and route your first LLM request in minutes.
 
 ## Installation
 
+You need Go 1.26 or later. Each provider is its own Go module, so you add the root and the providers you call:
+
 ```bash
-go get github.com/xraph/nexus
+go get github.com/xraph/nexus@latest
+go get github.com/xraph/nexus/providers/openai@latest
 ```
 
 ## Create a Gateway
@@ -17,67 +20,69 @@ package main
 import (
     "context"
     "fmt"
+    "log"
     "os"
 
     "github.com/xraph/nexus"
     "github.com/xraph/nexus/provider"
     "github.com/xraph/nexus/providers/openai"
-    "github.com/xraph/nexus/store/memory"
 )
 
 func main() {
     ctx := context.Background()
 
-    // Create the gateway with an in-memory store and OpenAI provider
     gw := nexus.New(
-        nexus.WithDatabase(memory.New()),
         nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
     )
 
-    // Initialize sets up defaults and builds the pipeline
+    // Initialize fills in the defaults and builds the pipeline.
     if err := gw.Initialize(ctx); err != nil {
-        panic(err)
+        log.Fatal(err)
     }
+    defer gw.Shutdown(ctx)
 
-    // Get the engine for programmatic usage
-    engine := gw.Engine()
-
-    // Make a completion request
-    resp, err := engine.Complete(ctx, &provider.CompletionRequest{
+    // The engine sends requests through the pipeline without HTTP.
+    resp, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{
         Model: "gpt-4o-mini",
         Messages: []provider.Message{
             {Role: "user", Content: "Hello, what is Go?"},
         },
     })
     if err != nil {
-        panic(err)
+        log.Fatal(err)
     }
 
     fmt.Println(resp.Choices[0].Message.Content)
 }
 ```
 
-## Add Multiple Providers
+You didn't pass a store, so tenants, keys and usage live in memory and are gone when the process exits. See [PostgreSQL](/docs/stores/postgres), [SQLite](/docs/stores/sqlite) or [MongoDB](/docs/stores/mongo) when you want to keep them.
+
+## Add More Providers
 
 ```go
 import (
-    "github.com/xraph/nexus/providers/openai"
     "github.com/xraph/nexus/providers/anthropic"
+    "github.com/xraph/nexus/providers/openai"
 )
 
 gw := nexus.New(
-    nexus.WithDatabase(memory.New()),
-    nexus.WithProvider(openai.New(os.Getenv("OPENAI_KEY"))),
-    nexus.WithProvider(anthropic.New(os.Getenv("ANTHROPIC_KEY"))),
+    nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
+    nexus.WithProvider(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"))),
 )
 ```
 
-## Run as OpenAI-Compatible Proxy
+With the default priority strategy every request goes to the first provider you registered. The router doesn't pick a provider by model yet, so read [Routing](/docs/core/routing) before you register a second one.
+
+## Run as an OpenAI-Compatible Proxy
 
 The proxy wants a gateway key on every `/v1` request, so make a tenant and a key first:
 
 ```go
 import (
+    "net/http"
+    "time"
+
     "github.com/xraph/nexus/key"
     "github.com/xraph/nexus/proxy"
     "github.com/xraph/nexus/tenant"
@@ -85,21 +90,25 @@ import (
 
 t, err := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Demo", Slug: "demo"})
 if err != nil {
-    panic(err)
+    log.Fatal(err)
 }
 _, raw, err := gw.Keys().Create(ctx, &key.CreateInput{TenantID: t.ID.String(), Name: "demo"})
 if err != nil {
-    panic(err)
+    log.Fatal(err)
 }
 // The raw key exists only here. Only its hash is stored. Printing it is fine
 // for a demo; in a real service, hand it to its owner and never log it.
 fmt.Println("gateway key:", raw)
 
-p := proxy.New(gw.Engine())
-http.ListenAndServe(":8080", p)
+srv := &http.Server{
+    Addr:              ":8080",
+    Handler:           proxy.New(gw.Engine()),
+    ReadHeaderTimeout: 10 * time.Second,
+}
+log.Fatal(srv.ListenAndServe())
 ```
 
-Any OpenAI SDK can now connect to `http://localhost:8080`, with the `nxs_` key as its API key:
+A key created without scopes gets `completions`, `embeddings` and `models`. Any OpenAI SDK can now connect to `http://localhost:8080/v1`, with the `nxs_` key as its API key:
 
 ```python
 from openai import OpenAI
@@ -115,11 +124,14 @@ A request with no key, or any key but a gateway key, gets a 401. See [Authentica
 ## Add Guardrails
 
 ```go
-import "github.com/xraph/nexus/guard/guards"
+import (
+    "github.com/xraph/nexus/guard"
+    "github.com/xraph/nexus/guard/guards"
+)
 
 gw := nexus.New(
-    nexus.WithProvider(openai.New(key)),
-    nexus.WithGuard(guards.NewPII(guards.ActionRedact)),
+    nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
+    nexus.WithGuard(guards.NewPII(guard.ActionRedact)),
     nexus.WithGuard(guards.NewInjection()),
 )
 ```
@@ -130,8 +142,8 @@ gw := nexus.New(
 import "github.com/xraph/nexus/cache/stores"
 
 gw := nexus.New(
-    nexus.WithProvider(openai.New(key)),
-    nexus.WithCache(stores.NewMemory(1000)),
+    nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
+    nexus.WithCache(stores.NewMemory(stores.WithMaxSize(1000))),
 )
 ```
 

@@ -3,71 +3,82 @@ title: Go Packages
 description: Package reference for all Nexus Go packages.
 ---
 
+The root module is `github.com/xraph/nexus`. Each provider, `config` and `grpcsrv` is a module of its own, so you `go get` it separately. Full API docs are on [pkg.go.dev](https://pkg.go.dev/github.com/xraph/nexus).
+
 ## Core
 
 | Package | Import | Description |
 |---------|--------|-------------|
-| nexus | `github.com/xraph/nexus` | Gateway, Engine, Config, Options |
-| id | `github.com/xraph/nexus/id` | TypeID prefixes and constructors |
-| plugin | `github.com/xraph/nexus/plugin` | Extension interfaces and Registry |
+| nexus | `github.com/xraph/nexus` | `Gateway`, `Engine`, `Config`, options, sentinel errors, `RefusalError` |
+| id | `github.com/xraph/nexus/id` | TypeID prefixes, constructors and parsers |
+| money | `github.com/xraph/nexus/money` | `USD`, an exact decimal for prices and spend |
+| plugin | `github.com/xraph/nexus/plugin` | Extension registry and lifecycle hook interfaces |
+| config | `github.com/xraph/nexus/config` | Separate module: load a JSON gateway config and turn it into options |
 
 ## Providers
 
 | Package | Import | Description |
 |---------|--------|-------------|
-| provider | `github.com/xraph/nexus/provider` | Provider interface, Request/Response |
-| openai | `github.com/xraph/nexus/providers/openai` | OpenAI provider |
-| anthropic | `github.com/xraph/nexus/providers/anthropic` | Anthropic provider |
-| opencompat | `github.com/xraph/nexus/providers/opencompat` | OpenAI-compatible provider |
+| provider | `github.com/xraph/nexus/provider` | `Provider` interface, request and response types, streams, registry, health tracker |
+| providertest | `github.com/xraph/nexus/providertest` | Shared conformance tests for provider implementations |
+| providers/* | `github.com/xraph/nexus/providers/<name>` | One module per provider, 30 released. See [Providers](/docs/core/providers) |
 
 ## Pipeline
 
 | Package | Import | Description |
 |---------|--------|-------------|
-| pipeline | `github.com/xraph/nexus/pipeline` | Middleware chain builder |
-| middlewares | `github.com/xraph/nexus/pipeline/middlewares` | Built-in middleware |
-| router | `github.com/xraph/nexus/router` | Routing service |
-| strategies | `github.com/xraph/nexus/router/strategies` | Routing strategies |
+| pipeline | `github.com/xraph/nexus/pipeline` | Middleware chain builder, `Request`, `Response`, refusals, context helpers |
+| middlewares | `github.com/xraph/nexus/pipeline/middlewares` | Built-in stages (identity, access, quota, usage, cache, retry, provider call and more) |
+| router | `github.com/xraph/nexus/router` | Routing service and `Strategy` interface |
+| strategies | `github.com/xraph/nexus/router/strategies` | Priority, round-robin, weighted, cost and latency strategies |
 
 ## Features
 
 | Package | Import | Description |
 |---------|--------|-------------|
-| guard | `github.com/xraph/nexus/guard` | Guardrail interface and service |
-| guards | `github.com/xraph/nexus/guard/guards` | Built-in guards |
-| cache | `github.com/xraph/nexus/cache` | Cache interface and service |
-| stores | `github.com/xraph/nexus/cache/stores` | Cache backends |
-| transform | `github.com/xraph/nexus/transform` | Input/output transforms |
-| model | `github.com/xraph/nexus/model` | Alias registry and token counting |
+| guard | `github.com/xraph/nexus/guard` | Guardrail interface, service, stream guard pieces |
+| guards | `github.com/xraph/nexus/guard/guards` | PII, injection, content filter and regex guards |
+| shieldadapter | `github.com/xraph/nexus/guard/shieldadapter` | Wraps any `shieldadapter.Engine` (a Shield-style content safety check) as a `guard.Guard` |
+| cache | `github.com/xraph/nexus/cache` | Cache interface, keys, semantic wrapper, stream cache |
+| stores | `github.com/xraph/nexus/cache/stores` | Memory and Redis caches and stream caches |
+| transform | `github.com/xraph/nexus/transform` | Input and output transforms |
+| model | `github.com/xraph/nexus/model` | Alias registry, price book, cost calculation |
+| ratelimit | `github.com/xraph/nexus/ratelimit` | RPM and TPM limiter interface and the in-memory limiter |
+| redislimit | `github.com/xraph/nexus/ratelimit/redislimit` | Redis limiter shared across replicas |
+| fallback | `github.com/xraph/nexus/fallback` | Circuit breaker and fallback service; not used by the default pipeline |
+| batch | `github.com/xraph/nexus/batch` | Batch job service over an executor you supply; not wired into the gateway or HTTP API |
+| mcp | `github.com/xraph/nexus/mcp` | MCP tool and resource server types and a pipeline middleware; not wired into the gateway |
 
-## Infrastructure
+## Persistence
 
 | Package | Import | Description |
 |---------|--------|-------------|
-| store | `github.com/xraph/nexus/store` | Persistence interface |
-| memory | `github.com/xraph/nexus/store/memory` | In-memory store |
-| sqlite | `github.com/xraph/nexus/store/sqlite` | SQLite store |
-| postgres | `github.com/xraph/nexus/store/postgres` | PostgreSQL store |
-| tenant | `github.com/xraph/nexus/tenant` | Tenant entity and service |
-| key | `github.com/xraph/nexus/key` | API key management |
-| usage | `github.com/xraph/nexus/usage` | Usage tracking |
-| auth | `github.com/xraph/nexus/auth` | Auth provider interface |
+| store | `github.com/xraph/nexus/store` | `Store` interface and the in-memory store (`store.NewMemory()`) |
+| postgres | `github.com/xraph/nexus/store/postgres` | PostgreSQL store on Grove |
+| sqlite | `github.com/xraph/nexus/store/sqlite` | SQLite store on Grove |
+| mongo | `github.com/xraph/nexus/store/mongo` | MongoDB store on Grove |
+| storetest | `github.com/xraph/nexus/store/storetest` | Helpers that run a test body against every built-in store |
+| paging | `github.com/xraph/nexus/paging` | Cursor paging helpers for the stores |
+| tenant | `github.com/xraph/nexus/tenant` | Tenant entity, quota, config and service |
+| key | `github.com/xraph/nexus/key` | Gateway key entity, scopes and service |
+| usage | `github.com/xraph/nexus/usage` | Usage records, summaries, series and service |
 
-## Extensions
+## Plugins
 
 | Package | Import | Description |
 |---------|--------|-------------|
 | audit_hook | `github.com/xraph/nexus/audit_hook` | Audit event recording |
-| observability | `github.com/xraph/nexus/observability` | Metrics and tracing |
-| relay_hook | `github.com/xraph/nexus/relay_hook` | Webhook relay |
-| extension | `github.com/xraph/nexus/extension` | Forge extension adapter |
+| observability | `github.com/xraph/nexus/observability` | Tracing stage and metrics counters |
+| relay_hook | `github.com/xraph/nexus/relay_hook` | Event relay and webhooks |
 
-## Utilities
+## Serving
 
 | Package | Import | Description |
 |---------|--------|-------------|
-| proxy | `github.com/xraph/nexus/proxy` | OpenAI-compatible HTTP proxy |
-| api | `github.com/xraph/nexus/api` | Forge HTTP handlers |
-| fallback | `github.com/xraph/nexus/fallback` | Circuit breaking and retry |
-| batch | `github.com/xraph/nexus/batch` | Batch processing |
-| mcp | `github.com/xraph/nexus/mcp` | Model Context Protocol |
+| proxy | `github.com/xraph/nexus/proxy` | OpenAI-compatible HTTP proxy (`/v1`, `/health`, `/v1/realtime`) |
+| api | `github.com/xraph/nexus/api` | `net/http` handlers for the `/v1` routes plus the `/admin` API |
+| auth | `github.com/xraph/nexus/auth` | Gateway key middleware (`KeyAuth`, `RequireScope`, `RequestID`) |
+| httpstream | `github.com/xraph/nexus/httpstream` | Streaming wire formats: OpenAI SSE, Nexus SSE, NDJSON |
+| grpcsrv | `github.com/xraph/nexus/grpcsrv` | Separate, untagged module: server-streaming completions over gRPC |
+| extension | `github.com/xraph/nexus/extension` | Forge extension |
+| testutil | `github.com/xraph/nexus/testutil` | Mock HTTP servers for provider tests |

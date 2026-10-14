@@ -1,9 +1,9 @@
 ---
 title: MongoDB Store
-description: MongoDB store for document-oriented and horizontally-scalable deployments.
+description: MongoDB store for document-oriented deployments.
 ---
 
-The `store/mongo` package implements Nexus's `store.Store` interface using the grove ORM with the MongoDB driver. It stores tenants, API keys, and usage records as documents, making it a natural fit for deployments that already run MongoDB.
+The `store/mongo` package implements Nexus's `store.Store` interface on [Grove](https://github.com/xraph/grove) with its MongoDB driver. It stores tenants, API keys and usage records as documents, which suits deployments that already run MongoDB.
 
 ## Usage
 
@@ -14,7 +14,12 @@ import (
     "github.com/xraph/nexus/store/mongo"
 )
 
-db, err := grove.Open(mongodriver.Open("mongodb://localhost:27017", "nexus"))
+drv := mongodriver.New()
+// The database name comes from the URI path, or from mongodriver.WithDatabase.
+if err := drv.Open(ctx, "mongodb://localhost:27017/nexus"); err != nil {
+    log.Fatal(err)
+}
+db, err := grove.Open(drv)
 if err != nil {
     log.Fatal(err)
 }
@@ -33,24 +38,19 @@ gw := nexus.New(
 
 | Aspect | Detail |
 |--------|--------|
-| Driver | grove ORM + mongodriver |
-| Migrations | Grove migrations with JSON Schema validation + indexes |
-| Transactions | MongoDB sessions (replica-set required for multi-doc txns) |
+| Driver | Grove with `mongodriver` |
+| `Migrate()` | Creates the indexes and normalizes usage documents written before exact money |
 | Collections | `nexus_tenants`, `nexus_api_keys`, `nexus_usage_records` |
+| Money | Costs are stored as `Decimal128` |
+| Close | `s.Close()` closes the `grove.DB`, and `gw.Shutdown` calls it |
 
 ## Grove Migrations
 
-The store exports a `Migrations` group for use with Grove's migration orchestrator. This enables tracked, versioned migrations across all stores in your application:
-
-```go
-import mongostore "github.com/xraph/nexus/store/mongo"
-
-// mongostore.Migrations is a migrate.Group for the nexus mongo store.
-// Register it with the grove migration orchestrator for coordinated migrations.
-```
+The package also exports `mongo.Migrations`, a Grove `migrate.Group` named `nexus` that creates the same indexes. Register it with Grove's migration orchestrator if you want Nexus's indexes tracked alongside the rest of your app's migrations. `s.Migrate()` doesn't use it: it creates the indexes directly.
 
 ## When to use
 
-- Document-oriented workloads where MongoDB is the primary data store.
-- Horizontally-scaled environments requiring sharding.
+- Deployments where MongoDB is already the primary data store.
 - Teams already running MongoDB in their infrastructure.
+
+The store's tests only run when `NEXUS_TEST_MONGO_URI` is set, and CI doesn't set it.

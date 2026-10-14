@@ -1,81 +1,90 @@
 ---
 title: Guardrails
-description: Enforce content safety with PII detection, prompt injection blocking, and content filtering.
+description: Check prompts and responses for PII, prompt injection, blocked words and your own regex rules.
 ---
 
-Guardrails inspect and optionally modify requests before they reach a provider, and responses before they reach the client.
+Guardrails inspect, and can rewrite, a request's messages before they reach a provider, and a completed response's messages before they reach the client. Add them with `nexus.WithGuard`, one call per guard. They run in the order you add them.
+
+```go
+import (
+    "github.com/xraph/nexus/guard"
+    "github.com/xraph/nexus/guard/guards"
+)
+
+gw := nexus.New(
+    nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
+    nexus.WithGuard(guards.NewPII(guard.ActionRedact)),
+    nexus.WithGuard(guards.NewInjection()),
+)
+```
 
 ## Guard Interface
 
 ```go
 type Guard interface {
     Name() string
-    Phase() Phase   // Pre, Post, or Both
-    Check(ctx context.Context, content string) (*Result, error)
+    Phase() Phase // guard.PhaseInput, guard.PhaseOutput or guard.PhaseBoth
+    Check(ctx context.Context, input *CheckInput) (*CheckResult, error)
 }
 ```
 
+`CheckInput` carries the `Messages`, the `TenantID` and a `Metadata` map. `CheckResult` says whether the content is `Blocked`, which `Action` applies, a `Reason`, and, when `Modified` is true, the rewritten `Messages`.
+
 ## Built-in Guards
 
-### PII Detection
+All of them look only at messages whose content is a plain string. Multi-part content (text plus images) is skipped.
 
-Detect and redact personally identifiable information:
+### PII
 
 ```go
-import "github.com/xraph/nexus/guard/guards"
-
-nexus.WithGuard(guards.NewPII(guards.ActionRedact))
+guards.NewPII(guard.ActionRedact) // or guard.ActionBlock, guard.ActionWarn
 ```
+
+Finds email addresses, US-style phone numbers, social security numbers and card numbers. With `ActionRedact` it replaces them with `[EMAIL_REDACTED]`, `[PHONE_REDACTED]`, `[SSN_REDACTED]` and `[CC_REDACTED]`. Runs on input and output.
 
 ### Prompt Injection
 
-Block prompt injection attempts:
-
 ```go
-nexus.WithGuard(guards.NewInjection())
+guards.NewInjection()
 ```
+
+Blocks input that matches a fixed list of injection phrases ("ignore previous instructions" and the like). Runs on input only.
 
 ### Content Filter
 
-Block harmful or inappropriate content:
-
 ```go
-nexus.WithGuard(guards.NewContentFilter())
+guards.NewContentFilter(guard.ActionBlock, "forbidden phrase", "another one")
 ```
+
+Case-insensitive substring match against your blocklist. Runs on input and output.
 
 ### Regex Rules
 
-Custom pattern-based rules:
-
 ```go
-nexus.WithGuard(guards.NewRegex(
-    guards.RegexRule{
-        Pattern: `(?i)api[_-]?key`,
-        Action:  guards.ActionBlock,
-        Message: "API keys not allowed in prompts",
-    },
-))
+g := guards.NewRegex("secrets", guard.PhaseInput).
+    AddRule("api_key", `(?i)api[_-]?key`, guard.ActionBlock, "API keys are not allowed in prompts").
+    AddRedactRule("aws_key", `AKIA[0-9A-Z]{16}`, "[AWS_KEY]")
+
+nexus.WithGuard(g)
 ```
+
+`AddRule` takes a name, a pattern, an action and a reason. `AddRedactRule` takes a name, a pattern and the replacement text. Patterns are compiled with `regexp.MustCompile`, so a bad pattern panics when you build the guard.
 
 ## Actions
 
-Each guard can take one of four actions:
-
-| Action | Behavior |
+| Action | What happens |
 |--------|----------|
-| `Allow` | Request passes through unchanged |
-| `Block` | Request is rejected with an error |
-| `Redact` | Matched content is replaced with `[REDACTED]` |
-| `Warn` | Request passes through, warning is logged |
+| `guard.ActionAllow` | The content passes unchanged |
+| `guard.ActionBlock` | The request fails with a `*guard.BlockedError`, which the HTTP edge returns as 400 `content_blocked` |
+| `guard.ActionRedact` | The matched text is replaced and the request goes on |
+| `guard.ActionWarn` | The content passes unchanged. Nothing is logged: the guard service only acts on blocks and rewrites |
 
-## Streaming Guardrails
+The first guard that blocks stops the check. Rewrites from earlier guards carry through to later ones.
 
-For streaming responses, Nexus supports three strategies:
+An output-phase block happens after the provider has answered and charged for it, so the `BlockedError` carries the `Usage`, `Model` and `Provider` of the refused response, and the usage stage records it as blocked.
 
-- **Buffer** — Collect the full response, then check
-- **Passthrough** — Check chunks as they arrive
-- **Chunkwise** — Buffer a window of chunks, then check
+## Streaming
 
-```go
-guard.NewGuardedStream(stream, guards, guard.StrategyPassthrough)
-```
+For a streamed request the input guards run as usual. Output guards don't run on a stream: the guardrail stage only checks complete, non-streamed responses.
+
+The `guard` package has the pieces for stream checks, a `StreamGuard` interface (a `Guard` plus `CheckChunk`) and `guard.NewGuardedStream(stream, streamGuards, strategy)` with `guard.StrategyBuffer`, `guard.StrategyPassthrough` and `guard.StrategyChunkwise`. None of the built-in guards implements `StreamGuard`, and the gateway doesn't add the stream guardrail stage (`middlewares.NewStreamGuardrail`) on its own. To use it, write a `StreamGuard` and add the stage with `nexus.WithMiddleware`.

@@ -1,69 +1,84 @@
 ---
 title: Configuration
-description: Configure Nexus with functional options, structs, or YAML files.
+description: Configure Nexus with functional options, the Config struct, a JSON file, or the Forge extension's YAML.
 ---
 
 ## Functional Options
 
-The primary way to configure Nexus is via functional options:
+You configure a gateway with options passed to `nexus.New`:
 
 ```go
 gw := nexus.New(
-    nexus.WithBasePath("/ai"),
+    nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
     nexus.WithRateLimit(1000),
-    nexus.WithTimeout(30 * time.Second),
+    nexus.WithTimeout(30*time.Second),
     nexus.WithMaxRetries(3),
 )
 ```
 
+Options only record settings. `gw.Initialize(ctx)` fills in whatever you left out (an in-memory store, a no-op logger, the priority router, the in-memory limiter) and builds the pipeline, so call it before you use the gateway.
+
 ## Config Struct
 
-The `Config` struct holds all gateway settings:
+The `Config` struct holds the scalar settings:
 
 ```go
 type Config struct {
     BasePath          string
-    GlobalRateLimit   int
     DefaultTimeout    time.Duration
     DefaultMaxRetries int
     EnableUsage       bool
     EnableCache       bool
     RequireAPIKey     bool
+    GlobalRateLimit   int
     LogLevel          string
 }
 ```
 
-`DefaultConfig()` returns sensible defaults. `RequireAPIKey` is true by default, which means the `api` and `proxy` routes refuse a request without a valid gateway key. Set it to false for local work and the `/v1` routes open up. The `/admin` routes stay closed. See [Authentication](/docs/api-reference/http-api#authentication).
+`DefaultConfig()` returns `BasePath` `/nexus`, a 30s timeout, 2 retries, usage on, cache off, `RequireAPIKey` true, no global rate limit and log level `info`. `WithConfig(cfg)` replaces the whole struct, so start from `DefaultConfig()` and change fields: a zero `Config` turns usage recording, the timeout and retries off.
+
+`RequireAPIKey` is true by default, which means the `api` and `proxy` routes refuse a request without a valid gateway key. Set it to false for local work and the `/v1` routes open up. The `/admin` routes stay closed. See [Authentication](/docs/api-reference/http-api#authentication).
 
 `EnableUsage` is true by default. Turn it off and the gateway writes no usage rows, so the monthly budget cannot apply. The daily cap still applies through the limiter, along with RPM, TPM and token caps. Memory windows reset on restart and apply per replica.
 
 `GlobalRateLimit` is requests per minute across the whole gateway, every tenant and every unattributed request included. Zero means no limit. It is enforced: the quota stage charges one request against it before it looks at the tenant's own limits, and a request over it gets a 429 `rate_limited`.
 
+`EnableCache` true with no cache configured gives you an in-memory cache with the default size and TTL. `LogLevel` is only applied when you wrap your logger with `nexus.NewLevelLogger(l, level)`, as the Forge extension does.
+
+`BasePath` is only used by `gw.Mount(mux)`, which registers a single `GET <BasePath>/health` route. The real HTTP API lives in the `proxy` and `api` packages, which you mount wherever you like.
+
 ## Available Options
 
 | Option | Description |
 |--------|-------------|
-| `WithConfig(cfg)` | Set the full config struct |
-| `WithDatabase(store)` | Set the persistence store |
-| `WithAuth(provider)` | Set the auth provider |
+| `WithConfig(cfg)` | Replace the whole config struct |
+| `WithDatabase(store)` | Set the persistence store (default: in memory) |
 | `WithProvider(p)` | Register an LLM provider |
-| `WithRouter(strategy)` | Set the routing strategy |
-| `WithCache(cache)` | Enable response caching |
+| `WithRouter(strategy)` | Set the routing strategy (default: priority) |
+| `WithCache(cache)` | Turn on response caching with this cache |
+| `WithCacheEnabled(on)` | Turn on the in-memory response cache |
+| `WithStreamCache(sc, opts)` | Record and replay streamed responses |
 | `WithGuard(guard)` | Add a guardrail |
-| `WithMiddleware(m)` | Add custom pipeline middleware |
-| `WithExtension(ext)` | Register a lifecycle plugin |
+| `WithTransforms(registry)` | Set input and output transforms |
 | `WithAlias(name, targets...)` | Register a model alias |
-| `WithLogger(logger)` | Set a custom logger |
-| `WithBasePath(path)` | Set the HTTP base path |
-| `WithRateLimit(rpm)` | Set global rate limit |
+| `WithTenantAlias(tid, name, targets...)` | Per-tenant alias override |
+| `WithMiddleware(m)` | Add a pipeline stage at its own priority |
+| `WithPipeline(p)` | Replace the whole pipeline (you lose access, quota and usage unless you add them back) |
+| `WithExtension(ext)` | Register a lifecycle plugin |
+| `WithStreamLifecycleConfig(cfg)` | Tune per-chunk hook fan-out and per-tenant stream caps |
+| `WithLogger(logger)` | Set a `nexus.Logger` (default: no-op) |
+| `WithTracer(tracer)` | Add the tracing stage |
+| `WithBasePath(path)` | Set the path `gw.Mount` uses |
+| `WithRateLimit(rpm)` | Set the global rate limit |
+| `WithLimiter(l)` | Set the RPM and TPM limiter (default: in-process memory) |
+| `WithTimeout(duration)` | Set the per-request timeout |
+| `WithMaxRetries(n)` | Set retries for failed provider calls |
+| `WithUsageEnabled(on)` | Turn usage recording on or off |
 | `WithRequireAPIKey(on)` | Require a gateway key on the `/v1` routes (default true) |
 | `WithBootstrapAdminKey(raw)` | Supply the first admin key; call `EnsureBootstrapAdminKey` after migrating the store |
-| `WithLimiter(l)` | Set the RPM and TPM limiter (default: in-process memory) |
-| `WithTracer(tracer)` | Set the request tracer |
-| `WithTransforms(registry)` | Set input/output transforms |
-| `WithTimeout(duration)` | Set default request timeout |
-| `WithMaxRetries(n)` | Set default max retries |
-| `WithTenantAlias(tid, name, targets...)` | Per-tenant alias override |
+| `WithTenantService(s)`, `WithKeyService(s)`, `WithUsageService(s)` | Replace the services `Initialize` would build |
+| `WithHealthTracker(h)` | Stored, but routing doesn't use it yet |
+| `WithAuth(provider)` | Deprecated: stored and never consulted |
 
 ## Sharing rate limit windows between replicas
 
@@ -83,48 +98,57 @@ gw := nexus.New(
 
 Windows are fixed and aligned to the clock of the replica that charges them, so keep replica clocks in sync. If Redis goes down the limiter fails open: requests go through, `gw.LimiterErrors()` counts each failure, and the gateway logs it. The monthly budget does not come from the limiter. It comes from the usage store, so every replica already shares it. The daily request cap uses both: the store count, which every replica shares, and a charge to a UTC-day window in the limiter, which makes it hard when requests arrive together. With the memory limiter that charge is per replica.
 
+## Loading from a file
+
+The separate `github.com/xraph/nexus/config` module turns a config file into options. `config.Load(path)` reads JSON (not YAML, despite the package comment), applies `NEXUS_BASE_PATH`, `NEXUS_LOG_LEVEL` and `NEXUS_PROVIDER_<NAME>_API_KEY` from the environment, and `config.Apply(cfg)` returns the `[]nexus.Option`:
+
+```go
+cfg, err := config.Load("nexus.json")
+if err != nil {
+    log.Fatal(err)
+}
+gw := nexus.New(config.Apply(cfg)...)
+```
+
+`Apply` covers providers, the routing strategy (`priority`, `cost`, `latency`, `round_robin`, `weighted`), an in-memory cache, the PII, injection and blocklist guards, and aliases. It ignores `server.port`, `server.log_level`, `cache.type` and the whole `resilience` section, and duration fields have to be written in nanoseconds because the file is parsed with `encoding/json`.
+
 ## File-based configuration (Forge extension)
 
-When Nexus runs as a [Forge extension](/docs/guides/forge-extension), it can load configuration from the application's YAML config file. The extension checks two keys in order:
+When Nexus runs as a [Forge extension](/docs/guides/forge-extension), it loads its settings from the app's config under `extensions.nexus`, or `nexus` when that's missing:
 
-1. **`extensions.nexus`** -- namespaced under the Forge extensions convention (recommended)
-2. **`nexus`** -- legacy top-level key
-
-```yaml title="forge.yaml"
+```yaml title="config.yaml"
 extensions:
   nexus:
-    base_path: "/ai"
-    default_timeout: "30s"
+    default_timeout: 30s
     default_max_retries: 2
     global_rate_limit: 1000
     require_api_key: true
-    log_level: "info"
+    log_level: info
     enable_usage: true
     enable_cache: false
     grove_database: ""
-    disable_routes: false
     disable_migrate: false
 ```
 
 ### Extension-specific fields
 
-In addition to the gateway config fields, the extension config adds:
+On top of the gateway settings, the extension config adds:
 
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
-| `disable_routes` | `bool` | Disable automatic route registration | `false` |
-| `disable_migrate` | `bool` | Disable automatic store migration | `false` |
-| `grove_database` | `string` | Name of grove.DB to resolve from DI (empty = default DB) | `""` |
+| `disable_migrate` | `bool` | Skip the store migration on start | `false` |
+| `grove_database` | `string` | Name of the `grove.DB` to resolve from DI (empty = the default one) | `""` |
 | `bootstrap_admin_key` | `string` | Operator-supplied admin key, applied after migration; an empty value falls back to `NEXUS_BOOTSTRAP_ADMIN_KEY` | `""` |
+| `base_path`, `disable_routes` | | Accepted but unused: the extension mounts no routes | |
 
 The extension trims the bootstrap value and checks its shape before starting. It stores only the hash, leaves a revoked key revoked, and never returns the raw value. Use a randomly generated value and keep it in your secret configuration. See [Your first admin key](/docs/api-reference/http-api#your-first-admin-key).
 
 ### Configuration precedence
 
-When both file-based and programmatic options are provided, they are merged:
+When both the file and code set a value, they're merged:
 
-1. **YAML values** take precedence for string, duration, and integer fields.
-2. **Programmatic boolean flags** (`DisableRoutes`, `DisableMigrate`, `EnableCache`) override when set to `true`.
-3. Any remaining zero-valued fields are filled from `DefaultConfig()`.
+1. The file wins for string, duration, integer and pointer fields; code fills the gaps.
+2. Boolean flags from code (`DisableRoutes`, `DisableMigrate`, `EnableCache`) win when they're true.
+3. Any field still empty gets its value from `DefaultConfig()`.
 
-If no file-based config is found and `RequireConfig` is not set, the extension falls back to programmatic options merged with defaults.
+If the file has no `nexus` key and `RequireConfig` isn't set, the extension uses the code config merged with the defaults. Options you pass with `WithGatewayOption` are applied after all of this, so they override the config.

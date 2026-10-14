@@ -3,7 +3,7 @@ title: PostgreSQL
 description: Configure PostgreSQL as the persistence backend for tenants, API keys, and usage data.
 ---
 
-The `store/postgres` package implements Nexus's `store.Store` interface using the grove ORM with the PostgreSQL driver. It is the recommended store for production deployments.
+The `store/postgres` package implements Nexus's `store.Store` interface on [Grove](https://github.com/xraph/grove) with its PostgreSQL driver. It's the store to use when several replicas share one database.
 
 ## Setup
 
@@ -14,7 +14,11 @@ import (
     "github.com/xraph/nexus/store/postgres"
 )
 
-db, err := grove.Open(pgdriver.Open("postgres://user:pass@localhost:5432/nexus?sslmode=disable"))
+drv := pgdriver.New()
+if err := drv.Open(ctx, "postgres://user:pass@localhost:5432/nexus?sslmode=disable"); err != nil {
+    log.Fatal(err)
+}
+db, err := grove.Open(drv)
 if err != nil {
     log.Fatal(err)
 }
@@ -29,32 +33,31 @@ gw := nexus.New(
 )
 ```
 
+In a Forge app you don't need any of this: the [Forge extension](/docs/guides/forge-extension#grove-database-integration) builds the store from the app's `grove.DB` and migrates it on start.
+
 ## Migrations
 
-Call `s.Migrate()` before first use. This creates all required tables and indexes. Migrations are idempotent -- safe to run on every startup.
-
-Tables created: `tenants`, `api_keys`, `usage_records`.
+Call `s.Migrate()` before first use. It runs the package's `postgres.Migrations` group through Grove's migration orchestrator, which tracks what has already run, so it's safe on every startup.
 
 ## Schema
 
-All tables include tenant scoping columns and JSONB fields for flexible metadata:
+Tables are prefixed with `nexus_`. Quota, config and metadata are `jsonb` columns.
 
-- `tenants` -- id, name, enabled, config (JSONB), created_at, updated_at
-- `api_keys` -- id, tenant_id, name, hash, enabled, expires_at, created_at
-- `usage_records` -- id, tenant_id, request_id, model, provider, input_tokens, output_tokens, cost, created_at
+- `nexus_tenants`: id, name, slug, status, quota, config, metadata, created_at, updated_at
+- `nexus_api_keys`: id, tenant_id, name, prefix, hash, scopes, status, expires_at, last_used_at, metadata, created_at
+- `nexus_usage_records`: id, tenant_id, key_id, request_id, provider, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, pricing_status, outcome, blocked_by, refusal_code, latency_ns, cached, status_code, created_at
 
 ## Internals
 
 | Aspect | Detail |
 |--------|--------|
-| Driver | grove ORM + pgdriver |
-| Migrations | grove orchestrator with programmatic migrations |
-| Transactions | Database-level ACID |
-| Ping | `db.Ping(ctx)` |
-| Close | Caller-owned -- call `db.Close()` |
+| Driver | Grove with `pgdriver` |
+| Migrations | `postgres.Migrations`, run by Grove's orchestrator |
+| Close | `s.Close()` closes the `grove.DB`, and `gw.Shutdown` calls it |
 
 ## When to use
 
-- Production deployments requiring ACID transactions and full SQL query power.
-- Multi-process environments with connection pooling.
-- When you need advanced PostgreSQL features like JSONB indexing.
+- Production deployments with more than one replica. The monthly budget and daily counts come from the usage store, so every replica sees the same totals.
+- When you already run PostgreSQL.
+
+The store's tests only run when `NEXUS_TEST_POSTGRES_DSN` is set, and CI doesn't set it.

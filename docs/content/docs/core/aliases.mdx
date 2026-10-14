@@ -1,9 +1,9 @@
 ---
 title: Model Aliases
-description: Map virtual model names to provider targets with per-tenant overrides and weighted routing.
+description: Map virtual model names to concrete models, with weighted targets and per-tenant overrides.
 ---
 
-Model aliases let clients use logical names like `"fast"` or `"smart"` instead of provider-specific model identifiers. This decouples your API surface from provider details.
+Model aliases let clients ask for logical names like `"fast"` or `"smart"` instead of provider model IDs, so you can change the model behind a name without touching clients.
 
 ## Creating Aliases
 
@@ -11,9 +11,10 @@ Model aliases let clients use logical names like `"fast"` or `"smart"` instead o
 import "github.com/xraph/nexus/model"
 
 gw := nexus.New(
+    nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
     nexus.WithAlias("fast", model.AliasTarget{
-        Provider: "anthropic",
-        Model:    "claude-3.5-haiku",
+        Provider: "openai",
+        Model:    "gpt-4o-mini",
     }),
     nexus.WithAlias("smart", model.AliasTarget{
         Provider: "openai",
@@ -22,31 +23,37 @@ gw := nexus.New(
 )
 ```
 
-Clients request `model: "fast"` and Nexus resolves it to `anthropic/claude-3.5-haiku`.
+A client that sends `"model": "fast"` gets its request rewritten to `gpt-4o-mini`. A model name that isn't an alias passes through unchanged.
 
-## Weighted Routing
+The alias stage rewrites only the model. The target's `Provider` is recorded in the request state, but routing ignores it, so the routing strategy still decides which provider gets the request. If you register several providers, an alias for an Anthropic model can end up at OpenAI. See [Routing](/docs/core/routing#what-the-router-sees).
 
-Distribute traffic across multiple targets:
+## Weighted Targets
+
+Give an alias several targets and each request picks one at random by weight. A target with no weight (or zero) counts as 1:
 
 ```go
 nexus.WithAlias("balanced",
     model.AliasTarget{Provider: "openai", Model: "gpt-4o-mini", Weight: 0.7},
-    model.AliasTarget{Provider: "anthropic", Model: "claude-3.5-haiku", Weight: 0.3},
+    model.AliasTarget{Provider: "openai", Model: "gpt-4o", Weight: 0.3},
 )
 ```
+
+The targets aren't a fallback chain. If the chosen target fails, the retry stage retries that same model.
 
 ## Per-Tenant Overrides
 
 Different tenants can resolve the same alias to different models:
 
 ```go
-nexus.WithTenantAlias("premium-tenant", "fast",
+nexus.WithTenantAlias(premiumTenantID, "fast",
     model.AliasTarget{Provider: "openai", Model: "gpt-4o"},
 )
 ```
 
-When `premium-tenant` requests `model: "fast"`, they get `gpt-4o` instead of the default `claude-3.5-haiku`.
+The first argument is the tenant's ID (`t.ID.String()`), not its slug. When that tenant asks for `"fast"` it gets `gpt-4o`, and everyone else gets the alias's default targets. If no `"fast"` alias exists yet, `WithTenantAlias` creates one whose default targets are the same as the override, so register the default with `WithAlias` first.
+
+A tenant can also have a default model in its config (`tenant.Config.DefaultModel`). The access stage fills it in when a request names no model, before alias resolution, so the default may itself be an alias.
 
 ## Alias Resolution
 
-Alias resolution happens in the pipeline middleware chain (priority 250). The original model name is replaced with the resolved provider and model before routing.
+Alias resolution is a pipeline stage at priority 250, after guardrails and transforms and before the tenant's model allow and block lists (260) and the cache (280). The stage is only in the pipeline when you register at least one alias. The model policy checks both the name the client asked for and the model the alias produced. `gw.Aliases()` lists what's registered.
