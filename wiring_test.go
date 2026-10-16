@@ -2,6 +2,7 @@ package nexus_test
 
 import (
 	"context"
+	"net/http"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -227,5 +228,40 @@ func TestShutdownWithACustomPipelineIsClean(t *testing.T) {
 	}
 	if err := gw.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown: %v", err)
+	}
+}
+
+// wrappable is a provider that owns an HTTP transport the gateway may wrap.
+type wrappable struct {
+	*fakeProvider
+	wraps int
+	rt    http.RoundTripper
+}
+
+func (w *wrappable) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) {
+	w.wraps++
+	w.rt = wrap(w.rt)
+}
+
+func TestProviderTransportsAreWrappedOnceAtInitialize(t *testing.T) {
+	p := &wrappable{fakeProvider: &fakeProvider{name: "openai"}}
+	marker := http.RoundTripper(&http.Transport{})
+	gw := nexus.New(nexus.WithProvider(p), nexus.WithProviderTransport(func(http.RoundTripper) http.RoundTripper { return marker }))
+	for range 2 {
+		if err := gw.Initialize(context.Background()); err != nil {
+			t.Fatalf("initialize: %v", err)
+		}
+	}
+	if p.wraps != 1 || p.rt != marker {
+		t.Fatalf("wrapped %d times, transport %v; want once, with the wrapper's result", p.wraps, p.rt)
+	}
+
+	// Without the option nothing is wrapped.
+	q := &wrappable{fakeProvider: &fakeProvider{name: "openai"}}
+	if err := nexus.New(nexus.WithProvider(q)).Initialize(context.Background()); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	if q.wraps != 0 {
+		t.Fatalf("wrapped %d times without WithProviderTransport", q.wraps)
 	}
 }

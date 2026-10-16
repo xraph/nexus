@@ -1,6 +1,7 @@
 package nexus
 
 import (
+	"net/http"
 	"time"
 
 	gometrics "github.com/xraph/go-utils/metrics"
@@ -266,3 +267,13 @@ func WithCacheEnabled(on bool) Option { return func(gw *Gateway) { gw.config.Ena
 // m records nothing. Spans need no option: they go to the global tracer
 // provider, which forge.New installs.
 func WithMetrics(m gometrics.Metrics) Option { return func(gw *Gateway) { gw.metrics = m } }
+
+// WithProviderTransport wraps the HTTP transport of every registered provider
+// that implements provider.TransportWrapper, once, when the gateway is
+// initialized. The Forge extension passes forge.InstrumentTransport, so each
+// call to a provider gets an HTTP client span under its GenAI span. Outside
+// Forge, pass otelhttp.NewTransport or your own wrapper. Providers registered
+// after Initialize are not wrapped.
+func WithProviderTransport(wrap func(http.RoundTripper) http.RoundTripper) Option {
+	return func(gw *Gateway) { gw.providerTransport = wrap }
+}

@@ -98,6 +98,9 @@ type Gateway struct {
 	// metrics is the sink the pipeline's stages record on, nil for none.
 	metrics gometrics.Metrics
 
+	// providerTransport wraps each provider's HTTP transport at Initialize.
+	providerTransport func(http.RoundTripper) http.RoundTripper
+
 	// Custom middleware to add to the pipeline
 	customMiddleware []pipeline.Middleware
 
@@ -178,6 +181,7 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 		gw.cache = cache.NewService(stores.NewMemory())
 	}
 	gw.priceBook = model.NewPriceBook(gw.providers)
+	gw.wrapProviderTransports()
 
 	// Initialize model service
 	if gw.model == nil {
@@ -323,6 +327,19 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 		WithMetrics(gw.metrics))
 
 	return b.Build()
+}
+
+// wrapProviderTransports hands each registered provider that owns an HTTP
+// client the wrapper from WithProviderTransport.
+func (gw *Gateway) wrapProviderTransports() {
+	if gw.providerTransport == nil {
+		return
+	}
+	for _, p := range gw.providers.All() {
+		if w, ok := p.(provider.TransportWrapper); ok {
+			w.WrapTransport(gw.providerTransport)
+		}
+	}
 }
 
 // Mount registers Nexus HTTP handlers on the given router.
