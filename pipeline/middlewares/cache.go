@@ -9,7 +9,12 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
+	gometrics "github.com/xraph/go-utils/metrics"
+
 	"github.com/xraph/nexus/cache"
+	"github.com/xraph/nexus/internal/telemetry"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/provider"
 )
@@ -24,10 +29,15 @@ import (
 //     replayed via a synthesized provider.Stream.
 //
 // Streaming caching is opt-in: pass a StreamCache via WithStreamCache.
+//
+// Each lookup gets a "look up cache" span with the cache kind and whether it
+// hit. A recorded stream is written to the cache after the request ends, on
+// a context that keeps only the request's trace.
 type CacheMiddleware struct {
 	cache       cache.Service
 	streamCache cache.StreamCache
 	streamOpts  cache.StreamCacheOptions
+	lookups     *telemetry.Counter
 }
 
 // NewCache creates a caching middleware backed only by the
@@ -55,6 +65,45 @@ func (m *CacheMiddleware) WithStreamCache(sc cache.StreamCache, opts cache.Strea
 	m.streamCache = sc
 	m.streamOpts = opts
 	return m
+}
+
+// WithMetrics counts lookups (nexus_cache_lookups_total) on mm, by kind
+// (response or stream) and result (hit, miss or error). A nil mm counts
+// nothing.
+func (m *CacheMiddleware) WithMetrics(mm gometrics.Metrics) *CacheMiddleware {
+	m.lookups = telemetry.NewCounter(mm, telemetry.MetricCacheLookups,
+		"Response cache lookups, by kind and result.",
+		telemetry.LabelKind, telemetry.LabelResult)
+	return m
+}
+
+// Cache kinds, for the lookup span and metric.
+const (
+	cacheKindResponse = "response"
+	cacheKindStream   = "stream"
+)
+
+// startLookup starts the span for one cache lookup.
+func startLookup(ctx context.Context, kind string) (context.Context, trace.Span) {
+	return telemetry.Tracer().Start(ctx, "look up cache", //nolint:spancheck // ended by endLookup
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(telemetry.CacheKind.String(kind)))
+}
+
+// endLookup ends a lookup's span and counts it. A miss is (nil, nil) from
+// every store, so an error is a store that failed.
+func (m *CacheMiddleware) endLookup(span trace.Span, kind string, hit bool, err error) {
+	result := "miss"
+	switch {
+	case err != nil:
+		result = "error"
+		telemetry.Fail(span, err)
+	case hit:
+		result = "hit"
+	}
+	span.SetAttributes(telemetry.CacheHit.Bool(hit))
+	span.End()
+	m.lookups.Inc(kind, result)
 }
 
 func (m *CacheMiddleware) Name() string  { return "cache" }
@@ -88,7 +137,9 @@ func (m *CacheMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	// Check cache
 	// The store may hand every caller the same object, so a hit gets its own
 	// copy before anything marks or redacts it.
-	cached, err := m.cache.Get(ctx, key)
+	lookupCtx, span := startLookup(ctx, cacheKindResponse)
+	cached, err := m.cache.Get(lookupCtx, key)
+	m.endLookup(span, cacheKindResponse, err == nil && cached != nil, err)
 	if err == nil && cached != nil {
 		hit := copyCompletion(cached)
 		hit.Cached = true
@@ -152,7 +203,10 @@ func (m *CacheMiddleware) handleStream(ctx context.Context, req *pipeline.Reques
 	key := cache.StreamKey(keyReq)
 
 	// Cache hit: replay stored frames as a synthesized stream.
-	if frames, err := m.streamCache.GetStream(ctx, key); err == nil && len(frames) > 0 {
+	lookupCtx, span := startLookup(ctx, cacheKindStream)
+	frames, err := m.streamCache.GetStream(lookupCtx, key)
+	m.endLookup(span, cacheKindStream, err == nil && len(frames) > 0, err)
+	if err == nil && len(frames) > 0 {
 		req.State[pipeline.StateCacheHit] = true
 		return &pipeline.Response{Stream: newReplayStream(frames, m.streamOpts)}, nil
 	}
@@ -170,6 +224,7 @@ func (m *CacheMiddleware) handleStream(ctx context.Context, req *pipeline.Reques
 		key:     key,
 		opts:    m.streamOpts,
 		startAt: time.Now(),
+		trace:   trace.SpanContextFromContext(ctx),
 	}
 	return resp, nil
 }
@@ -183,6 +238,7 @@ type recordingStream struct {
 	key     string
 	opts    cache.StreamCacheOptions
 	startAt time.Time
+	trace   trace.SpanContext // the request's, so the write lands in its trace
 
 	mu        sync.Mutex
 	frames    []cache.StreamFrame
@@ -238,7 +294,8 @@ func (s *recordingStream) Close() error {
 	}
 
 	ttl := s.opts.TTL
-	_ = s.cache.SetStream(context.Background(), s.key, frames, ttl) //nolint:errcheck // best-effort
+	ctx := trace.ContextWithSpanContext(context.Background(), s.trace)
+	_ = s.cache.SetStream(ctx, s.key, frames, ttl) //nolint:errcheck // best-effort
 	return closeErr
 }
 

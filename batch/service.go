@@ -6,6 +6,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/xraph/nexus/internal/telemetry"
 	"github.com/xraph/nexus/provider"
 )
 
@@ -49,7 +52,7 @@ func NewService(executor Executor, concurrency int) Service {
 	}
 }
 
-func (s *service) Create(_ context.Context, input *CreateInput) (*Job, error) {
+func (s *service) Create(ctx context.Context, input *CreateInput) (*Job, error) {
 	job := &Job{
 		ID:         generateID(),
 		TenantID:   input.TenantID,
@@ -73,7 +76,8 @@ func (s *service) Create(_ context.Context, input *CreateInput) (*Job, error) {
 	// #nosec G118 -- deliberate: a submitted batch job must outlive the request
 	// that created it, and callers poll it via Get(jobID). Inheriting the request
 	// context would cancel the job the moment the caller's HTTP request returned.
-	go s.process(context.Background(), job, concurrency)
+	// The job gets a trace of its own, linked to the request that created it.
+	go s.process(context.Background(), trace.SpanContextFromContext(ctx), job, concurrency)
 
 	return job, nil
 }
@@ -113,7 +117,23 @@ func (s *service) List(_ context.Context, tenantID string) ([]*Job, error) {
 	return result, nil
 }
 
-func (s *service) process(ctx context.Context, job *Job, concurrency int) {
+// process runs a job's items under one root span, "run batch job", linked to
+// the span that created the job. Each item's pipeline span nests under it.
+func (s *service) process(ctx context.Context, creator trace.SpanContext, job *Job, concurrency int) {
+	opts := []trace.SpanStartOption{
+		trace.WithNewRoot(),
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(telemetry.BatchJobID.String(job.ID), telemetry.BatchItems.Int(job.TotalItems)),
+	}
+	if creator.IsValid() {
+		opts = append(opts, trace.WithLinks(trace.Link{SpanContext: creator}))
+	}
+	ctx, span := telemetry.Tracer().Start(ctx, "run batch job", opts...)
+	defer func() {
+		span.SetAttributes(telemetry.BatchFailed.Int(job.Failed), telemetry.BatchStatus.String(string(job.Status)))
+		span.End()
+	}()
+
 	now := time.Now()
 	job.StartedAt = &now
 	job.Status = JobRunning

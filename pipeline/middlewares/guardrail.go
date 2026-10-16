@@ -3,12 +3,18 @@ package middlewares
 import (
 	"context"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/xraph/nexus/guard"
+	"github.com/xraph/nexus/internal/telemetry"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/provider"
 )
 
 // GuardrailMiddleware runs guardrails before and after the provider call.
+// Each phase gets a "check guardrails" span with the phase, whether it
+// blocked or modified the messages, and the name of the guard that blocked.
+// The guard's reason and the messages never go on the span.
 type GuardrailMiddleware struct {
 	guard guard.Service
 }
@@ -32,7 +38,7 @@ func (m *GuardrailMiddleware) Process(ctx context.Context, req *pipeline.Request
 		TenantID: pipeline.TenantID(ctx),
 	}
 
-	result, err := m.guard.CheckPhase(ctx, guard.PhaseInput, input)
+	result, err := m.check(ctx, guard.PhaseInput, input)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +68,7 @@ func (m *GuardrailMiddleware) Process(ctx context.Context, req *pipeline.Request
 			TenantID: pipeline.TenantID(ctx),
 		}
 
-		outputResult, err := m.guard.CheckPhase(ctx, guard.PhaseOutput, outputInput)
+		outputResult, err := m.check(ctx, guard.PhaseOutput, outputInput)
 		if err != nil {
 			return nil, err
 		}
@@ -83,4 +89,24 @@ func (m *GuardrailMiddleware) Process(ctx context.Context, req *pipeline.Request
 	}
 
 	return resp, nil
+}
+
+// check runs one phase of the guardrails under its own span.
+func (m *GuardrailMiddleware) check(ctx context.Context, phase guard.Phase, input *guard.CheckInput) (*guard.CheckResult, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "check guardrails",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(telemetry.GuardrailPhase.String(string(phase))))
+	defer span.End()
+	result, err := m.guard.CheckPhase(ctx, phase, input)
+	if err != nil {
+		telemetry.Fail(span, err)
+		return nil, err
+	}
+	if result != nil && span.IsRecording() {
+		span.SetAttributes(telemetry.GuardrailBlock.Bool(result.Blocked), telemetry.GuardrailEdited.Bool(result.Modified))
+		if result.Blocked && result.Guard != "" {
+			span.SetAttributes(telemetry.GuardrailName.String(result.Guard))
+		}
+	}
+	return result, nil
 }

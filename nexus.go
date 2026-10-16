@@ -23,6 +23,8 @@ import (
 	"slices"
 	"time"
 
+	gometrics "github.com/xraph/go-utils/metrics"
+
 	"github.com/xraph/nexus/auth"
 	"github.com/xraph/nexus/cache"
 	"github.com/xraph/nexus/cache/stores"
@@ -92,6 +94,9 @@ type Gateway struct {
 	tracer      observability.Tracer
 	transforms  *transform.Registry
 	healthTrack provider.HealthTracker
+
+	// metrics is the sink the pipeline's stages record on, nil for none.
+	metrics gometrics.Metrics
 
 	// Custom middleware to add to the pipeline
 	customMiddleware []pipeline.Middleware
@@ -224,14 +229,16 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 	// Priority 5: request id
 	b.Use(middlewares.NewRequestID())
 
-	// Priority 10: Tracing (if configured)
+	// Priority 10: OpenTelemetry span and request count (always), then a
+	// custom tracer (if configured)
+	b.Use(middlewares.NewTelemetry().WithMetrics(gw.metrics))
 	if gw.tracer != nil {
 		b.Use(observability.NewTracingMiddleware(gw.tracer))
 	}
 
 	// Priority 15: Usage recording (unless turned off)
 	if gw.config.EnableUsage && gw.usage != nil {
-		gw.usageMW = middlewares.NewUsage(gw.usage, gw.priceBook, gw.logger)
+		gw.usageMW = middlewares.NewUsage(gw.usage, gw.priceBook, gw.logger).WithMetrics(gw.metrics)
 		b.Use(gw.usageMW)
 	}
 
@@ -255,7 +262,7 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 		}
 		gw.quotaMW = middlewares.NewQuota(middlewares.QuotaConfig{
 			Usage: gw.usage, Limiter: gw.limiter, Events: budgetEvents,
-			GlobalRPM: gw.config.GlobalRateLimit, Log: gw.logger,
+			GlobalRPM: gw.config.GlobalRateLimit, Log: gw.logger, Metrics: gw.metrics,
 		})
 		b.Use(gw.quotaMW)
 	}
@@ -293,7 +300,7 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 
 	// Priority 280: Cache (if configured)
 	if gw.cache != nil || gw.streamCache != nil {
-		mw := middlewares.NewCache(gw.cache)
+		mw := middlewares.NewCache(gw.cache).WithMetrics(gw.metrics)
 		if gw.streamCache != nil {
 			mw = mw.WithStreamCache(gw.streamCache, gw.streamCacheCfg)
 		}
@@ -311,7 +318,9 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 	}
 
 	// Priority 350: Core provider call (always present, always last)
-	b.Use(middlewares.NewProviderCall(gw.router, gw.providers))
+	b.Use(middlewares.NewProviderCall(gw.router, gw.providers).
+		WithModelCatalog(gw.priceBook).
+		WithMetrics(gw.metrics))
 
 	return b.Build()
 }

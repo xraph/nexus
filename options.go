@@ -3,6 +3,8 @@ package nexus
 import (
 	"time"
 
+	gometrics "github.com/xraph/go-utils/metrics"
+
 	"github.com/xraph/nexus/auth"
 	"github.com/xraph/nexus/cache"
 	"github.com/xraph/nexus/guard"
@@ -138,7 +140,10 @@ func WithAlias(name string, targets ...model.AliasTarget) Option {
 	}
 }
 
-// WithTracer sets a request tracer for observability.
+// WithTracer adds a stage that reports each request to t, for a tracer that
+// is not OpenTelemetry. The gateway already starts OpenTelemetry spans on the
+// global tracer provider without it (see the observability docs), so with an
+// OpenTelemetry bridge you would see each request twice.
 func WithTracer(t observability.Tracer) Option {
 	return func(gw *Gateway) { gw.tracer = t }
 }
@@ -253,3 +258,11 @@ func WithLimiter(l ratelimit.Limiter) Option { return func(gw *Gateway) { gw.lim
 // WithCacheEnabled turns the response cache on. Without WithCache it is an
 // in-memory cache with the default size and TTL.
 func WithCacheEnabled(on bool) Option { return func(gw *Gateway) { gw.config.EnableCache = on } }
+
+// WithMetrics records the gateway's metrics on m: the GenAI client duration
+// and token histograms, time to first chunk, requests by outcome, guardrail
+// blocks, cache lookups, usage insert failures and limiter failures. In a
+// Forge app pass app.Metrics(); the Forge extension does this for you. A nil
+// m records nothing. Spans need no option: they go to the global tracer
+// provider, which forge.New installs.
+func WithMetrics(m gometrics.Metrics) Option { return func(gw *Gateway) { gw.metrics = m } }
