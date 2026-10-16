@@ -33,7 +33,7 @@ Nexus is organized as a set of composable Go packages. The `Gateway` is the root
 Every request flows through the pipeline middleware chain, sorted by priority:
 
 1. Request ID (5): assign the request id
-2. Tracing (10): a span per request, only with `WithTracer`
+2. Telemetry (10): an OpenTelemetry span per request and the request metrics, always; a custom tracer too with `WithTracer`
 3. Usage (15): record, price and attribute every request, unless usage is off
 4. Timeout (20): the request deadline, when the timeout is above zero (30s by default)
 5. Identity (30): tenant and key ids, so the cache and usage agree on who asked
@@ -72,7 +72,7 @@ The HTTP edge runs before this chain. It reads the gateway key, checks it, and p
 | `tenant`, `key`, `usage` | Tenants, gateway keys, usage records and summaries |
 | `auth` | Gateway key authentication for the HTTP edges |
 | `audit_hook` | Audit event recording plugin |
-| `observability` | Tracing stage and metrics counters plugin |
+| `observability` | The custom tracer stage (`WithTracer`) and the in-process counters plugin. The OpenTelemetry spans and metrics live in the pipeline stages; see [Observability](/docs/infrastructure/observability) |
 | `relay_hook` | Webhook relay plugin |
 | `fallback` | Circuit breaker and fallback service (not used by the default pipeline) |
 | `proxy` | OpenAI-compatible HTTP proxy |

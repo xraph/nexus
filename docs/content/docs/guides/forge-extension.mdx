@@ -69,7 +69,9 @@ gw, err := forge.Inject[*nexus.Gateway](app.Container())
 
 ## What it wires in
 
-The extension resolves one thing from the container: a `*grove.DB`, for the store. It doesn't look for Chronicle, Shield, Relay or a metrics factory. To add audit, webhook or metrics hooks, pass them yourself:
+The extension resolves one thing from the container: a `*grove.DB`, for the store. It also hands the gateway two things from the app. Your app's metrics become the gateway's metrics sink, so the GenAI and request metrics land on `/_/metrics`, and every provider's HTTP client goes through `forge.InstrumentTransport`, so each call to a provider gets a client span. The [Observability](/docs/infrastructure/observability) page lists them all.
+
+It doesn't look for Chronicle, Shield or Relay. To add audit or webhook hooks, pass them yourself:
 
 ```go
 nexusext.New(
