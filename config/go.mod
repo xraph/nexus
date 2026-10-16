@@ -39,7 +39,7 @@ require (
 require (
 	github.com/gofrs/uuid/v5 v5.3.2 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
-	github.com/xraph/go-utils v1.3.0 // indirect
+	github.com/xraph/go-utils v1.4.1 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
