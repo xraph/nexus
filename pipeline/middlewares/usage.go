@@ -9,8 +9,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
+	gometrics "github.com/xraph/go-utils/metrics"
+
 	"github.com/xraph/nexus/guard"
 	"github.com/xraph/nexus/id"
+	"github.com/xraph/nexus/internal/telemetry"
 	"github.com/xraph/nexus/model"
 	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/pipeline"
@@ -39,10 +44,16 @@ type UsageLogger interface {
 // (InsertErrors), and Flush waits for the inserts still in flight and for
 // the streams still open. After Close, a record that has not started is not
 // stored: it is counted and logged as dropped.
+//
+// Each insert runs under a "store usage record" span in the request's trace,
+// so the store's own spans nest under it even though the insert outlives the
+// request.
 type UsageMiddleware struct {
 	usage  usage.Service
 	prices PriceLookup
 	log    UsageLogger
+
+	insertFailures *telemetry.Counter
 
 	mu           sync.Mutex
 	idle         *sync.Cond // signalled when pending reaches zero
@@ -56,6 +67,14 @@ type UsageMiddleware struct {
 func NewUsage(u usage.Service, prices PriceLookup, log UsageLogger) *UsageMiddleware {
 	m := &UsageMiddleware{usage: u, prices: prices, log: log}
 	m.idle = sync.NewCond(&m.mu)
+	return m
+}
+
+// WithMetrics counts the records InsertErrors counts on mm as well, as
+// nexus_usage_insert_errors_total. A nil mm counts nothing.
+func (m *UsageMiddleware) WithMetrics(mm gometrics.Metrics) *UsageMiddleware {
+	m.insertFailures = telemetry.NewCounter(mm, telemetry.MetricUsageInsertErrors,
+		"Usage records that failed to store or were dropped after shutdown began.")
 	return m
 }
 
@@ -139,7 +158,7 @@ func (m *UsageMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	}
 	rec.Latency = time.Since(start)
 	m.classify(ctx, rec, req, resp, err)
-	m.finish(rec, reserved)
+	m.finish(ctx, rec, reserved)
 	return resp, err
 }
 
@@ -300,10 +319,11 @@ func (m *UsageMiddleware) release() {
 }
 
 // finish stores rec on the reservation taken for it, or drops and counts it
-// when the stage was already closed.
-func (m *UsageMiddleware) finish(rec *usage.Record, reserved bool) {
+// when the stage was already closed. ctx is the request's; only its trace is
+// carried into the insert.
+func (m *UsageMiddleware) finish(ctx context.Context, rec *usage.Record, reserved bool) {
 	if reserved {
-		m.insert(rec)
+		m.insert(trace.SpanContextFromContext(ctx), rec)
 		return
 	}
 	m.drop(rec)
@@ -312,6 +332,7 @@ func (m *UsageMiddleware) finish(rec *usage.Record, reserved bool) {
 // drop counts and logs a record that arrived after Close.
 func (m *UsageMiddleware) drop(rec *usage.Record) {
 	m.insertErrors.Add(1)
+	m.insertFailures.Inc()
 	if m.log != nil {
 		m.log.Error("nexus: usage stage is closed, record dropped", "request_id", rec.RequestID.String())
 	}
@@ -319,14 +340,30 @@ func (m *UsageMiddleware) drop(rec *usage.Record) {
 
 // insert stores a reserved record in the background and ends the
 // reservation. A panic from the usage service or its store is counted as a
-// failed insert; it must not take the process down from a goroutine.
-func (m *UsageMiddleware) insert(rec *usage.Record) {
+// failed insert; it must not take the process down from a goroutine. The
+// insert is not canceled with the request, but its span joins the request's
+// trace through parent.
+func (m *UsageMiddleware) insert(parent trace.SpanContext, rec *usage.Record) {
 	go func() {
 		defer m.release()
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(trace.ContextWithSpanContext(context.Background(), parent), 10*time.Second)
 		defer cancel()
+		// A request with no trace gets no span here: the insert must not
+		// start a root trace of its own for every request.
+		span := trace.SpanFromContext(ctx)
+		if parent.IsValid() {
+			ctx, span = telemetry.Tracer().Start(ctx, "store usage record",
+				trace.WithSpanKind(trace.SpanKindInternal),
+				trace.WithAttributes(
+					telemetry.UsageOutcome.String(string(rec.Outcome)),
+					telemetry.UsagePricing.String(string(rec.PricingStatus)),
+				))
+			defer span.End()
+		}
 		if err := m.store(ctx, rec); err != nil {
+			telemetry.Fail(span, err)
 			m.insertErrors.Add(1)
+			m.insertFailures.Inc()
 			if m.log != nil {
 				m.log.Error("nexus: storing a usage record failed", "request_id", rec.RequestID.String(), "error", err)
 			}
@@ -488,7 +525,7 @@ func (s *usageRecordingStream) Close() error {
 		rec.Outcome, rec.StatusCode = usage.OutcomeOK, 200
 		s.mw.price(s.ctx, rec, u, false, respModel)
 	}
-	s.mw.finish(rec, s.reserved)
+	s.mw.finish(s.ctx, rec, s.reserved)
 	return closeErr
 }
 

@@ -90,7 +90,7 @@ You probably started by calling one provider's SDK straight from your handlers. 
 | Safer prompts and outputs | Guardrails for PII (block, redact or warn), prompt injection, blocklists and custom regex |
 | Customers with their own limits | Tenants, `nxs_` gateway keys with scopes, RPM and TPM windows, daily request caps and monthly budgets in exact USD |
 | Streaming that fits your client | OpenAI-style SSE, Nexus SSE with named events, NDJSON, and a bidirectional WebSocket at `/v1/realtime` |
-| A record of every request | Usage records with tokens, latency and cost, and 19 lifecycle hooks for audit, webhooks and metrics |
+| A record of every request | Usage records with tokens, latency and cost, OpenTelemetry spans and GenAI metrics, and 19 lifecycle hooks for audit, webhooks and metrics |
 | Data in your own database | PostgreSQL, SQLite and MongoDB stores through [Grove](https://github.com/xraph/grove), or in memory |
 
 ## Providers
@@ -162,7 +162,7 @@ Every request runs through the same chain of middleware, whether it came in over
 | Priority | Stage | When it's there |
 | --- | --- | --- |
 | 5 | Request ID | always |
-| 10 | Tracing | `WithTracer` |
+| 10 | Telemetry: OpenTelemetry span and request metrics, then your own tracer | always; the tracer with `WithTracer` |
 | 15 | Usage recording | unless usage is off |
 | 20 | Timeout | when the timeout is above zero (30s by default) |
 | 30, 40 | Identity, then tenant status and key scopes | always |

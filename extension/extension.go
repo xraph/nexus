@@ -182,8 +182,16 @@ func (e *Extension) Health(_ context.Context) error {
 // The config-derived options go first, ahead of anything the caller passed
 // with WithGatewayOption, so an explicit code option wins over the config
 // (the config always fills defaults such as enable_usage and log_level).
+//
+// Telemetry goes first too: the gateway records its metrics on the app's
+// metrics, and every provider's HTTP calls go through forge's traced
+// transport. Pass nexus.WithMetrics(nil) or nexus.WithProviderTransport(nil)
+// through WithGatewayOption to turn either off.
 func (e *Extension) applyConfigToGatewayOpts() {
-	var opts []nexus.Option
+	opts := []nexus.Option{nexus.WithProviderTransport(forge.InstrumentTransport)}
+	if m := e.Metrics(); m != nil {
+		opts = append(opts, nexus.WithMetrics(m))
+	}
 	if e.config.BasePath != "" {
 		opts = append(opts, nexus.WithBasePath(e.config.BasePath))
 	}

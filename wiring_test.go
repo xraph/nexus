@@ -2,11 +2,15 @@ package nexus_test
 
 import (
 	"context"
+	"net/http"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel/baggage"
+	"go.opentelemetry.io/otel/trace"
 
 	nexus "github.com/xraph/nexus"
 	"github.com/xraph/nexus/model"
@@ -34,7 +38,7 @@ func TestInitializeBuildsTheDeclaredServices(t *testing.T) {
 	if gw.Tenants() == nil || gw.Keys() == nil || gw.Usage() == nil {
 		t.Fatalf("tenant %v, key %v, usage %v: all must be built", gw.Tenants(), gw.Keys(), gw.Usage())
 	}
-	want := []string{"request_id", "usage", "timeout", "identity", "access", "quota", "stream_lifecycle", "model_policy", "retry", "provider_call"}
+	want := []string{"request_id", "telemetry", "usage", "timeout", "identity", "access", "quota", "stream_lifecycle", "model_policy", "retry", "provider_call"}
 	if got := stageNames(gw); !slices.Equal(got, want) {
 		t.Fatalf("stages %v, want %v", got, want)
 	}
@@ -227,5 +231,90 @@ func TestShutdownWithACustomPipelineIsClean(t *testing.T) {
 	}
 	if err := gw.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown: %v", err)
+	}
+}
+
+// wrappable is a provider that owns an HTTP transport the gateway may wrap.
+type wrappable struct {
+	*fakeProvider
+	wraps int
+	rt    http.RoundTripper
+}
+
+func (w *wrappable) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) {
+	w.wraps++
+	if rt := wrap(w.rt); rt != nil {
+		w.rt = rt
+	}
+}
+
+// seenTransport records what each request it carries looked like.
+type seenTransport struct {
+	calls   int
+	baggage int
+	traced  bool
+}
+
+func (s *seenTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	s.calls++
+	s.baggage = baggage.FromContext(r.Context()).Len()
+	s.traced = trace.SpanContextFromContext(r.Context()).IsValid()
+	return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody, Request: r}, nil
+}
+
+func TestProviderTransportsAreWrappedOnceAtInitialize(t *testing.T) {
+	p := &wrappable{fakeProvider: &fakeProvider{name: "openai"}}
+	seen := &seenTransport{}
+	gw := nexus.New(nexus.WithProvider(p), nexus.WithProviderTransport(func(http.RoundTripper) http.RoundTripper { return seen }))
+	for range 2 {
+		if err := gw.Initialize(context.Background()); err != nil {
+			t.Fatalf("initialize: %v", err)
+		}
+	}
+	if p.wraps != 1 || p.rt == nil {
+		t.Fatalf("wrapped %d times, transport %v; want once", p.wraps, p.rt)
+	}
+
+	// The wrapper runs behind a transport that drops the client's baggage
+	// and keeps the trace, so a traced transport never forwards baggage to a
+	// third-party provider, whatever context the call runs on.
+	member, err := baggage.NewMember("user", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bag, err := baggage.New(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := trace.ContextWithSpanContext(baggage.ContextWithBaggage(context.Background(), bag),
+		trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{1}}))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://provider.invalid/models", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := p.rt.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	_ = resp.Body.Close()
+	if seen.calls != 1 || seen.baggage != 0 || !seen.traced {
+		t.Fatalf("wrapper saw %d calls, %d baggage members, traced %v; want 1, 0, true", seen.calls, seen.baggage, seen.traced)
+	}
+
+	// A nil from the wrapper leaves the transport alone, and without the
+	// option nothing is wrapped.
+	q := &wrappable{fakeProvider: &fakeProvider{name: "openai"}}
+	if err := nexus.New(nexus.WithProvider(q), nexus.WithProviderTransport(func(http.RoundTripper) http.RoundTripper { return nil })).Initialize(context.Background()); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	if q.rt != nil {
+		t.Fatalf("a nil wrapper result replaced the transport with %T", q.rt)
+	}
+	r := &wrappable{fakeProvider: &fakeProvider{name: "openai"}}
+	if err := nexus.New(nexus.WithProvider(r)).Initialize(context.Background()); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	if r.wraps != 0 {
+		t.Fatalf("wrapped %d times without WithProviderTransport", r.wraps)
 	}
 }

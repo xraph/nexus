@@ -1,33 +1,119 @@
 ---
 title: Observability
-description: Counters, tracing and usage records for your AI gateway.
+description: OpenTelemetry spans, GenAI metrics, counters and usage records for your AI gateway.
 ---
 
-## Metrics Extension
+## Turning it on
 
-The built-in metrics extension keeps an atomic counter per lifecycle event:
+In a Forge app you don't do anything. The [Forge extension](/docs/guides/forge-extension) hands the gateway your app's metrics and wraps every provider's HTTP client in forge's traced transport, and `forge.New` installs the tracer provider the spans go to. A chat request then traces like this:
 
-```go
-import "github.com/xraph/nexus/observability"
-
-metrics := observability.NewMetricsExtension()
-gw := nexus.New(
-    nexus.WithExtension(metrics),
-)
-
-// Read counters
-metrics.StreamsCompleted.Value() // int64
-metrics.KeysCreated.Value()
-metrics.BudgetExceeded.Value()
+```text
+POST /v1/chat/completions             forge's server span
+└─ serve completion                   the pipeline
+   ├─ check guardrails                input phase, with WithGuard
+   ├─ look up cache                   with WithCache
+   ├─ chat gpt-4o                     one per attempt, a client span
+   │  └─ HTTP POST                    the call to the provider
+   └─ store usage record              runs after the response, same trace
+      └─ INSERT nexus_usage_records   grove's db.client span
 ```
 
-The counters are `RequestsReceived`, `RequestsCompleted`, `RequestsFailed`, `RequestsCached`, `ProviderFailures`, `CircuitOpens`, `Fallbacks`, `GuardrailBlocks`, `GuardrailRedacts`, `TenantsCreated`, `TenantsDisabled`, `KeysCreated`, `KeysRevoked`, `BudgetWarnings`, `BudgetExceeded`, `StreamsStarted`, `StreamsCompleted`, `StreamsFailed`, `ChunksEmitted` and `ChunkBytes`.
+Outside Forge, two options do what the extension does:
 
-The request, provider and guardrail counters stay at zero today, because their hooks don't fire (see [Plugins](/docs/infrastructure/plugins#lifecycle-hooks)). The counters are in-process values. Nothing exports them to Prometheus or a Forge metrics backend for you.
+```go
+gw := nexus.New(
+    nexus.WithMetrics(myMetrics), // a github.com/xraph/go-utils/metrics sink
+    nexus.WithProviderTransport(func(rt http.RoundTripper) http.RoundTripper {
+        return otelhttp.NewTransport(rt) // or any wrapper you like
+    }),
+)
+```
 
-## Tracing
+Spans need no option. They go to the global OpenTelemetry tracer provider, so install one with `otel.SetTracerProvider` and they show up; without one every span is a no-op. Metrics are never recorded on `otel.Meter`. A Forge app installs no global MeterProvider, so they go to the sink you pass to `WithMetrics`, and a nil sink records nothing.
 
-`nexus.WithTracer(t)` adds a tracing stage at priority 10. `t` implements `observability.Tracer`, so to use OpenTelemetry you write a small adapter around your OTel tracer:
+`WithProviderTransport` wraps the transport of every registered provider that implements `provider.TransportWrapper`, once, when the gateway initializes. All 30 HTTP providers in `providers/` do. `geminilive` and `openairealtime` talk over WebSockets and don't. A provider you register after `Initialize` isn't wrapped.
+
+To turn either off in a Forge app, pass `nexus.WithMetrics(nil)` or `nexus.WithProviderTransport(nil)` through `nexusext.WithGatewayOption`. Your options run after the extension's, so they win.
+
+## Spans
+
+Every span is on the instrumentation scope `github.com/xraph/nexus`.
+
+| Span | Kind | Started by | Attributes |
+| --- | --- | --- | --- |
+| `serve completion`, `serve stream`, `serve embedding` | Internal | the telemetry stage, priority 10 | `nexus.request.type`, `nexus.request.id`, `nexus.tenant.id`, `nexus.provider.name`, `nexus.cache.hit`, `nexus.outcome`, `nexus.refusal.code`, and `nexus.guardrail.name` with `nexus.guardrail.phase` on a block |
+| `chat {model}`, `embeddings {model}` | Client | the provider call, once per attempt | `gen_ai.operation.name`, `gen_ai.provider.name`, `nexus.provider.name`, `nexus.request.type`, `gen_ai.request.model`, `gen_ai.request.max_tokens`, `gen_ai.request.temperature`, `gen_ai.request.top_p`, `gen_ai.response.id`, `gen_ai.response.model`, `gen_ai.response.finish_reasons`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, and a `first chunk` event on a stream |
+| `check guardrails` | Internal | the guardrail stage, once per phase | `nexus.guardrail.phase`, `nexus.guardrail.blocked`, `nexus.guardrail.modified`, and `nexus.guardrail.name` on a block |
+| `look up cache` | Internal | the cache stage | `nexus.cache.kind` (`response` or `stream`), `nexus.cache.hit` |
+| `store usage record` | Internal | the usage stage, after the request | `nexus.usage.outcome`, `nexus.usage.pricing_status` |
+| `run batch job` | Internal | `batch.Service`, a root span per job linked to the span that created it | `nexus.batch.job.id`, `nexus.batch.items`, `nexus.batch.failed`, `nexus.batch.status` |
+
+- A stream's `serve stream` span ends when the stream is closed, and its `chat` span ends at the last chunk. Both cover the whole stream, not just the handshake.
+- The provider span follows the [OpenTelemetry GenAI conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/). `gen_ai.provider.name` uses the names they list where one exists: `bedrock` is `aws.bedrock`, `azureopenai` is `azure.ai.openai`, `gemini` is `gcp.gemini`, `vertex` is `gcp.vertex_ai`, `mistral` is `mistral_ai` and `xai` is `x_ai`. Every other provider keeps its Nexus name, which `nexus.provider.name` always carries.
+- A model is only named when the provider that served it lists it in `Models()`. A client can send any string as the model, so an unlisted one is left off the span, and the span is called just `chat` or `embeddings`.
+- `nexus.outcome` is `ok`, `cached`, `blocked`, `refused` or `error`, the same as the usage record. A refusal or a block is an outcome, not a failure. Only `error` sets the span's status. A client that disconnects in the middle of a stream is usually recorded as `ok`, just like its usage record: the HTTP edge closes the stream without reading the error the disconnect causes.
+- A failure sets `error.type`, an `exception` event carrying only `exception.type`, and an error status. The type is `context.DeadlineExceeded`, `context.Canceled`, or the Go type of the innermost error. The error's text never goes on a span, because provider replies and store errors can quote a prompt.
+- No span Nexus starts carries a prompt, a completion, tool arguments, a guard's reason, a key or a user id. `nexus.tenant.id` is only set when the tenant id parses as one.
+- Most provider API errors show up as `*errors.errorString`. The providers build those errors with `fmt.Errorf` and don't wrap anything, so the type can't tell a 429 from a 500; the provider's status is in your logs.
+- Work that runs after the request (the usage insert, the TPM charge, the stream cache write) starts from a fresh context that carries only the request's span context. It isn't canceled with the request, and it lands in the request's trace on purpose. A request with no trace gets no `store usage record` span. A batch job is the other way round: it outlives its request by minutes, so it starts its own trace and links back.
+- The provider is called on a context with the client's baggage removed, and the gateway drops it again in front of the transport wrapper, so a client's baggage (which often names a user or a tenant) never reaches a provider, health checks included. The W3C trace context does go out. Hosted APIs ignore it, and a model server you run yourself can join the trace with it.
+- The outbound HTTP span comes from forge's transport (otelhttp), not from Nexus, and it carries `url.full`. For gemini, vertex and bedrock the URL path holds the model the client asked for, whatever it was, and a Bedrock model ARN includes your AWS account id.
+
+<Callout type="warn">
+A base URL you configure, for `opencompat` or through any provider's `WithBaseURL`, lands in `url.full` exactly as written. Never put a key or a token in its path or query string. Give the provider its credentials the provider's own way.
+</Callout>
+
+## Metrics
+
+Forge exports a metric name outside its semconv namespaces with its own `forge_` prefix and no unit suffix. That applies to the two GenAI metrics too, so `gen_ai.client.operation.duration` scrapes as `forge_gen_ai_client_operation_duration`, without `_seconds`. Dots in label keys become underscores.
+
+| Scraped name | Type | Labels |
+| --- | --- | --- |
+| `forge_gen_ai_client_operation_duration` | histogram, seconds | `gen_ai_operation_name`, `gen_ai_provider_name`, `gen_ai_request_model`, `error_type` |
+| `forge_gen_ai_client_token_usage` | histogram, tokens | `gen_ai_operation_name`, `gen_ai_provider_name`, `gen_ai_request_model`, `gen_ai_token_type` |
+| `forge_nexus_stream_time_to_first_chunk_seconds` | histogram | `gen_ai_provider_name`, `gen_ai_request_model` |
+| `forge_nexus_requests_total` | counter | `type`, `outcome`, `code` |
+| `forge_nexus_guardrail_blocks_total` | counter | `phase`, `guard` |
+| `forge_nexus_cache_lookups_total` | counter | `kind`, `result` |
+| `forge_nexus_usage_insert_errors_total` | counter | none |
+| `forge_nexus_limiter_errors_total` | counter | none |
+
+The label values:
+
+- `gen_ai_operation_name`: `chat` or `embeddings`.
+- `gen_ai_provider_name`: the provider's GenAI name, as on the span. Bounded by the providers you register.
+- `gen_ai_request_model`: the model when its provider lists it, otherwise `other`.
+- `error_type`: empty on success, otherwise the error type described above.
+- `gen_ai_token_type`: `input` or `output`. An embedding only has `input`.
+- `type`: `completion`, `stream` or `embedding`.
+- `outcome`: `ok`, `cached`, `blocked`, `refused` or `error`.
+- `code`: empty, or one of `unauthenticated`, `forbidden`, `invalid_request`, `rate_limited`, `quota_exceeded`, `budget_exceeded`, `unavailable` and `content_blocked`. A code from a stage of your own is `other`. A stream cut by its tenant's limit is `error` with `quota_exceeded`, because it was served in part.
+- `phase`: `input` or `output`. `guard`: `pii`, `injection`, `content_filter` or `shield` for the built-in guards, and `custom` for any guard of your own (its real name is on the `check guardrails` span).
+- `kind`: `response` or `stream`. `result`: `hit`, `miss` or `error`.
+
+The duration histogram uses the bounds the GenAI conventions advise, from 10ms to about 82s, and it times a stream until its last chunk. That matters for SSE, since forge's own `http_server_request_duration_seconds` only times the handshake on a long-lived route. Time to first chunk runs from the provider call to the first chunk that isn't a heartbeat, with bounds from 25ms to 60s. Tenant, key and request ids never become labels, and neither does a model name the provider doesn't list.
+
+`forge_nexus_usage_insert_errors_total` and `forge_nexus_limiter_errors_total` count the same failures `gw.UsageInsertErrors()` and `gw.LimiterErrors()` report. Alert on the first one: every increment is a request with no usage record, so it's missing from budgets and billing.
+
+Some PromQL to start from:
+
+```text
+# p95 provider latency by provider
+histogram_quantile(0.95, sum by (le, gen_ai_provider_name) (rate(forge_gen_ai_client_operation_duration_bucket{gen_ai_operation_name="chat"}[5m])))
+
+# p95 time to first chunk
+histogram_quantile(0.95, sum by (le, gen_ai_provider_name) (rate(forge_nexus_stream_time_to_first_chunk_seconds_bucket[5m])))
+
+# output tokens a minute by model
+sum by (gen_ai_request_model) (rate(forge_gen_ai_client_token_usage_sum{gen_ai_token_type="output"}[5m])) * 60
+
+# share of requests refused or blocked
+sum(rate(forge_nexus_requests_total{outcome=~"refused|blocked"}[5m])) / sum(rate(forge_nexus_requests_total[5m]))
+```
+
+## A tracer of your own
+
+`nexus.WithTracer(t)` adds a second stage at priority 10 that reports each request to `t`, an `observability.Tracer`. It's for a tracer that isn't OpenTelemetry. If yours bridges to OpenTelemetry you'll see each request twice, once as `serve ...` and once as `nexus.request`.
 
 ```go
 type Tracer interface {
@@ -40,18 +126,25 @@ type SpanFinisher interface {
 }
 ```
 
-Each request gets one span, `nexus.request`, with these attributes:
+Each request gets one span, `nexus.request`, with `nexus.request.type`, `nexus.request.model`, `nexus.request.id` and `nexus.tenant.id` when it starts, and `nexus.request.duration_ms`, `nexus.provider.name`, `nexus.tokens.input` and `nexus.tokens.output` when it ends. `nexus.request.model` is the model the client asked for, whatever it was. `observability.NoopTracer` does nothing.
 
-- `nexus.request.type`, `nexus.request.model`, `nexus.request.id` and `nexus.tenant.id` when it starts
-- `nexus.request.duration_ms` and `nexus.provider.name` when it ends
-- `nexus.tokens.input` and `nexus.tokens.output` for a non-streamed completion
+## Metrics extension
 
-The span is finished with the request's error, if any. `observability.NoopTracer` does nothing. The stage runs before the identity stage, so `nexus.tenant.id` is only set when the HTTP edge (or your own code) put the tenant in the context.
+`observability.NewMetricsExtension()` is a plugin that keeps an atomic counter per lifecycle event, in the process:
+
+```go
+metrics := observability.NewMetricsExtension()
+gw := nexus.New(nexus.WithExtension(metrics))
+
+metrics.StreamsCompleted.Value() // int64
+```
+
+The counters are `RequestsReceived`, `RequestsCompleted`, `RequestsFailed`, `RequestsCached`, `ProviderFailures`, `CircuitOpens`, `Fallbacks`, `GuardrailBlocks`, `GuardrailRedacts`, `TenantsCreated`, `TenantsDisabled`, `KeysCreated`, `KeysRevoked`, `BudgetWarnings`, `BudgetExceeded`, `StreamsStarted`, `StreamsCompleted`, `StreamsFailed`, `ChunksEmitted` and `ChunkBytes`. The request, provider and guardrail counters stay at zero, because their hooks don't fire (see [Plugins](/docs/infrastructure/plugins#lifecycle-hooks)). Nothing exports these counters. For something you can scrape, use the metrics above.
 
 ## Usage records
 
-The most complete record of what happened is the usage store. The usage stage writes one record per request: the request id, tenant and key, model and provider, tokens, exact cost, latency, cache hit and outcome (including refusals and guardrail blocks). Query it with `gw.Usage()`, or over the admin API at `/admin/usage`.
+The most complete record of what happened is still the usage store. The usage stage writes one record per request: the request id, tenant and key, model and provider, tokens, exact cost, latency, cache hit and outcome (including refusals and guardrail blocks). Query it with `gw.Usage()`, or over the admin API at `/admin/usage`.
 
-## Response Headers
+## Response headers
 
 The gateway does not set diagnostic response headers. The request id, the provider that served the request, whether it was a cache hit, and the latency are all on the usage record for that request.
