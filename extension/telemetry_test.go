@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/baggage"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
@@ -57,7 +59,18 @@ func (p *httpProvider) CompleteStream(context.Context, *provider.CompletionReque
 func (p *httpProvider) Embed(context.Context, *provider.EmbeddingRequest) (*provider.EmbeddingResponse, error) {
 	return nil, provider.ErrNotSupported
 }
-func (p *httpProvider) Healthy(context.Context) bool { return true }
+func (p *httpProvider) Healthy(ctx context.Context) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.url, http.NoBody)
+	if err != nil {
+		return false
+	}
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return true
+}
 func (p *httpProvider) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) {
 	p.client.Transport = wrap(p.client.Transport)
 }
@@ -90,8 +103,17 @@ func TestExtensionWiresTelemetryIntoForge(t *testing.T) {
 		t.Fatalf("RegisterSpanProcessor: %v", err)
 	}
 
+	// Propagate baggage as well as the trace, the way forge's defaults do, so
+	// the test would see a Baggage header if the gateway let one through.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+
 	var upstreamTrace trace.SpanContext
+	var upstreamBaggage []string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamBaggage = append(upstreamBaggage, r.Header.Get("Baggage"))
+		if r.Method == http.MethodGet {
+			return // the health check
+		}
 		upstreamTrace = trace.SpanContextFromContext(otel.GetTextMapPropagator().Extract(r.Context(), propagationCarrier(r.Header)))
 		_ = json.NewEncoder(w).Encode(provider.CompletionResponse{
 			ID: "chatcmpl-1", Model: "gpt-4o",
@@ -120,14 +142,36 @@ func TestExtensionWiresTelemetryIntoForge(t *testing.T) {
 		t.Fatalf("create key: %v", err)
 	}
 
-	ctx, server := forge.StartSpan(t.Context(), "POST /v1/chat/completions", trace.WithSpanKind(trace.SpanKindServer))
+	// The client sent baggage that names its user; the server middleware has
+	// put it on the request context.
+	member, err := baggage.NewMember("user.id", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bag, err := baggage.New(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, server := forge.StartSpan(baggage.ContextWithBaggage(t.Context(), bag), "POST /v1/chat/completions", trace.WithSpanKind(trace.SpanKindServer))
 	if _, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{
 		Model: "gpt-4o", TenantID: tn.ID.String(), KeyID: k.ID.String(),
 		Messages: []provider.Message{{Role: "user", Content: "alice@example.com"}},
 	}); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
+	// A health check runs on an admin request's context, outside the pipeline.
+	for _, p := range gw.Providers().All() {
+		p.Healthy(ctx)
+	}
 	server.End()
+	if len(upstreamBaggage) != 2 {
+		t.Fatalf("upstream saw %d requests, want the completion and the health check", len(upstreamBaggage))
+	}
+	for i, b := range upstreamBaggage {
+		if b != "" {
+			t.Errorf("request %d to the provider carried Baggage %q", i, b)
+		}
+	}
 	if err := gw.FlushUsage(context.Background()); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
@@ -139,7 +183,7 @@ func TestExtensionWiresTelemetryIntoForge(t *testing.T) {
 	for _, s := range rec.Ended() {
 		byName[s.Name()] = s.SpanContext()
 		parents[s.Name()] = s.Parent().SpanID()
-		if strings.Contains(s.InstrumentationScope().Name, "otelhttp") && s.SpanKind() == trace.SpanKindClient {
+		if strings.Contains(s.InstrumentationScope().Name, "otelhttp") && s.SpanKind() == trace.SpanKindClient && s.Name() == "HTTP POST" {
 			httpSpan = s.Name()
 		}
 	}

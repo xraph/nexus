@@ -23,6 +23,8 @@ import (
 	"slices"
 	"time"
 
+	"go.opentelemetry.io/otel/baggage"
+
 	gometrics "github.com/xraph/go-utils/metrics"
 
 	"github.com/xraph/nexus/auth"
@@ -330,16 +332,37 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 }
 
 // wrapProviderTransports hands each registered provider that owns an HTTP
-// client the wrapper from WithProviderTransport.
+// client the wrapper from WithProviderTransport. Whatever the wrapper
+// returns runs behind a transport that drops the request's baggage first, so
+// a traced transport never injects a client's baggage (user or tenant ids,
+// often) into a call to a third-party provider: not on a completion, and not
+// on a health check that runs on an admin request's context either.
 func (gw *Gateway) wrapProviderTransports() {
 	if gw.providerTransport == nil {
 		return
 	}
+	wrap := func(rt http.RoundTripper) http.RoundTripper {
+		if w := gw.providerTransport(rt); w != nil {
+			return withoutBaggage{next: w}
+		}
+		return nil
+	}
 	for _, p := range gw.providers.All() {
 		if w, ok := p.(provider.TransportWrapper); ok {
-			w.WrapTransport(gw.providerTransport)
+			w.WrapTransport(wrap)
 		}
 	}
+}
+
+// withoutBaggage removes the OpenTelemetry baggage from each request's
+// context before next sees it. The trace context stays.
+type withoutBaggage struct{ next http.RoundTripper }
+
+func (t withoutBaggage) RoundTrip(r *http.Request) (*http.Response, error) {
+	if baggage.FromContext(r.Context()).Len() > 0 {
+		r = r.WithContext(baggage.ContextWithoutBaggage(r.Context()))
+	}
+	return t.next.RoundTrip(r)
 }
 
 // Mount registers Nexus HTTP handlers on the given router.

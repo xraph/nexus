@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/trace"
 
 	gometrics "github.com/xraph/go-utils/metrics"
@@ -72,6 +73,12 @@ type genAICall struct {
 // startGenAICall starts the span for a call to p. The span is a client span
 // named "{operation} {model}", or just the operation when p does not list the
 // model.
+//
+// The returned context, which the provider is called with, carries no
+// baggage. Baggage arrives from the client (forge's server middleware
+// extracts it) and often holds user or tenant ids; a traced transport would
+// otherwise inject it into the request to a third-party provider. The trace
+// context still goes, so a provider that traces can join the trace.
 func (m *ProviderCallMiddleware) startGenAICall(ctx context.Context, op string, p provider.Provider, reqType pipeline.RequestType, requested string, attrs ...attribute.KeyValue) (context.Context, *genAICall) {
 	c := &genAICall{
 		metrics:   m.metrics,
@@ -94,7 +101,7 @@ func (m *ProviderCallMiddleware) startGenAICall(ctx context.Context, op string, 
 		name = op + " " + requested
 		attrs = append(attrs, telemetry.GenAIRequestModel.String(requested))
 	}
-	ctx, c.span = telemetry.Tracer().Start(ctx, name, //nolint:spancheck // ended by genAICall.end
+	ctx, c.span = telemetry.Tracer().Start(baggage.ContextWithoutBaggage(ctx), name, //nolint:spancheck // ended by genAICall.end
 		trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attrs...))
 	return ctx, c
 }

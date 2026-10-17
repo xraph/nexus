@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
@@ -44,6 +45,7 @@ type chatFake struct {
 	mu      sync.Mutex
 	chunks  []*provider.StreamChunk
 	gotSpan trace.SpanContext
+	baggage int // members of the baggage the provider was called with
 }
 
 func (f *chatFake) Complete(ctx context.Context, _ *provider.CompletionRequest) (*provider.CompletionResponse, error) {
@@ -51,6 +53,7 @@ func (f *chatFake) Complete(ctx context.Context, _ *provider.CompletionRequest) 
 	f.calls++
 	n := f.calls
 	f.gotSpan = trace.SpanContextFromContext(ctx)
+	f.baggage = baggage.FromContext(ctx).Len()
 	f.mu.Unlock()
 	if f.err != nil && n <= f.failN {
 		return nil, f.err
@@ -614,4 +617,30 @@ func TestEverySeriesOfAMetricHasTheSameLabelKeys(t *testing.T) {
 
 func labelKeys(m map[string]string) string {
 	return strings.Join(slices.Sorted(maps.Keys(m)), ",")
+}
+
+func TestTheProviderIsCalledWithoutTheClientsBaggage(t *testing.T) {
+	telemetrytest.Spans(t)
+	p := newChatFake()
+	svc := build(t, telemetrytest.NewSink(), p)
+	member, err := baggage.NewMember("user", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bag, err := baggage.New(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, server := parent(t)
+	ctx = baggage.ContextWithBaggage(ctx, bag)
+	if _, err := svc.Execute(ctx, chatRequest("gpt-4o")); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	server.End()
+	if p.baggage != 0 {
+		t.Fatalf("the provider was called with %d baggage members, want none", p.baggage)
+	}
+	if !p.gotSpan.IsValid() {
+		t.Fatal("the provider lost the trace context along with the baggage")
+	}
 }
