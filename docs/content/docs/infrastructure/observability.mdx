@@ -51,11 +51,17 @@ Every span is on the instrumentation scope `github.com/xraph/nexus`.
 - A stream's `serve stream` span ends when the stream is closed, and its `chat` span ends at the last chunk. Both cover the whole stream, not just the handshake.
 - The provider span follows the [OpenTelemetry GenAI conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/). `gen_ai.provider.name` uses the names they list where one exists: `bedrock` is `aws.bedrock`, `azureopenai` is `azure.ai.openai`, `gemini` is `gcp.gemini`, `vertex` is `gcp.vertex_ai`, `mistral` is `mistral_ai` and `xai` is `x_ai`. Every other provider keeps its Nexus name, which `nexus.provider.name` always carries.
 - A model is only named when the provider that served it lists it in `Models()`. A client can send any string as the model, so an unlisted one is left off the span, and the span is called just `chat` or `embeddings`.
-- `nexus.outcome` is `ok`, `cached`, `blocked`, `refused` or `error`, the same as the usage record. A refusal or a block is an outcome, not a failure. Only `error` sets the span's status.
+- `nexus.outcome` is `ok`, `cached`, `blocked`, `refused` or `error`, the same as the usage record. A refusal or a block is an outcome, not a failure. Only `error` sets the span's status. A client that disconnects in the middle of a stream is usually recorded as `ok`, just like its usage record: the HTTP edge closes the stream without reading the error the disconnect causes.
 - A failure sets `error.type`, an `exception` event carrying only `exception.type`, and an error status. The type is `context.DeadlineExceeded`, `context.Canceled`, or the Go type of the innermost error. The error's text never goes on a span, because provider replies and store errors can quote a prompt.
-- No span carries a prompt, a completion, tool arguments, a guard's reason, a key or a user id.
+- No span Nexus starts carries a prompt, a completion, tool arguments, a guard's reason, a key or a user id. `nexus.tenant.id` is only set when the tenant id parses as one.
+- Most provider API errors show up as `*errors.errorString`. The providers build those errors with `fmt.Errorf` and don't wrap anything, so the type can't tell a 429 from a 500; the provider's status is in your logs.
 - Work that runs after the request (the usage insert, the TPM charge, the stream cache write) starts from a fresh context that carries only the request's span context. It isn't canceled with the request, and it lands in the request's trace on purpose. A request with no trace gets no `store usage record` span. A batch job is the other way round: it outlives its request by minutes, so it starts its own trace and links back.
-- The outbound HTTP span comes from forge's transport (otelhttp), not from Nexus. It carries `url.full`, and for gemini, vertex and bedrock the URL path holds the model the client asked for.
+- The provider is called on a context with the client's baggage removed, and the gateway drops it again in front of the transport wrapper, so a client's baggage (which often names a user or a tenant) never reaches a provider, health checks included. The W3C trace context does go out. Hosted APIs ignore it, and a model server you run yourself can join the trace with it.
+- The outbound HTTP span comes from forge's transport (otelhttp), not from Nexus, and it carries `url.full`. For gemini, vertex and bedrock the URL path holds the model the client asked for, whatever it was, and a Bedrock model ARN includes your AWS account id.
+
+<Callout type="warn">
+A base URL you configure, for `opencompat` or through any provider's `WithBaseURL`, lands in `url.full` exactly as written. Never put a key or a token in its path or query string. Give the provider its credentials the provider's own way.
+</Callout>
 
 ## Metrics
 
@@ -82,7 +88,7 @@ The label values:
 - `type`: `completion`, `stream` or `embedding`.
 - `outcome`: `ok`, `cached`, `blocked`, `refused` or `error`.
 - `code`: empty, or one of `unauthenticated`, `forbidden`, `invalid_request`, `rate_limited`, `quota_exceeded`, `budget_exceeded`, `unavailable` and `content_blocked`. A code from a stage of your own is `other`. A stream cut by its tenant's limit is `error` with `quota_exceeded`, because it was served in part.
-- `phase`: `input` or `output`. `guard`: the name of the guard that blocked, from your own configuration.
+- `phase`: `input` or `output`. `guard`: `pii`, `injection`, `content_filter` or `shield` for the built-in guards, and `custom` for any guard of your own (its real name is on the `check guardrails` span).
 - `kind`: `response` or `stream`. `result`: `hit`, `miss` or `error`.
 
 The duration histogram uses the bounds the GenAI conventions advise, from 10ms to about 82s, and it times a stream until its last chunk. That matters for SSE, since forge's own `http_server_request_duration_seconds` only times the handshake on a long-lived route. Time to first chunk runs from the provider call to the first chunk that isn't a heartbeat, with bounds from 25ms to 60s. Tenant, key and request ids never become labels, and neither does a model name the provider doesn't list.
