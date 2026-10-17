@@ -25,7 +25,7 @@ require (
 	github.com/xraph/nexus/providers/novita v1.7.1
 	github.com/xraph/nexus/providers/nvidia v1.7.1
 	github.com/xraph/nexus/providers/ollama v1.7.1
-	github.com/xraph/nexus/providers/openai v1.7.1
+	github.com/xraph/nexus/providers/openai v1.8.0
 	github.com/xraph/nexus/providers/opencompat v1.7.1
 	github.com/xraph/nexus/providers/openrouter v1.7.1
 	github.com/xraph/nexus/providers/perplexity v1.7.1
