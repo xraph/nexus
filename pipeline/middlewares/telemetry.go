@@ -13,6 +13,7 @@ import (
 	gometrics "github.com/xraph/go-utils/metrics"
 
 	"github.com/xraph/nexus/guard"
+	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/internal/telemetry"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/provider"
@@ -39,6 +40,17 @@ var knownCodes = map[string]bool{
 	pipeline.CodeBudgetExceeded:  true,
 	pipeline.CodeUnavailable:     true,
 	pipeline.CodeContentBlocked:  true,
+}
+
+// builtinGuards are the guards whose names a metric label may carry. Any
+// other guard's name is the caller's own string, so the label says "custom".
+var builtinGuards = map[string]bool{"pii": true, "injection": true, "content_filter": true, "shield": true}
+
+func guardLabel(name string) string {
+	if builtinGuards[name] {
+		return name
+	}
+	return "custom"
 }
 
 // TelemetryMiddleware traces each request through the pipeline and counts
@@ -91,7 +103,7 @@ func (m *TelemetryMiddleware) Process(ctx context.Context, req *pipeline.Request
 
 	resp, err := next(ctx)
 	if err == nil && resp != nil && resp.Stream != nil {
-		resp.Stream = &telemetryStream{inner: resp.Stream, mw: m, ctx: ctx, span: span, req: req}
+		resp.Stream = newTelemetryStream(ctx, resp.Stream, m, span, req)
 		return resp, nil
 	}
 	o := classifyRequest(req, err)
@@ -173,12 +185,15 @@ func (m *TelemetryMiddleware) finish(ctx context.Context, span trace.Span, req *
 		if p := stateString(req, pipeline.StateProviderName); p != "" {
 			attrs = append(attrs, telemetry.ProviderName.String(p))
 		}
+		// The edge's tenant wins over the request's, as in the usage record,
+		// and only a well-formed tenant id goes on the span: an in-process
+		// caller can put anything in the request.
 		tenant, _ := requestIdentity(req)
 		if t := pipeline.TenantID(ctx); t != "" {
 			tenant = t
 		}
-		if tenant != "" {
-			attrs = append(attrs, telemetry.TenantID.String(tenant))
+		if tid, parseErr := id.ParseTenantID(tenant); parseErr == nil {
+			attrs = append(attrs, telemetry.TenantID.String(tid.String()))
 		}
 		span.SetAttributes(attrs...)
 	}
@@ -189,8 +204,29 @@ func (m *TelemetryMiddleware) finish(ctx context.Context, span trace.Span, req *
 
 	m.requests.Inc(string(req.Type), o.outcome, o.code)
 	if o.blocked != nil {
-		m.blocks.Inc(string(o.blocked.Phase), o.blocked.Guard)
+		m.blocks.Inc(string(o.blocked.Phase), guardLabel(o.blocked.Guard))
 	}
+}
+
+// newTelemetryStream wraps the pipeline's stream so the request's span ends
+// with it. A bidirectional stream keeps its Send.
+func newTelemetryStream(ctx context.Context, inner provider.Stream, mw *TelemetryMiddleware, span trace.Span, req *pipeline.Request) provider.Stream {
+	s := &telemetryStream{inner: inner, mw: mw, ctx: ctx, span: span, req: req}
+	if bi, ok := inner.(provider.BiStream); ok {
+		return &telemetryBiStream{telemetryStream: s, bi: bi}
+	}
+	return s
+}
+
+// telemetryBiStream is a telemetryStream over a provider.BiStream.
+type telemetryBiStream struct {
+	*telemetryStream
+	bi provider.BiStream
+}
+
+// Send forwards a client event upstream.
+func (s *telemetryBiStream) Send(ctx context.Context, evt provider.ClientEvent) error {
+	return s.bi.Send(ctx, evt)
 }
 
 // telemetryStream ends the request's span when the stream is closed, with

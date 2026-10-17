@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	gometrics "github.com/xraph/go-utils/metrics"
@@ -83,11 +84,21 @@ const (
 	cacheKindStream   = "stream"
 )
 
-// startLookup starts the span for one cache lookup.
-func startLookup(ctx context.Context, kind string) (context.Context, trace.Span) {
-	return telemetry.Tracer().Start(ctx, "look up cache", //nolint:spancheck // ended by endLookup
+// lookup runs get under a "look up cache" span and counts it. get reports
+// whether it hit. A store that panics still ends the span.
+func (m *CacheMiddleware) lookup(ctx context.Context, kind string, get func(context.Context) (bool, error)) {
+	ctx, span := telemetry.Tracer().Start(ctx, "look up cache",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(telemetry.CacheKind.String(kind)))
+	defer func() {
+		if r := recover(); r != nil {
+			span.SetStatus(codes.Error, "panic")
+			span.End()
+			panic(r)
+		}
+	}()
+	hit, err := get(ctx)
+	m.endLookup(span, kind, hit, err)
 }
 
 // endLookup ends a lookup's span and counts it. A miss is (nil, nil) from
@@ -137,9 +148,12 @@ func (m *CacheMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	// Check cache
 	// The store may hand every caller the same object, so a hit gets its own
 	// copy before anything marks or redacts it.
-	lookupCtx, span := startLookup(ctx, cacheKindResponse)
-	cached, err := m.cache.Get(lookupCtx, key)
-	m.endLookup(span, cacheKindResponse, err == nil && cached != nil, err)
+	var cached *provider.CompletionResponse
+	var err error
+	m.lookup(ctx, cacheKindResponse, func(lctx context.Context) (bool, error) {
+		cached, err = m.cache.Get(lctx, key)
+		return err == nil && cached != nil, err
+	})
 	if err == nil && cached != nil {
 		hit := copyCompletion(cached)
 		hit.Cached = true
@@ -203,9 +217,12 @@ func (m *CacheMiddleware) handleStream(ctx context.Context, req *pipeline.Reques
 	key := cache.StreamKey(keyReq)
 
 	// Cache hit: replay stored frames as a synthesized stream.
-	lookupCtx, span := startLookup(ctx, cacheKindStream)
-	frames, err := m.streamCache.GetStream(lookupCtx, key)
-	m.endLookup(span, cacheKindStream, err == nil && len(frames) > 0, err)
+	var frames []cache.StreamFrame
+	var err error
+	m.lookup(ctx, cacheKindStream, func(lctx context.Context) (bool, error) {
+		frames, err = m.streamCache.GetStream(lctx, key)
+		return err == nil && len(frames) > 0, err
+	})
 	if err == nil && len(frames) > 0 {
 		req.State[pipeline.StateCacheHit] = true
 		return &pipeline.Response{Stream: newReplayStream(frames, m.streamOpts)}, nil

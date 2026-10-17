@@ -30,6 +30,9 @@ import (
 	"github.com/xraph/nexus/testutil"
 )
 
+// tenantID is a well-formed tenant id; only those go on a span.
+var tenantID = id.NewTenantID().String()
+
 // leak is a value that must never reach a span: it stands for an email in a
 // prompt, a tenant's metadata, a guard's reason or a provider's error text.
 const leak = "alice@example.com"
@@ -46,6 +49,8 @@ type chatFake struct {
 	chunks  []*provider.StreamChunk
 	gotSpan trace.SpanContext
 	baggage int // members of the baggage the provider was called with
+	panics  bool
+	stream  provider.Stream
 }
 
 func (f *chatFake) Complete(ctx context.Context, _ *provider.CompletionRequest) (*provider.CompletionResponse, error) {
@@ -55,6 +60,9 @@ func (f *chatFake) Complete(ctx context.Context, _ *provider.CompletionRequest) 
 	f.gotSpan = trace.SpanContextFromContext(ctx)
 	f.baggage = baggage.FromContext(ctx).Len()
 	f.mu.Unlock()
+	if f.panics {
+		panic("provider bug")
+	}
 	if f.err != nil && n <= f.failN {
 		return nil, f.err
 	}
@@ -65,6 +73,9 @@ func (f *chatFake) CompleteStream(ctx context.Context, _ *provider.CompletionReq
 	f.gotSpan = trace.SpanContextFromContext(ctx)
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.stream != nil {
+		return f.stream, nil
 	}
 	return testutil.NewFakeStream(f.chunks, nil), nil
 }
@@ -112,7 +123,7 @@ func chatRequest(model string) *provider.CompletionRequest {
 		Messages:    []provider.Message{{Role: "user", Content: "my email is " + leak}},
 		MaxTokens:   256,
 		Temperature: &temp,
-		TenantID:    "tenant_01",
+		TenantID:    tenantID,
 		Metadata:    map[string]string{"user": leak},
 	}
 }
@@ -158,7 +169,7 @@ func TestCompletionTracesThePipelineAndTheProviderCall(t *testing.T) {
 	}
 	wantAttrs(t, serve, map[string]string{
 		"nexus.request.type": "completion", "nexus.outcome": "ok", "nexus.provider.name": "openai",
-		"nexus.cache.hit": "false", "nexus.tenant.id": "tenant_01",
+		"nexus.cache.hit": "false", "nexus.tenant.id": tenantID,
 	})
 	if telemetrytest.Attrs(serve)["nexus.request.id"] == "" {
 		t.Error("serve span has no request id")
@@ -642,5 +653,134 @@ func TestTheProviderIsCalledWithoutTheClientsBaggage(t *testing.T) {
 	}
 	if !p.gotSpan.IsValid() {
 		t.Fatal("the provider lost the trace context along with the baggage")
+	}
+}
+
+func TestATenantIDThatDoesNotParseStaysOffTheSpan(t *testing.T) {
+	rec := telemetrytest.Spans(t)
+	svc := build(t, telemetrytest.NewSink(), newChatFake())
+	req := chatRequest("gpt-4o")
+	req.TenantID = leak
+	if _, err := svc.Execute(context.Background(), req); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if _, ok := telemetrytest.Attrs(telemetrytest.One(t, rec, "serve completion"))["nexus.tenant.id"]; ok {
+		t.Fatal("an unparsable tenant id went on the span")
+	}
+	telemetrytest.AssertAbsent(t, rec, leak)
+}
+
+// namedBlocker blocks every input under a name of the caller's choosing.
+type namedBlocker struct{ name string }
+
+func (b namedBlocker) Name() string     { return b.name }
+func (namedBlocker) Phase() guard.Phase { return guard.PhaseInput }
+func (namedBlocker) Check(context.Context, *guard.CheckInput) (*guard.CheckResult, error) {
+	return &guard.CheckResult{Blocked: true}, nil
+}
+
+func TestACustomGuardIsCountedAsCustom(t *testing.T) {
+	rec := telemetrytest.Spans(t)
+	sink := telemetrytest.NewSink()
+	g := guard.NewService()
+	g.Register(namedBlocker{name: "acme-policy-v7"})
+	svc := build(t, sink, newChatFake(), middlewares.NewGuardrail(g))
+	if _, err := svc.Execute(context.Background(), chatRequest("gpt-4o")); err == nil {
+		t.Fatal("want the block")
+	}
+	if s, ok := sink.Find(telemetry.MetricGuardrailBlocks, map[string]string{"phase": "input", "guard": "custom"}); !ok || s.Value != 1 {
+		t.Fatalf("blocks = %+v", sink.Series(telemetry.MetricGuardrailBlocks))
+	}
+	// The span keeps the real name: it isn't a label.
+	wantAttrs(t, telemetrytest.One(t, rec, "check guardrails"), map[string]string{"nexus.guardrail.name": "acme-policy-v7"})
+}
+
+// biStream is a bidirectional provider stream that records what it was sent.
+type biStream struct {
+	*testutil.FakeStream
+	mu   sync.Mutex
+	sent []provider.ClientEvent
+}
+
+func (b *biStream) Send(_ context.Context, evt provider.ClientEvent) error {
+	b.mu.Lock()
+	b.sent = append(b.sent, evt)
+	b.mu.Unlock()
+	return nil
+}
+
+func TestABidirectionalStreamKeepsItsSend(t *testing.T) {
+	telemetrytest.Spans(t)
+	p := newChatFake()
+	inner := &biStream{FakeStream: testutil.NewFakeStream(nil, nil)}
+	p.stream = inner
+	svc := build(t, telemetrytest.NewSink(), p)
+
+	stream, err := svc.ExecuteStream(context.Background(), chatRequest("gpt-4o"))
+	if err != nil {
+		t.Fatalf("execute stream: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+	bi, ok := stream.(provider.BiStream)
+	if !ok {
+		t.Fatalf("the telemetry wrappers hid Send: %T", stream)
+	}
+	if sendErr := bi.Send(context.Background(), provider.ClientEvent{Type: "commit"}); sendErr != nil {
+		t.Fatalf("send: %v", sendErr)
+	}
+	if len(inner.sent) != 1 || inner.sent[0].Type != "commit" {
+		t.Fatalf("the provider got %+v", inner.sent)
+	}
+
+	// A one-way stream stays one-way.
+	q := newChatFake()
+	q.chunks = []*provider.StreamChunk{{Delta: provider.Delta{Content: "hi"}}}
+	plain, err := build(t, telemetrytest.NewSink(), q).ExecuteStream(context.Background(), chatRequest("gpt-4o"))
+	if err != nil {
+		t.Fatalf("execute stream: %v", err)
+	}
+	defer func() { _ = plain.Close() }()
+	if _, ok := plain.(provider.BiStream); ok {
+		t.Fatal("a one-way stream grew a Send")
+	}
+}
+
+// panickingCache is a cache store with a bug.
+type panickingCache struct{ cache.Service }
+
+func (panickingCache) Get(context.Context, string) (*provider.CompletionResponse, error) {
+	panic("cache bug")
+}
+
+func TestAPanicStillEndsTheSpans(t *testing.T) {
+	rec := telemetrytest.Spans(t)
+	sink := telemetrytest.NewSink()
+	p := newChatFake()
+	p.panics = true
+	svc := build(t, sink, p)
+	func() {
+		defer func() { _ = recover() }()
+		_, _ = svc.Execute(context.Background(), chatRequest("gpt-4o"))
+		t.Fatal("the panic did not propagate")
+	}()
+	chat := telemetrytest.One(t, rec, "chat gpt-4o")
+	if chat.Status().Code != codes.Error || telemetrytest.Attrs(chat)["error.type"] != "panic" {
+		t.Fatalf("chat span after a panic: status %+v, attrs %v", chat.Status(), telemetrytest.Attrs(chat))
+	}
+	if telemetrytest.One(t, rec, "serve completion").Status().Code != codes.Error {
+		t.Fatal("the request span after a panic is not failed")
+	}
+	if _, ok := sink.Find(telemetry.MetricOperationDuration, map[string]string{"error.type": "panic"}); !ok {
+		t.Fatalf("duration series = %+v", sink.Series(telemetry.MetricOperationDuration))
+	}
+
+	cached := build(t, sink, newChatFake(), middlewares.NewCache(panickingCache{}))
+	func() {
+		defer func() { _ = recover() }()
+		_, _ = cached.Execute(context.Background(), chatRequest("gpt-4o"))
+		t.Fatal("the cache panic did not propagate")
+	}()
+	if lookup := telemetrytest.One(t, rec, "look up cache"); lookup.Status().Code != codes.Error {
+		t.Fatalf("lookup span after a panic: %+v", lookup.Status())
 	}
 }

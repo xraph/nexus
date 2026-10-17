@@ -11,6 +11,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/baggage"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	gometrics "github.com/xraph/go-utils/metrics"
@@ -108,6 +109,31 @@ func (m *ProviderCallMiddleware) startGenAICall(ctx context.Context, op string, 
 
 func (c *genAICall) listed(ctx context.Context, model string) bool {
 	return c.catalog != nil && model != "" && c.catalog.Lists(ctx, c.provider, model)
+}
+
+// endIfPanicking ends the call when the provider panicked, so its span is not
+// left open, then panics again. Defer it right after startGenAICall.
+func (c *genAICall) endIfPanicking() {
+	if r := recover(); r != nil {
+		c.panicked()
+		panic(r)
+	}
+}
+
+// panicked ends the call with error.type "panic".
+func (c *genAICall) panicked() {
+	c.once.Do(func() {
+		c.ended.Store(true)
+		if c.span.IsRecording() {
+			c.span.SetAttributes(telemetry.ErrorTypeKey.String("panic"))
+			c.span.AddEvent("exception", trace.WithAttributes(attribute.String("exception.type", "panic")))
+			c.span.SetStatus(codes.Error, "panic")
+		}
+		c.span.End()
+		if c.metrics != nil {
+			c.metrics.duration.Observe(time.Since(c.start).Seconds(), c.op, c.genAIName, c.model, "panic")
+		}
+	})
 }
 
 // genAIResult is what a call reported back.
@@ -215,6 +241,27 @@ func requestAttributes(req *provider.CompletionRequest) []attribute.KeyValue {
 	return attrs
 }
 
+// newGenAIStream wraps a provider's stream so its call ends with it. A
+// bidirectional stream keeps its Send.
+func newGenAIStream(ctx context.Context, inner provider.Stream, call *genAICall) provider.Stream {
+	s := &genAIStream{inner: inner, call: call, ctx: ctx}
+	if bi, ok := inner.(provider.BiStream); ok {
+		return &genAIBiStream{genAIStream: s, bi: bi}
+	}
+	return s
+}
+
+// genAIBiStream is a genAIStream over a provider.BiStream.
+type genAIBiStream struct {
+	*genAIStream
+	bi provider.BiStream
+}
+
+// Send forwards a client event to the provider.
+func (s *genAIBiStream) Send(ctx context.Context, evt provider.ClientEvent) error {
+	return s.bi.Send(ctx, evt)
+}
+
 // genAIStream ends its call when the stream does: at io.EOF, at the first
 // other error, or at Close, whichever comes first. It records the time to the
 // first chunk that is not a heartbeat.
@@ -229,6 +276,7 @@ type genAIStream struct {
 }
 
 func (s *genAIStream) Next(ctx context.Context) (*provider.StreamChunk, error) {
+	defer s.call.endIfPanicking()
 	chunk, err := s.inner.Next(ctx)
 	if chunk != nil {
 		s.observe(chunk)

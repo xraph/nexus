@@ -86,6 +86,7 @@ func (m *ProviderCallMiddleware) handleCompletion(ctx context.Context, req *pipe
 	start := time.Now()
 
 	ctx, call := m.startGenAICall(ctx, telemetry.OperationChat, p, req.Type, req.Completion.Model, requestAttributes(req.Completion)...)
+	defer call.endIfPanicking()
 	resp, err := p.Complete(ctx, req.Completion)
 	call.end(ctx, completionResult(resp), err)
 	if err != nil {
@@ -108,6 +109,7 @@ func (m *ProviderCallMiddleware) handleStream(ctx context.Context, req *pipeline
 	req.State[pipeline.StateProviderName] = p.Name()
 
 	ctx, call := m.startGenAICall(ctx, telemetry.OperationChat, p, req.Type, req.Completion.Model, requestAttributes(req.Completion)...)
+	defer call.endIfPanicking()
 	stream, err := p.CompleteStream(ctx, req.Completion)
 	if err != nil {
 		call.end(ctx, genAIResult{}, err)
@@ -118,7 +120,7 @@ func (m *ProviderCallMiddleware) handleStream(ctx context.Context, req *pipeline
 		return &pipeline.Response{}, nil
 	}
 
-	return &pipeline.Response{Stream: &genAIStream{inner: stream, call: call, ctx: ctx}}, nil
+	return &pipeline.Response{Stream: newGenAIStream(ctx, stream, call)}, nil
 }
 
 func (m *ProviderCallMiddleware) handleEmbedding(ctx context.Context, req *pipeline.Request) (*pipeline.Response, error) {
@@ -137,6 +139,7 @@ func (m *ProviderCallMiddleware) handleEmbedding(ctx context.Context, req *pipel
 	req.State[pipeline.StateProviderName] = p.Name()
 
 	ctx, call := m.startGenAICall(ctx, telemetry.OperationEmbeddings, p, req.Type, req.Embedding.Model)
+	defer call.endIfPanicking()
 	resp, err := p.Embed(ctx, req.Embedding)
 	call.end(ctx, embeddingResult(resp), err)
 	if err != nil {
