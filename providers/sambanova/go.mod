@@ -3,7 +3,7 @@ module github.com/xraph/nexus/providers/sambanova
 go 1.26.0
 
 require (
-	github.com/xraph/nexus v1.7.1
+	github.com/xraph/nexus v1.8.0
 	github.com/xraph/nexus/providers/openai v1.8.0
 )
 
