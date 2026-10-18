@@ -5,6 +5,7 @@ package azureopenai
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/xraph/nexus/provider"
 )
@@ -97,3 +98,13 @@ func WithBaseURL(url string) Option {
 
 // Compile-time check.
 var _ provider.Provider = (*Provider)(nil)
+
+// WrapTransport wraps the transport of the HTTP client the provider sends its
+// requests through (provider.TransportWrapper). Nexus calls it once, from
+// Initialize, with the wrapper given to nexus.WithProviderTransport. Call it
+// before the first request, never during one.
+func (p *Provider) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) {
+	if rt := wrap(p.client.http.Transport); rt != nil {
+		p.client.http.Transport = rt
+	}
+}

@@ -7,7 +7,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	gometrics "github.com/xraph/go-utils/metrics"
+
 	"github.com/xraph/nexus/id"
+	"github.com/xraph/nexus/internal/telemetry"
 	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/provider"
@@ -38,6 +41,9 @@ type QuotaConfig struct {
 	GlobalRPM int
 	Log       UsageLogger
 	Now       func() time.Time
+	// Metrics, when set, counts limiter failures as
+	// nexus_limiter_errors_total, the same failures LimiterErrors counts.
+	Metrics gometrics.Metrics
 }
 
 // QuotaMiddleware enforces the tenant's per-request token cap, its daily
@@ -59,11 +65,12 @@ type QuotaConfig struct {
 // refused by a later check has already been charged against GlobalRPM and
 // RPM if those ran before it.
 type QuotaMiddleware struct {
-	cfg           QuotaConfig
-	limiterErrors atomic.Int64
-	mu            sync.Mutex
-	warned        map[string]string // tenant -> month already warned
-	exceeded      map[string]string // tenant -> month already reported
+	cfg             QuotaConfig
+	limiterErrors   atomic.Int64
+	limiterFailures *telemetry.Counter
+	mu              sync.Mutex
+	warned          map[string]string // tenant -> month already warned
+	exceeded        map[string]string // tenant -> month already reported
 }
 
 // NewQuota returns the quota stage. It enforces nothing per tenant on its
@@ -80,7 +87,11 @@ func NewQuota(cfg QuotaConfig) *QuotaMiddleware {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &QuotaMiddleware{cfg: cfg, warned: map[string]string{}, exceeded: map[string]string{}}
+	return &QuotaMiddleware{
+		cfg: cfg, warned: map[string]string{}, exceeded: map[string]string{},
+		limiterFailures: telemetry.NewCounter(cfg.Metrics, telemetry.MetricLimiterErrors,
+			"Rate limiter failures that let a request through."),
+	}
 }
 
 func (*QuotaMiddleware) Name() string  { return "quota" }
@@ -186,11 +197,11 @@ func (m *QuotaMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 			// tokens a minute. This case comes first so a replayed stream is
 			// never wrapped, and its Usage() is never charged.
 		case resp.Stream != nil:
-			resp.Stream = &tpmStream{inner: resp.Stream, charge: func(n int) { m.charge(tpmKey, n, int64(q.TPM)) }}
+			resp.Stream = &tpmStream{inner: resp.Stream, charge: func(n int) { m.charge(ctx, tpmKey, n, int64(q.TPM)) }}
 		case resp.Completion != nil:
-			m.charge(tpmKey, resp.Completion.Usage.TotalTokens, int64(q.TPM))
+			m.charge(ctx, tpmKey, resp.Completion.Usage.TotalTokens, int64(q.TPM))
 		case resp.Embedding != nil:
-			m.charge(tpmKey, resp.Embedding.Usage.TotalTokens, int64(q.TPM))
+			m.charge(ctx, tpmKey, resp.Embedding.Usage.TotalTokens, int64(q.TPM))
 		}
 	}
 	return resp, err
@@ -219,6 +230,7 @@ func (m *QuotaMiddleware) try(ctx context.Context, key string, n, limit int64, w
 	d, err := m.cfg.Limiter.Allow(ctx, key, n, limit, window)
 	if err != nil {
 		m.limiterErrors.Add(1)
+		m.limiterFailures.Inc()
 		if m.cfg.Log != nil {
 			m.cfg.Log.Error("nexus: rate limiter failed", "limiter", m.cfg.Limiter.Kind(), "key", key, "error", err)
 		}
@@ -262,13 +274,14 @@ func (m *QuotaMiddleware) chargeDay(ctx context.Context, tid string, limit int64
 }
 
 // charge records tokens a request used. It runs after the request, on a
-// fresh context: the request's may already be done. The request is over,
-// so there is nothing to refuse; the next one sees the new count.
-func (m *QuotaMiddleware) charge(key string, tokens int, limit int64) {
+// fresh context that keeps only the request's trace: the request's context
+// may already be done. The request is over, so there is nothing to refuse;
+// the next one sees the new count.
+func (m *QuotaMiddleware) charge(reqCtx context.Context, key string, tokens int, limit int64) {
 	if tokens <= 0 {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(telemetry.Detach(reqCtx), 2*time.Second)
 	defer cancel()
 	m.try(ctx, key, int64(tokens), limit, time.Minute)
 }

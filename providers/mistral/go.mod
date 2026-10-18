@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/xraph/nexus v1.7.1
-	github.com/xraph/nexus/providers/openai v1.7.1
+	github.com/xraph/nexus/providers/openai v1.8.0
 )
 
 require github.com/shopspring/decimal v1.4.0 // indirect

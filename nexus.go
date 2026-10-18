@@ -23,6 +23,10 @@ import (
 	"slices"
 	"time"
 
+	"go.opentelemetry.io/otel/baggage"
+
+	gometrics "github.com/xraph/go-utils/metrics"
+
 	"github.com/xraph/nexus/auth"
 	"github.com/xraph/nexus/cache"
 	"github.com/xraph/nexus/cache/stores"
@@ -92,6 +96,12 @@ type Gateway struct {
 	tracer      observability.Tracer
 	transforms  *transform.Registry
 	healthTrack provider.HealthTracker
+
+	// metrics is the sink the pipeline's stages record on, nil for none.
+	metrics gometrics.Metrics
+
+	// providerTransport wraps each provider's HTTP transport at Initialize.
+	providerTransport func(http.RoundTripper) http.RoundTripper
 
 	// Custom middleware to add to the pipeline
 	customMiddleware []pipeline.Middleware
@@ -173,6 +183,7 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 		gw.cache = cache.NewService(stores.NewMemory())
 	}
 	gw.priceBook = model.NewPriceBook(gw.providers)
+	gw.wrapProviderTransports()
 
 	// Initialize model service
 	if gw.model == nil {
@@ -224,14 +235,16 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 	// Priority 5: request id
 	b.Use(middlewares.NewRequestID())
 
-	// Priority 10: Tracing (if configured)
+	// Priority 10: OpenTelemetry span and request count (always), then a
+	// custom tracer (if configured)
+	b.Use(middlewares.NewTelemetry().WithMetrics(gw.metrics))
 	if gw.tracer != nil {
 		b.Use(observability.NewTracingMiddleware(gw.tracer))
 	}
 
 	// Priority 15: Usage recording (unless turned off)
 	if gw.config.EnableUsage && gw.usage != nil {
-		gw.usageMW = middlewares.NewUsage(gw.usage, gw.priceBook, gw.logger)
+		gw.usageMW = middlewares.NewUsage(gw.usage, gw.priceBook, gw.logger).WithMetrics(gw.metrics)
 		b.Use(gw.usageMW)
 	}
 
@@ -255,7 +268,7 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 		}
 		gw.quotaMW = middlewares.NewQuota(middlewares.QuotaConfig{
 			Usage: gw.usage, Limiter: gw.limiter, Events: budgetEvents,
-			GlobalRPM: gw.config.GlobalRateLimit, Log: gw.logger,
+			GlobalRPM: gw.config.GlobalRateLimit, Log: gw.logger, Metrics: gw.metrics,
 		})
 		b.Use(gw.quotaMW)
 	}
@@ -293,7 +306,7 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 
 	// Priority 280: Cache (if configured)
 	if gw.cache != nil || gw.streamCache != nil {
-		mw := middlewares.NewCache(gw.cache)
+		mw := middlewares.NewCache(gw.cache).WithMetrics(gw.metrics)
 		if gw.streamCache != nil {
 			mw = mw.WithStreamCache(gw.streamCache, gw.streamCacheCfg)
 		}
@@ -311,9 +324,45 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 	}
 
 	// Priority 350: Core provider call (always present, always last)
-	b.Use(middlewares.NewProviderCall(gw.router, gw.providers))
+	b.Use(middlewares.NewProviderCall(gw.router, gw.providers).
+		WithModelCatalog(gw.priceBook).
+		WithMetrics(gw.metrics))
 
 	return b.Build()
+}
+
+// wrapProviderTransports hands each registered provider that owns an HTTP
+// client the wrapper from WithProviderTransport. Whatever the wrapper
+// returns runs behind a transport that drops the request's baggage first, so
+// a traced transport never injects a client's baggage (user or tenant ids,
+// often) into a call to a third-party provider: not on a completion, and not
+// on a health check that runs on an admin request's context either.
+func (gw *Gateway) wrapProviderTransports() {
+	if gw.providerTransport == nil {
+		return
+	}
+	wrap := func(rt http.RoundTripper) http.RoundTripper {
+		if w := gw.providerTransport(rt); w != nil {
+			return withoutBaggage{next: w}
+		}
+		return nil
+	}
+	for _, p := range gw.providers.All() {
+		if w, ok := p.(provider.TransportWrapper); ok {
+			w.WrapTransport(wrap)
+		}
+	}
+}
+
+// withoutBaggage removes the OpenTelemetry baggage from each request's
+// context before next sees it. The trace context stays.
+type withoutBaggage struct{ next http.RoundTripper }
+
+func (t withoutBaggage) RoundTrip(r *http.Request) (*http.Response, error) {
+	if baggage.FromContext(r.Context()).Len() > 0 {
+		r = r.WithContext(baggage.ContextWithoutBaggage(r.Context()))
+	}
+	return t.next.RoundTrip(r)
 }
 
 // Mount registers Nexus HTTP handlers on the given router.

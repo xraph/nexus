@@ -67,7 +67,9 @@ type Config struct {
 | `WithExtension(ext)` | Register a lifecycle plugin |
 | `WithStreamLifecycleConfig(cfg)` | Tune per-chunk hook fan-out and per-tenant stream caps |
 | `WithLogger(logger)` | Set a `nexus.Logger` (default: no-op) |
-| `WithTracer(tracer)` | Add the tracing stage |
+| `WithTracer(tracer)` | Add a stage for a tracer that isn't OpenTelemetry (OpenTelemetry spans need no option) |
+| `WithMetrics(m)` | Record the gateway's metrics on a go-utils metrics sink (the Forge extension passes the app's) |
+| `WithProviderTransport(wrap)` | Wrap every provider's HTTP transport at `Initialize`, for tracing (the Forge extension passes `forge.InstrumentTransport`) |
 | `WithBasePath(path)` | Set the path `gw.Mount` uses |
 | `WithRateLimit(rpm)` | Set the global rate limit |
 | `WithLimiter(l)` | Set the RPM and TPM limiter (default: in-process memory) |

@@ -15,7 +15,6 @@ require (
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
-	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect

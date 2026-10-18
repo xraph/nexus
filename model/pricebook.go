@@ -51,6 +51,26 @@ func (b *PriceBook) Price(ctx context.Context, providerName string, modelIDs ...
 	return provider.Pricing{}, false
 }
 
+// Lists reports whether the provider named providerName lists modelID. It
+// reads the same cached list as Price. Telemetry uses it to name only the
+// models a provider lists, so a client's arbitrary model string never becomes
+// a metric series or a span attribute.
+func (b *PriceBook) Lists(ctx context.Context, providerName, modelID string) bool {
+	if modelID == "" {
+		return false
+	}
+	p, ok := b.providers.Get(providerName)
+	if !ok {
+		return false
+	}
+	list, ok := b.list(ctx, p)
+	if !ok {
+		return false
+	}
+	_, listed := list[modelID]
+	return listed
+}
+
 func (b *PriceBook) list(ctx context.Context, p provider.Provider) (map[string]provider.Pricing, bool) {
 	b.mu.RLock()
 	list, ok := b.lists[p.Name()]

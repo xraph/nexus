@@ -74,3 +74,34 @@ func TestPriceBookPricesAtTheProviderThatServed(t *testing.T) {
 		t.Fatalf("Models called %d times; the price list should be read once", openai.calls)
 	}
 }
+
+func TestPriceBookListsOnlyWhatTheProviderLists(t *testing.T) {
+	reg := provider.NewRegistry()
+	openai := &listedProvider{name: "openai", models: []provider.Model{{ID: "gpt-4o"}}}
+	local := &freeProvider{listedProvider{name: "ollama", models: []provider.Model{{ID: "llama3"}}}}
+	reg.Register(openai)
+	reg.Register(local)
+	book := model.NewPriceBook(reg)
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		provider, model string
+		want            bool
+	}{
+		{"openai", "gpt-4o", true},
+		{"openai", "alice@example.com", false},
+		{"openai", "", false},
+		{"nobody", "gpt-4o", false},
+		// Free of charge prices any model, but lists only its own.
+		{"ollama", "llama3", true},
+		{"ollama", "qwen3:8b", false},
+	} {
+		if got := book.Lists(ctx, tc.provider, tc.model); got != tc.want {
+			t.Errorf("Lists(%q, %q) = %v, want %v", tc.provider, tc.model, got, tc.want)
+		}
+	}
+	book.Price(ctx, "openai", "gpt-4o")
+	if openai.calls != 1 {
+		t.Fatalf("Models called %d times; Lists and Price share one cached list", openai.calls)
+	}
+}
