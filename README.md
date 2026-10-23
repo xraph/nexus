@@ -325,6 +325,6 @@ The repo is many Go modules (the root, `config`, `grpcsrv` and one per provider)
 
 ## License
 
-See the [Nexus repository](https://github.com/xraph/nexus) for license terms.
+MIT. See [LICENSE](LICENSE).
 
 Nexus is part of the [forgery stack](https://github.com/xraph/forge#the-forgery-stack) built on [Forge](https://github.com/xraph/forge), by [Rex Raphael](https://github.com/juicycleff) and [contributors](https://github.com/xraph/nexus/graphs/contributors).
