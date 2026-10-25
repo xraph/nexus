@@ -9,9 +9,13 @@ import (
 
 // CredentialProvider retrieves API keys or tokens for providers at runtime.
 // This allows integration with secret managers (Vault, AWS Secrets, etc.)
-// instead of hard-coding API keys.
+// instead of hard-coding API keys. Given to the gateway
+// (nexus.WithCredentialProvider), it is asked before each provider call; a
+// provider that also implements CredentialResolver is asked through that
+// instead, so it can choose the base URL too.
 type CredentialProvider interface {
-	// GetCredential returns the current credential (API key) for a provider.
+	// GetCredential returns the current credential (API key) for a
+	// provider, or ErrCredentialNotFound when it has none.
 	GetCredential(ctx context.Context, providerName string) (string, error)
 }
 
@@ -28,12 +32,15 @@ func NewStaticCredential(credentials map[string]string) *StaticCredential {
 func (sc *StaticCredential) GetCredential(_ context.Context, providerName string) (string, error) {
 	key, ok := sc.credentials[providerName]
 	if !ok {
-		return "", errCredentialNotFound
+		return "", ErrCredentialNotFound
 	}
 	return key, nil
 }
 
-var errCredentialNotFound = errors.New("nexus: provider credential not found")
+// ErrCredentialNotFound means there is no credential for the provider: the
+// request is served with the provider's own configured key.
+// nexus.ErrCredentialNotFound is the same value.
+var ErrCredentialNotFound = errors.New("nexus: provider credential not found")
 
 // EnvCredential reads credentials from environment variables.
 type EnvCredential struct {
@@ -49,7 +56,7 @@ func NewEnvCredential(prefix string) *EnvCredential {
 func (ec *EnvCredential) GetCredential(_ context.Context, providerName string) (string, error) {
 	key := os.Getenv(ec.envPrefix + strings.ToUpper(providerName) + "_API_KEY")
 	if key == "" {
-		return "", errCredentialNotFound
+		return "", ErrCredentialNotFound
 	}
 	return key, nil
 }

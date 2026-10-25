@@ -84,6 +84,9 @@ type Gateway struct {
 	// unpricedPolicy decides about requests to models with no price.
 	unpricedPolicy UnpricedPolicy
 
+	// credentials resolves each provider call's credential, nil for none.
+	credentials provider.CredentialProvider
+
 	// usageMW is the usage stage, kept so Shutdown can flush it.
 	usageMW *middlewares.UsageMiddleware
 
@@ -337,6 +340,9 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 		WithMetrics(gw.metrics)
 	if gw.unpricedPolicy != nil {
 		call = call.WithUnpricedPolicy(gw.priceBook, middlewares.UnpricedPolicy(gw.unpricedPolicy))
+	}
+	if gw.credentials != nil {
+		call = call.WithCredentialProvider(gw.credentials)
 	}
 	b.Use(call)
 

@@ -4,30 +4,43 @@ package openai
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/xraph/nexus/provider"
 )
+
+// defaultTimeout bounds the wait for response headers, matching the OpenAI
+// SDKs' default request timeout.
+const defaultTimeout = 10 * time.Minute
 
 // Provider implements the Nexus provider interface for OpenAI.
 type Provider struct {
 	apiKey  string
 	baseURL string
 	orgID   string
+	timeout time.Duration
 	client  *client
 }
 
-// New creates a new OpenAI provider.
+// New creates a new OpenAI provider. A request whose context carries a
+// provider.Credential is sent with that credential's key and, when it sets
+// one, base URL instead of the configured ones.
 func New(apiKey string, opts ...Option) *Provider {
 	p := &Provider{
 		apiKey:  apiKey,
 		baseURL: "https://api.openai.com/v1",
+		timeout: defaultTimeout,
 	}
 	for _, opt := range opts {
 		opt(p)
 	}
-	p.client = newClient(p.apiKey, p.baseURL, p.orgID)
+	p.client = newClient(p.apiKey, p.baseURL, p.orgID, p.timeout)
 	return p
 }
+
+// AcceptsCredentials reports that the provider applies a per-request
+// provider.Credential (provider.CredentialAware).
+func (p *Provider) AcceptsCredentials() bool { return true }
 
 // Name returns the provider identifier.
 func (p *Provider) Name() string { return "openai" }
@@ -83,13 +96,28 @@ func WithBaseURL(url string) Option {
 	return func(p *Provider) { p.baseURL = url }
 }
 
+// WithTimeout bounds how long a request waits for response headers. The
+// default is 10 minutes; a zero or negative d keeps it. Once headers arrive
+// a stream is not cut by it, however long it runs: bound the whole call with
+// the request context instead.
+func WithTimeout(d time.Duration) Option {
+	return func(p *Provider) {
+		if d > 0 {
+			p.timeout = d
+		}
+	}
+}
+
 // WithOrgID sets the OpenAI organization ID.
 func WithOrgID(orgID string) Option {
 	return func(p *Provider) { p.orgID = orgID }
 }
 
-// Compile-time check.
-var _ provider.Provider = (*Provider)(nil)
+// Compile-time checks.
+var (
+	_ provider.Provider        = (*Provider)(nil)
+	_ provider.CredentialAware = (*Provider)(nil)
+)
 
 // WrapTransport wraps the transport of the HTTP client the provider sends its
 // requests through (provider.TransportWrapper). Nexus calls it once, from

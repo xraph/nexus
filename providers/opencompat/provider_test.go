@@ -54,14 +54,11 @@ func TestDefaultCapabilities(t *testing.T) {
 	if !caps.Streaming {
 		t.Error("default capabilities should have Streaming=true")
 	}
-	if caps.Embeddings {
-		t.Error("default capabilities should have Embeddings=false")
+	if !caps.Embeddings || !caps.Tools || !caps.JSON || !caps.StreamingTools {
+		t.Errorf("default capabilities should have Embeddings, Tools, JSON and StreamingTools, got %+v", caps)
 	}
 	if caps.Vision {
 		t.Error("default capabilities should have Vision=false")
-	}
-	if caps.Tools {
-		t.Error("default capabilities should have Tools=false")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/xraph/nexus/pipeline/middlewares"
+	"github.com/xraph/nexus/provider"
 )
 
 var (
@@ -60,6 +61,13 @@ var (
 	ErrModelUnpriced = middlewares.ErrModelUnpriced
 
 	// Credentials
-	ErrCredentialExpired  = errors.New("nexus: provider credential expired")
-	ErrCredentialNotFound = errors.New("nexus: provider credential not found")
+	ErrCredentialExpired = errors.New("nexus: provider credential expired")
+	// ErrCredentialNotFound is provider.ErrCredentialNotFound: a credential
+	// provider returns it to serve a request with the provider's own key.
+	ErrCredentialNotFound = provider.ErrCredentialNotFound
+	// ErrCredentialUnavailable refuses a request whose credential could not
+	// be resolved, or that the chosen provider cannot use
+	// (WithCredentialProvider). It is a *RefusalError with code unavailable
+	// and status 503; nothing is sent to the provider.
+	ErrCredentialUnavailable = middlewares.ErrCredentialUnavailable
 )

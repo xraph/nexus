@@ -313,6 +313,28 @@ func WithUnpricedPolicy(p UnpricedPolicy) Option {
 	return func(gw *Gateway) { gw.unpricedPolicy = p }
 }
 
+// WithCredentialProvider resolves the credential for each provider call, so
+// one gateway serves every tenant on its own key (and, for an
+// OpenAI-compatible provider, its own base URL), with each provider's
+// configured key as the fallback. The gateway asks cp after routing and
+// the unpriced policy, once per attempt, with pipeline.TenantID(ctx) set to
+// the request's nexus tenant. A cp that implements
+// provider.CredentialResolver can set the base URL as well; any other gives
+// only a key.
+//
+// provider.ErrCredentialNotFound (or an empty credential) serves the
+// request with the provider's own key. Any other error refuses it with
+// ErrCredentialUnavailable (503) and sends nothing: there is no silent
+// fall back to the operator's key when a tenant's key store is down. A
+// credential for a provider that cannot take one (not
+// provider.CredentialAware) is refused the same way. Anthropic, OpenAI and
+// opencompat take them. Like the unpriced policy, it is part of the default
+// pipeline only (add middlewares.NewProviderCall(...).WithCredentialProvider
+// to one set with WithPipeline).
+func WithCredentialProvider(cp provider.CredentialProvider) Option {
+	return func(gw *Gateway) { gw.credentials = cp }
+}
+
 // RefuseUnpriced is the UnpricedPolicy that refuses every request for a
 // model with no price with ErrModelUnpriced (400, model_unpriced), before
 // any provider is called.

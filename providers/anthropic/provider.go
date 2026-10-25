@@ -36,7 +36,10 @@ type Provider struct {
 	client *client
 }
 
-// New creates a new Anthropic provider.
+// New creates a new Anthropic provider. apiKey may be "" when every request
+// brings a tenant credential: a request whose context carries a
+// provider.Credential is sent with that credential's key and, when it sets
+// one, base URL instead of the configured ones.
 func New(apiKey string, opts ...Option) *Provider {
 	p := &Provider{
 		apiKey:     apiKey,
@@ -55,6 +58,10 @@ func New(apiKey string, opts ...Option) *Provider {
 
 // Name returns the provider identifier.
 func (p *Provider) Name() string { return "anthropic" }
+
+// AcceptsCredentials reports that the provider applies a per-request
+// provider.Credential (provider.CredentialAware).
+func (p *Provider) AcceptsCredentials() bool { return true }
 
 // Capabilities returns what this provider supports.
 func (p *Provider) Capabilities() provider.Capabilities {
@@ -142,8 +149,11 @@ func WithThinkingBlockBinding(mode string) Option {
 	}
 }
 
-// Compile-time check.
-var _ provider.Provider = (*Provider)(nil)
+// Compile-time checks.
+var (
+	_ provider.Provider        = (*Provider)(nil)
+	_ provider.CredentialAware = (*Provider)(nil)
+)
 
 // WrapTransport wraps the transport of the HTTP client the provider sends its
 // requests through (provider.TransportWrapper). Nexus calls it once, from

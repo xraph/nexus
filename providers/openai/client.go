@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/xraph/nexus/provider"
@@ -19,15 +20,76 @@ type client struct {
 	http    *http.Client
 }
 
-func newClient(apiKey, baseURL, orgID string) *client {
+func newClient(apiKey, baseURL, orgID string, timeout time.Duration) *client {
 	return &client{
 		apiKey:  apiKey,
 		baseURL: baseURL,
 		orgID:   orgID,
-		http: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		http:    newHTTPClient(timeout),
 	}
+}
+
+// newHTTPClient bounds only the wait for response headers. A whole-request
+// timeout would also cut a long stream after its headers arrived, so the
+// client sets none and leaves the rest to the caller's context.
+func newHTTPClient(timeout time.Duration) *http.Client {
+	var transport *http.Transport
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = base.Clone()
+	} else {
+		transport = &http.Transport{Proxy: http.ProxyFromEnvironment}
+	}
+	transport.ResponseHeaderTimeout = timeout
+	return &http.Client{Transport: transport}
+}
+
+// effective returns the key, base URL and organization one request is sent
+// with: the context credential's (provider.WithCredential) where it sets
+// them, else the configured ones. The configured organization goes only
+// with the configured key; a tenant's key is not in the operator's
+// organization.
+func (c *client) effective(ctx context.Context) (key, base, org string) {
+	key, base, org = c.apiKey, c.baseURL, c.orgID
+	if cred, ok := provider.CredentialFromContext(ctx); ok {
+		if cred.APIKey != "" {
+			key, org = cred.APIKey, ""
+		}
+		if cred.BaseURL != "" {
+			base = strings.TrimRight(cred.BaseURL, "/")
+		}
+	}
+	return key, base, org
+}
+
+// newRequest builds a request for path on the effective base URL, carrying
+// the effective key, and returns that key so an error can leave it out. It
+// fails before any I/O when there is no base URL.
+func (c *client) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, string, error) {
+	key, base, org := c.effective(ctx)
+	if base == "" {
+		return nil, "", fmt.Errorf("openai: %w", provider.ErrMissingBaseURL)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, base+path, body)
+	if err != nil {
+		return nil, "", fmt.Errorf("openai: create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
+	if org != "" {
+		req.Header.Set("OpenAI-Organization", org)
+	}
+	return req, key, nil
+}
+
+// apiError reports a non-200 answer. The body is kept for the cause, with
+// the key the request was sent with cut out of it: some servers echo the
+// key they rejected.
+func apiError(status int, body []byte, key string) error {
+	text := string(body)
+	if key != "" {
+		text = strings.ReplaceAll(text, key, "[redacted]")
+	}
+	return fmt.Errorf("openai: API error (status %d): %s", status, text)
 }
 
 // openAIRequest is the OpenAI chat completion request format.
@@ -86,11 +148,10 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 		return nil, fmt.Errorf("openai: marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/chat/completions", bytes.NewReader(body))
+	httpReq, key, err := c.newRequest(ctx, http.MethodPost, "/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("openai: create request: %w", err)
+		return nil, err
 	}
-	c.setHeaders(httpReq)
 
 	start := time.Now()
 	httpResp, err := c.http.Do(httpReq)
@@ -102,7 +163,7 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 
 	if httpResp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
-		return nil, fmt.Errorf("openai: API error (status %d): %s", httpResp.StatusCode, string(respBody))
+		return nil, apiError(httpResp.StatusCode, respBody, key)
 	}
 
 	var oaiResp openAIResponse
@@ -125,11 +186,10 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 		return nil, fmt.Errorf("openai: marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/chat/completions", bytes.NewReader(body))
+	httpReq, key, err := c.newRequest(ctx, http.MethodPost, "/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("openai: create request: %w", err)
+		return nil, err
 	}
-	c.setHeaders(httpReq)
 
 	httpResp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -139,7 +199,7 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 	if httpResp.StatusCode != http.StatusOK {
 		defer func() { _ = httpResp.Body.Close() }()
 		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
-		return nil, fmt.Errorf("openai: API error (status %d): %s", httpResp.StatusCode, string(respBody))
+		return nil, apiError(httpResp.StatusCode, respBody, key)
 	}
 
 	return newOpenAIStream(ctx, httpResp.Body, req.Model), nil
@@ -156,11 +216,10 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 		return nil, fmt.Errorf("openai: marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/embeddings", bytes.NewReader(body))
+	httpReq, key, err := c.newRequest(ctx, http.MethodPost, "/embeddings", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("openai: create request: %w", err)
+		return nil, err
 	}
-	c.setHeaders(httpReq)
 
 	httpResp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -170,7 +229,7 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 
 	if httpResp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
-		return nil, fmt.Errorf("openai: API error (status %d): %s", httpResp.StatusCode, string(respBody))
+		return nil, apiError(httpResp.StatusCode, respBody, key)
 	}
 
 	var resp struct {
@@ -203,11 +262,10 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 }
 
 func (c *client) ping(ctx context.Context) error {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/models", http.NoBody)
+	httpReq, _, err := c.newRequest(ctx, http.MethodGet, "/models", http.NoBody)
 	if err != nil {
 		return err
 	}
-	c.setHeaders(httpReq)
 
 	httpResp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -220,14 +278,6 @@ func (c *client) ping(ctx context.Context) error {
 		return fmt.Errorf("openai: health check failed with status %d", httpResp.StatusCode)
 	}
 	return nil
-}
-
-func (c *client) setHeaders(req *http.Request) {
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	if c.orgID != "" {
-		req.Header.Set("OpenAI-Organization", c.orgID)
-	}
 }
 
 func (c *client) toOpenAIRequest(req *provider.CompletionRequest) *openAIRequest {

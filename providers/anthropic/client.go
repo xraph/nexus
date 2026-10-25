@@ -157,7 +157,8 @@ type anthropicContentBlock struct {
 }
 
 func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
-	if err := c.requireAPIKey(); err != nil {
+	key, base := c.effective(ctx)
+	if err := requireEndpoint(key, base); err != nil {
 		return nil, err
 	}
 
@@ -171,11 +172,11 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 		return nil, fmt.Errorf("anthropic: marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/messages", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/messages", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: create request: %w", err)
 	}
-	c.setHeaders(httpReq)
+	c.setHeaders(httpReq, key)
 	setBetaHeaders(httpReq, antReq)
 
 	start := time.Now()
@@ -188,7 +189,7 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 
 	if httpResp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
-		return nil, fmt.Errorf("anthropic: API error (status %d): %s", httpResp.StatusCode, string(respBody))
+		return nil, apiError(httpResp.StatusCode, respBody, key)
 	}
 
 	var antResp anthropicResponse
@@ -206,7 +207,8 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 }
 
 func (c *client) completeStream(ctx context.Context, req *provider.CompletionRequest) (provider.Stream, error) {
-	if err := c.requireAPIKey(); err != nil {
+	key, base := c.effective(ctx)
+	if err := requireEndpoint(key, base); err != nil {
 		return nil, err
 	}
 
@@ -220,11 +222,11 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 		return nil, fmt.Errorf("anthropic: marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/messages", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/messages", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: create request: %w", err)
 	}
-	c.setHeaders(httpReq)
+	c.setHeaders(httpReq, key)
 	setBetaHeaders(httpReq, antReq)
 
 	httpResp, err := c.http.Do(httpReq)
@@ -235,7 +237,7 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 	if httpResp.StatusCode != http.StatusOK {
 		defer func() { _ = httpResp.Body.Close() }()
 		respBody, _ := io.ReadAll(httpResp.Body) //nolint:errcheck // best-effort read for error message
-		return nil, fmt.Errorf("anthropic: API error (status %d): %s", httpResp.StatusCode, string(respBody))
+		return nil, apiError(httpResp.StatusCode, respBody, key)
 	}
 
 	return newAnthropicStream(ctx, httpResp.Body, req.Model), nil
@@ -244,11 +246,15 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 func (c *client) ping(ctx context.Context) error {
 	// Anthropic doesn't have a dedicated health endpoint.
 	// We send a minimal request to check connectivity.
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/v1/messages", http.NoBody)
+	key, base := c.effective(ctx)
+	if base == "" {
+		return fmt.Errorf("anthropic: %w", provider.ErrMissingBaseURL)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/messages", http.NoBody)
 	if err != nil {
 		return err
 	}
-	c.setHeaders(httpReq)
+	c.setHeaders(httpReq, key)
 
 	httpResp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -268,20 +274,49 @@ func (c *client) ping(ctx context.Context) error {
 	return fmt.Errorf("anthropic: health check failed with status %d", httpResp.StatusCode)
 }
 
-// requireAPIKey fails fast when no credential is configured. Anthropic
-// authenticates with the x-api-key header; sending it empty yields a confusing
-// upstream 401 ("x-api-key header is required"), so we surface a clear local
-// error before any network round-trip instead.
-func (c *client) requireAPIKey() error {
-	if c.apiKey == "" {
+// effective returns the key and base URL one request is sent with: the
+// context credential's (provider.WithCredential) where it sets them, else
+// the configured ones.
+func (c *client) effective(ctx context.Context) (key, base string) {
+	key, base = c.apiKey, c.baseURL
+	if cred, ok := provider.CredentialFromContext(ctx); ok {
+		if cred.APIKey != "" {
+			key = cred.APIKey
+		}
+		if cred.BaseURL != "" {
+			base = strings.TrimRight(cred.BaseURL, "/")
+		}
+	}
+	return key, base
+}
+
+// requireEndpoint fails fast when the request has no key or no base URL.
+// Anthropic authenticates with the x-api-key header; sending it empty yields
+// a confusing upstream 401 ("x-api-key header is required"), so we surface a
+// clear local error before any network round-trip instead.
+func requireEndpoint(key, base string) error {
+	if key == "" {
 		return fmt.Errorf("anthropic: %w", provider.ErrMissingAPIKey)
+	}
+	if base == "" {
+		return fmt.Errorf("anthropic: %w", provider.ErrMissingBaseURL)
 	}
 	return nil
 }
 
-func (c *client) setHeaders(req *http.Request) {
+// apiError reports a non-200 answer. The body is kept for the cause, with
+// the key the request was sent with cut out of it, in case it is echoed.
+func apiError(status int, body []byte, key string) error {
+	text := string(body)
+	if key != "" {
+		text = strings.ReplaceAll(text, key, "[redacted]")
+	}
+	return fmt.Errorf("anthropic: API error (status %d): %s", status, text)
+}
+
+func (c *client) setHeaders(req *http.Request, key string) {
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", c.apiKey)
+	req.Header.Set("x-api-key", key)
 	req.Header.Set("anthropic-version", c.apiVersion)
 }
 

@@ -42,7 +42,9 @@ var ErrUnknownProvider error = &pipeline.RefusalError{Code: pipeline.CodeInvalid
 //
 // With an unpriced policy (WithUnpricedPolicy), a request for a model with
 // no price at the chosen provider is put to the policy before the provider
-// is called.
+// is called. With a credential provider (WithCredentialProvider), each call
+// then carries the credential resolved for the request's tenant and the
+// chosen provider.
 type ProviderCallMiddleware struct {
 	router    router.Service
 	providers provider.Registry
@@ -52,6 +54,9 @@ type ProviderCallMiddleware struct {
 	// prices and unpriced are the unpriced-model policy (WithUnpricedPolicy).
 	prices   PriceLookup
 	unpriced UnpricedPolicy
+
+	// credentials resolves each call's credential (WithCredentialProvider).
+	credentials provider.CredentialResolver
 }
 
 // NewProviderCall creates the core provider-calling middleware. Its model
@@ -106,6 +111,9 @@ func (m *ProviderCallMiddleware) handleCompletion(ctx context.Context, req *pipe
 	if refused := m.checkPriced(ctx, p, req.Completion.Model, false); refused != nil {
 		return nil, refused
 	}
+	if ctx, err = m.withCredential(ctx, p); err != nil {
+		return nil, err
+	}
 
 	ctx = pipeline.WithProviderName(ctx, p.Name())
 	req.State[pipeline.StateProviderName] = p.Name()
@@ -132,6 +140,9 @@ func (m *ProviderCallMiddleware) handleStream(ctx context.Context, req *pipeline
 	}
 	if refused := m.checkPriced(ctx, p, req.Completion.Model, false); refused != nil {
 		return nil, refused
+	}
+	if ctx, err = m.withCredential(ctx, p); err != nil {
+		return nil, err
 	}
 
 	ctx = pipeline.WithProviderName(ctx, p.Name())
@@ -163,6 +174,9 @@ func (m *ProviderCallMiddleware) handleEmbedding(ctx context.Context, req *pipel
 	}
 	if refused := m.checkPriced(ctx, p, req.Embedding.Model, true); refused != nil {
 		return nil, refused
+	}
+	if ctx, err = m.withCredential(ctx, p); err != nil {
+		return nil, err
 	}
 
 	ctx = pipeline.WithProviderName(ctx, p.Name())
