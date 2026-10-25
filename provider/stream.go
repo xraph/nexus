@@ -116,6 +116,10 @@ type Delta struct {
 
 	// Transcript is a partial speech transcript (realtime / live APIs).
 	Transcript string `json:"transcript,omitempty"`
+
+	// Native is the whole reply in the provider's own format, set on the
+	// EventMessageStop chunk. The accumulator copies it to Message.Native.
+	Native *NativeContent `json:"-"`
 }
 
 // Citation is a single source/grounding reference.

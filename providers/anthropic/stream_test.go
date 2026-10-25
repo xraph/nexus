@@ -2,11 +2,13 @@ package anthropic_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -908,4 +910,144 @@ func TestStreamOutlivesTheResponseHeaderTimeout(t *testing.T) {
 			t.Errorf("chunk %d = %q, want %q", i, c, want)
 		}
 	}
+}
+
+func TestStreamRebuildsNativeContent(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	ev := testutil.AnthropicEventJSON
+	delta := func(idx int, d map[string]any) string {
+		return ev("content_block_delta", map[string]any{"type": "content_block_delta", "index": idx, "delta": d})
+	}
+	start := func(idx int, b map[string]any) string {
+		return ev("content_block_start", map[string]any{"type": "content_block_start", "index": idx, "content_block": b})
+	}
+	stop := func(idx int) string {
+		return ev("content_block_stop", map[string]any{"type": "content_block_stop", "index": idx})
+	}
+	mock.Ctrl.SetStreamHandler(testutil.AnthropicStreamHandler([]string{
+		ev("message_start", map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_n", "model": nativeModel}}), "",
+		start(0, map[string]any{"type": "thinking", "thinking": "", "signature": ""}), "",
+		delta(0, map[string]any{"type": "thinking_delta", "thinking": "x"}), "",
+		delta(0, map[string]any{"type": "signature_delta", "signature": "sig1"}), "",
+		stop(0), "",
+		start(1, map[string]any{"type": "redacted_thinking", "data": "d"}), "",
+		stop(1), "",
+		start(2, map[string]any{"type": "text", "text": ""}), "",
+		delta(2, map[string]any{"type": "text_delta", "text": "hi"}), "",
+		stop(2), "",
+		start(3, map[string]any{"type": "tool_use", "id": "t1", "name": "f", "input": map[string]any{}}), "",
+		delta(3, map[string]any{"type": "input_json_delta", "partial_json": `{"a":`}), "",
+		delta(3, map[string]any{"type": "input_json_delta", "partial_json": `1}`}), "",
+		stop(3), "",
+		ev("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "tool_use"}, "usage": map[string]any{"output_tokens": 9}}), "",
+		ev("message_stop", map[string]any{"type": "message_stop"}), "",
+	}))
+
+	p := anthropic.New("test-key", anthropic.WithBaseURL(mock.Server.URL))
+	ctx := context.Background()
+	stream, err := p.CompleteStream(ctx, &provider.CompletionRequest{
+		Model:    nativeModel,
+		Messages: []provider.Message{{Role: "user", Content: "q"}},
+		Stream:   true,
+	})
+	if err != nil {
+		t.Fatalf("CompleteStream() error: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	var chunks []*provider.StreamChunk
+	for {
+		c, nextErr := stream.Next(ctx)
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			t.Fatalf("Next() error: %v", nextErr)
+		}
+		chunks = append(chunks, c)
+	}
+	last := chunks[len(chunks)-1]
+	if last.Kind != provider.EventMessageStop || last.Delta.Native == nil {
+		t.Fatalf("last chunk = %+v, want an EventMessageStop chunk carrying Native", last)
+	}
+	for _, c := range chunks[:len(chunks)-1] {
+		if c.Delta.Native != nil {
+			t.Errorf("chunk %+v carries Native before message_stop", c)
+		}
+	}
+	native := last.Delta.Native
+	if native.Provider != "anthropic" || native.Model != nativeModel {
+		t.Errorf("Native provider/model = %q/%q, want anthropic/%s", native.Provider, native.Model, nativeModel)
+	}
+
+	var blocks []map[string]any
+	if err := json.Unmarshal(native.Content, &blocks); err != nil {
+		t.Fatalf("decode native content %s: %v", native.Content, err)
+	}
+	if len(blocks) != 4 {
+		t.Fatalf("native content = %s, want 4 blocks", native.Content)
+	}
+	wantTypes := []string{"thinking", "redacted_thinking", "text", "tool_use"}
+	for i, want := range wantTypes {
+		if blocks[i]["type"] != want {
+			t.Errorf("blocks[%d].type = %v, want %s", i, blocks[i]["type"], want)
+		}
+	}
+	if blocks[0]["thinking"] != "x" || blocks[0]["signature"] != "sig1" {
+		t.Errorf("thinking block = %v, want thinking x with signature sig1", blocks[0])
+	}
+	if blocks[1]["data"] != "d" {
+		t.Errorf("redacted_thinking block = %v, want data d", blocks[1])
+	}
+	if blocks[2]["text"] != "hi" {
+		t.Errorf("text block = %v, want text hi", blocks[2])
+	}
+	if blocks[3]["id"] != "t1" || blocks[3]["name"] != "f" || !reflect.DeepEqual(blocks[3]["input"], map[string]any{"a": float64(1)}) {
+		t.Errorf("tool_use block = %v, want t1 f {\"a\":1}", blocks[3])
+	}
+
+	if _, err := stream.Next(ctx); !errors.Is(err, io.EOF) {
+		t.Errorf("Next() after the native chunk = %v, want io.EOF", err)
+	}
+}
+
+func TestStreamKeepsUnknownNativeBlocks(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	ev := testutil.AnthropicEventJSON
+	mock.Ctrl.SetStreamHandler(testutil.AnthropicStreamHandler([]string{
+		ev("message_start", map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_u", "model": nativeModel}}), "",
+		ev("content_block_start", map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "future_block", "payload": map[string]any{"k": "v"}}}), "",
+		ev("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0}), "",
+		ev("message_stop", map[string]any{"type": "message_stop"}), "",
+	}))
+	p := anthropic.New("test-key", anthropic.WithBaseURL(mock.Server.URL))
+	resp, err := streamAndAccumulate(t, p)
+	if err != nil {
+		t.Fatalf("accumulate: %v", err)
+	}
+	native := resp.Choices[0].Message.Native
+	if native == nil {
+		t.Fatal("accumulated Message.Native is nil")
+	}
+	var blocks []map[string]any
+	if err := json.Unmarshal(native.Content, &blocks); err != nil {
+		t.Fatalf("decode native content: %v", err)
+	}
+	want := []map[string]any{{"type": "future_block", "payload": map[string]any{"k": "v"}}}
+	if !reflect.DeepEqual(blocks, want) {
+		t.Errorf("native blocks = %v, want %v", blocks, want)
+	}
+}
+
+func streamAndAccumulate(t *testing.T, p *anthropic.Provider) (*provider.CompletionResponse, error) {
+	t.Helper()
+	stream, err := p.CompleteStream(context.Background(), &provider.CompletionRequest{
+		Model:    nativeModel,
+		Messages: []provider.Message{{Role: "user", Content: "q"}},
+		Stream:   true,
+	})
+	if err != nil {
+		t.Fatalf("CompleteStream() error: %v", err)
+	}
+	return provider.Accumulate(context.Background(), stream)
 }

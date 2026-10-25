@@ -419,6 +419,12 @@ func TestCompleteStream(t *testing.T) {
 			},
 		}),
 		"",
+		testutil.AnthropicEventJSON("content_block_start", map[string]any{
+			"type":          "content_block_start",
+			"index":         0,
+			"content_block": map[string]any{"type": "text", "text": ""},
+		}),
+		"",
 		testutil.AnthropicEventJSON("content_block_delta", map[string]any{
 			"type":  "content_block_delta",
 			"index": 0,
@@ -508,9 +514,17 @@ func TestCompleteStream(t *testing.T) {
 		t.Errorf("text chunk[1].Delta.Content = %q, want %q", textChunks[1].Delta.Content, " world")
 	}
 
-	// Final chunk should carry the finish reason regardless of preceding frames.
-	if chunks[len(chunks)-1].FinishReason != "stop" {
-		t.Errorf("final chunk FinishReason = %q, want %q", chunks[len(chunks)-1].FinishReason, "stop")
+	// The reply ends with one message_stop frame carrying its content
+	// blocks; the message_delta frame before it carries the finish reason.
+	last := chunks[len(chunks)-1]
+	if last.Kind != provider.EventMessageStop || last.Delta.Native == nil {
+		t.Fatalf("final chunk = %+v, want an EventMessageStop chunk carrying Native", last)
+	}
+	if got := string(last.Delta.Native.Content); got != `[{"text":"Hello world","type":"text"}]` {
+		t.Errorf("final chunk Native.Content = %s", got)
+	}
+	if reason := chunks[len(chunks)-2].FinishReason; reason != "stop" {
+		t.Errorf("message_delta chunk FinishReason = %q, want %q", reason, "stop")
 	}
 
 	// Usage should be captured

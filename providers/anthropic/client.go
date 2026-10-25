@@ -18,6 +18,8 @@ type client struct {
 	baseURL    string
 	apiVersion string
 	http       *http.Client
+	// blockBinding is the thinking block_binding mode, or "" for none.
+	blockBinding string
 }
 
 func newClient(apiKey, baseURL, apiVersion string, timeout time.Duration) *client {
@@ -98,13 +100,15 @@ type anthropicTool struct {
 }
 
 type anthropicResponse struct {
-	ID         string                  `json:"id"`
-	Type       string                  `json:"type"`
-	Role       string                  `json:"role"`
-	Model      string                  `json:"model"`
-	Content    []anthropicContentBlock `json:"content"`
-	StopReason string                  `json:"stop_reason"`
-	Usage      anthropicUsage          `json:"usage"`
+	ID    string `json:"id"`
+	Type  string `json:"type"`
+	Role  string `json:"role"`
+	Model string `json:"model"`
+	// Content is kept as the API returned it, for Message.Native; the
+	// unified fields are read from its decoded blocks.
+	Content    json.RawMessage `json:"content"`
+	StopReason string          `json:"stop_reason"`
+	Usage      anthropicUsage  `json:"usage"`
 }
 
 // anthropicUsage is the Messages API usage object. input_tokens counts only
@@ -165,6 +169,7 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 		return nil, fmt.Errorf("anthropic: create request: %w", err)
 	}
 	c.setHeaders(httpReq)
+	setBetaHeaders(httpReq, antReq)
 
 	start := time.Now()
 	httpResp, err := c.http.Do(httpReq)
@@ -183,8 +188,14 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 	if err := json.NewDecoder(httpResp.Body).Decode(&antResp); err != nil {
 		return nil, fmt.Errorf("anthropic: decode response: %w", err)
 	}
+	var blocks []anthropicContentBlock
+	if len(antResp.Content) > 0 {
+		if err := json.Unmarshal(antResp.Content, &blocks); err != nil {
+			return nil, fmt.Errorf("anthropic: decode response content: %w", err)
+		}
+	}
 
-	return c.fromAnthropicResponse(&antResp, elapsed), nil
+	return c.fromAnthropicResponse(&antResp, blocks, elapsed), nil
 }
 
 func (c *client) completeStream(ctx context.Context, req *provider.CompletionRequest) (provider.Stream, error) {
@@ -207,6 +218,7 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 		return nil, fmt.Errorf("anthropic: create request: %w", err)
 	}
 	c.setHeaders(httpReq)
+	setBetaHeaders(httpReq, antReq)
 
 	httpResp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -266,6 +278,13 @@ func (c *client) setHeaders(req *http.Request) {
 	req.Header.Set("anthropic-version", c.apiVersion)
 }
 
+// setBetaHeaders adds the anthropic-beta headers the request body needs.
+func setBetaHeaders(req *http.Request, antReq *anthropicRequest) {
+	if antReq.Thinking != nil && antReq.Thinking.BlockBinding != nil {
+		req.Header.Add("anthropic-beta", blockBindingBeta)
+	}
+}
+
 // toAnthropicRequest shapes the request for the model: thinking, effort,
 // sampling and max_tokens follow the model's traits. It fails, before any
 // call, when the model does not accept the requested effort.
@@ -308,6 +327,13 @@ func (c *client) toAnthropicRequest(req *provider.CompletionRequest, stream bool
 			})
 
 		case "assistant":
+			// An untouched reply goes back exactly as the API returned it,
+			// so its signed thinking blocks stay valid. An edited one is
+			// rebuilt below, without thinking.
+			if native := nativeReplay(&m); native != nil {
+				messages = append(messages, anthropicMessage{Role: "assistant", Content: native})
+				break
+			}
 			if len(m.ToolCalls) == 0 {
 				messages = append(messages, anthropicMessage{Role: "assistant", Content: m.Content})
 				break
@@ -335,6 +361,10 @@ func (c *client) toAnthropicRequest(req *provider.CompletionRequest, stream bool
 	}
 
 	thinking := thinkingFor(tr, listed, req.Thinking)
+	// The API accepts block_binding only on adaptive thinking.
+	if c.blockBinding != "" && thinking != nil && thinking.Type == "adaptive" {
+		thinking.BlockBinding = &anthropicBlockBinding{PrefixMismatchBehavior: c.blockBinding}
+	}
 	antReq := &anthropicRequest{
 		Model:         req.Model,
 		Messages:      messages,
@@ -440,12 +470,12 @@ func toolInput(arguments string) any {
 	return s
 }
 
-func (c *client) fromAnthropicResponse(resp *anthropicResponse, elapsed time.Duration) *provider.CompletionResponse {
+func (c *client) fromAnthropicResponse(resp *anthropicResponse, blocks []anthropicContentBlock, elapsed time.Duration) *provider.CompletionResponse {
 	var content string
 	var thinkingContent string
 	var toolCalls []provider.ToolCall
 
-	for _, block := range resp.Content {
+	for _, block := range blocks {
 		switch block.Type {
 		case "text":
 			content += block.Text
@@ -464,6 +494,11 @@ func (c *client) fromAnthropicResponse(resp *anthropicResponse, elapsed time.Dur
 		}
 	}
 
+	var native *provider.NativeContent
+	if len(blocks) > 0 {
+		native = newNative(resp.Model, resp.Content)
+	}
+
 	return &provider.CompletionResponse{
 		ID:       resp.ID,
 		Provider: "anthropic",
@@ -475,6 +510,7 @@ func (c *client) fromAnthropicResponse(resp *anthropicResponse, elapsed time.Dur
 				Role:      "assistant",
 				Content:   content,
 				ToolCalls: toolCalls,
+				Native:    native,
 			},
 			FinishReason: mapStopReason(resp.StopReason),
 		}},

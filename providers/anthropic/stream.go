@@ -29,6 +29,12 @@ type anthropicStream struct {
 	// to attach to each delta we emit.
 	toolBlocks map[int]toolBlockState
 
+	// blocks rebuilds the reply's content blocks by index for the native
+	// content sent on message_stop. replyModel is the model message_start
+	// named.
+	blocks     map[int]*nativeBlock
+	replyModel string
+
 	stopAfterFunc func() bool
 }
 
@@ -43,6 +49,7 @@ func newAnthropicStream(ctx context.Context, body io.ReadCloser, model string) *
 		scanner:    bufio.NewScanner(body),
 		model:      model,
 		toolBlocks: make(map[int]toolBlockState),
+		blocks:     make(map[int]*nativeBlock),
 	}
 	if ctx != nil {
 		s.stopAfterFunc = context.AfterFunc(ctx, func() {
@@ -75,8 +82,7 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 		if strings.HasPrefix(line, "event: ") {
 			evt := strings.TrimPrefix(line, "event: ")
 			if evt == "message_stop" {
-				s.done = true
-				return nil, io.EOF
+				return s.stop()
 			}
 			continue
 		}
@@ -97,7 +103,8 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 		switch eventType {
 		case "message_start":
 			if msg, ok := raw["message"].(map[string]any); ok {
-				s.msgID, _ = msg["id"].(string) //nolint:errcheck // zero value is fine
+				s.msgID, _ = msg["id"].(string)         //nolint:errcheck // zero value is fine
+				s.replyModel, _ = msg["model"].(string) //nolint:errcheck // zero value is fine
 			}
 			var ev struct {
 				Message struct {
@@ -119,6 +126,7 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 			continue
 
 		case "content_block_start":
+			s.startBlock(data)
 			// Capture tool_use metadata for subsequent input_json_delta chunks.
 			idx := indexOf(raw)
 			if block, ok := raw["content_block"].(map[string]any); ok {
@@ -135,6 +143,7 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 			continue
 
 		case "content_block_delta":
+			s.applyDelta(data)
 			delta, _ := raw["delta"].(map[string]any) //nolint:errcheck // zero value is fine
 			if delta == nil {
 				continue
@@ -232,6 +241,9 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 				FinishReason: mapStopReason(stopReason),
 				Usage:        s.usage,
 			}, nil
+
+		case "message_stop":
+			return s.stop()
 		}
 	}
 
@@ -241,6 +253,55 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 
 	s.done = true
 	return nil, io.EOF
+}
+
+// stop ends the stream at message_stop. A reply with content blocks ends
+// with one EventMessageStop chunk carrying them as Delta.Native; the next
+// call returns io.EOF.
+func (s *anthropicStream) stop() (*provider.StreamChunk, error) {
+	s.done = true
+	model := s.replyModel
+	if model == "" {
+		model = s.model
+	}
+	native := newNative(model, nativeContent(s.blocks))
+	if native == nil {
+		return nil, io.EOF
+	}
+	return &provider.StreamChunk{
+		ID:       s.msgID,
+		Provider: "anthropic",
+		Model:    s.model,
+		Kind:     provider.EventMessageStop,
+		Delta:    provider.Delta{Native: native},
+	}, nil
+}
+
+// startBlock records a content_block_start event's block.
+func (s *anthropicStream) startBlock(data string) {
+	var ev struct {
+		Index        int             `json:"index"`
+		ContentBlock json.RawMessage `json:"content_block"`
+	}
+	if err := json.Unmarshal([]byte(data), &ev); err != nil || len(ev.ContentBlock) == 0 {
+		return
+	}
+	s.blocks[ev.Index] = newNativeBlock(ev.ContentBlock)
+}
+
+// applyDelta folds a content_block_delta event into its block. A delta for a
+// block that never started is dropped.
+func (s *anthropicStream) applyDelta(data string) {
+	var ev struct {
+		Index int         `json:"index"`
+		Delta nativeDelta `json:"delta"`
+	}
+	if err := json.Unmarshal([]byte(data), &ev); err != nil {
+		return
+	}
+	if b, ok := s.blocks[ev.Index]; ok {
+		b.apply(&ev.Delta)
+	}
 }
 
 func (s *anthropicStream) Close() error {

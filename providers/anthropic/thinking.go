@@ -27,6 +27,8 @@ type anthropicThinking struct {
 	Type         string `json:"type"` // adaptive, enabled, disabled, between_tools
 	BudgetTokens int    `json:"budget_tokens,omitempty"`
 	Display      string `json:"display,omitempty"`
+
+	BlockBinding *anthropicBlockBinding `json:"block_binding,omitempty"`
 }
 
 type anthropicOutputConfig struct {

@@ -51,6 +51,10 @@ type Message struct {
 	Name       string     `json:"name,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
+
+	// Native is the assistant reply in the provider's own format. Keep it
+	// with the message and pass it back unchanged; see NativeContent.
+	Native *NativeContent `json:"-"`
 }
 
 // ContentPart for multimodal messages.

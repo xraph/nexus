@@ -21,6 +21,7 @@ import (
 //   - Image: last non-Partial chunk wins; otherwise the latest seen.
 //   - Usage: prefer the EventUsage / final-delta chunk; otherwise s.Usage().
 //   - FinishReason: last non-empty across chunks.
+//   - Native: the last non-nil Delta.Native becomes Message.Native.
 //
 // Accumulate stops on io.EOF and closes the stream. It does NOT close on
 // error — callers may inspect the partial response and handle cleanup.
@@ -116,6 +117,8 @@ type streamAccumulator struct {
 	finalImg  *ImageChunk
 
 	usage *Usage
+
+	native *NativeContent
 }
 
 func newAccumulator() *streamAccumulator {
@@ -164,6 +167,9 @@ func (a *streamAccumulator) add(c *StreamChunk) {
 	}
 	if d.Transcript != "" {
 		a.transcript = d.Transcript
+	}
+	if d.Native != nil {
+		a.native = d.Native
 	}
 	if len(d.Citations) > 0 {
 		a.citations = append(a.citations, d.Citations...)
@@ -285,6 +291,7 @@ func (a *streamAccumulator) finalize(s Stream) *CompletionResponse {
 					Role:      role,
 					Content:   a.contentSB.String(),
 					ToolCalls: tools,
+					Native:    a.native,
 				},
 				FinishReason: a.finishReason,
 			},

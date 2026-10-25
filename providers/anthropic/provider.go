@@ -28,7 +28,10 @@ type Provider struct {
 	baseURL    string
 	apiVersion string
 	timeout    time.Duration
-	client     *client
+	// blockBinding is the thinking block_binding prefix_mismatch_behavior,
+	// or "" to send none.
+	blockBinding string
+	client       *client
 }
 
 // New creates a new Anthropic provider.
@@ -43,6 +46,7 @@ func New(apiKey string, opts ...Option) *Provider {
 		opt(p)
 	}
 	p.client = newClient(p.apiKey, p.baseURL, p.apiVersion, p.timeout)
+	p.client.blockBinding = p.blockBinding
 	return p
 }
 
@@ -118,6 +122,16 @@ func WithTimeout(d time.Duration) Option {
 			p.timeout = d
 		}
 	}
+}
+
+// WithThinkingBlockBinding sets what the API does when a request's history
+// no longer matches the thinking blocks it signed: "drop_block" drops the
+// mismatched blocks, "error" fails the request. It adds the
+// thinking-binding-controls beta header and the thinking block_binding field
+// to requests whose thinking is adaptive, the only kind the API accepts it
+// on. An empty mode sends neither.
+func WithThinkingBlockBinding(mode string) Option {
+	return func(p *Provider) { p.blockBinding = mode }
 }
 
 // Compile-time check.
