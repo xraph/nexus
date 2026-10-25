@@ -114,6 +114,7 @@ type JSONSchemaDef struct {
 // EmbeddingRequest for text embeddings.
 type EmbeddingRequest struct {
 	Model    string   `json:"model"`
+	Provider string   `json:"provider,omitempty"` // force specific provider
 	Input    []string `json:"input"`
 	TenantID string   `json:"-"`
 	KeyID    string   `json:"-"`

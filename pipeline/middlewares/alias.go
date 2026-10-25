@@ -35,6 +35,13 @@ func (m *AliasMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 		return next(ctx)
 	}
 
+	// A request that names its provider only takes a target that provider
+	// can serve: one naming it, or one naming no provider. With none, the
+	// name is not resolved here and goes to that provider as written.
+	if named := req.Completion.Provider; named != "" {
+		targets = targetsFor(targets, named)
+	}
+
 	// Select a target based on weights
 	target := selectTarget(targets)
 	if target == nil {
@@ -43,13 +50,24 @@ func (m *AliasMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 
 	// Store original model name for logging/metrics
 	req.State[pipeline.StateOriginalModel] = req.Completion.Model
-	req.State["alias_target_provider"] = target.Provider
-	req.State["alias_target_model"] = target.Model
+	req.State[pipeline.StateAliasProvider] = target.Provider
+	req.State[pipeline.StateAliasModel] = target.Model
 
 	// Rewrite the model
 	req.Completion.Model = target.Model
 
 	return next(ctx)
+}
+
+// targetsFor keeps the targets whose provider is empty or providerName.
+func targetsFor(targets []model.AliasTarget, providerName string) []model.AliasTarget {
+	kept := make([]model.AliasTarget, 0, len(targets))
+	for _, t := range targets {
+		if t.Provider == "" || t.Provider == providerName {
+			kept = append(kept, t)
+		}
+	}
+	return kept
 }
 
 // selectTarget picks a target based on weight. If no weights, uniform random.

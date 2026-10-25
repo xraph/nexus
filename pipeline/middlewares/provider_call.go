@@ -16,8 +16,23 @@ import (
 	"github.com/xraph/nexus/router"
 )
 
+// ErrUnknownProvider refuses a request that names a provider, itself or
+// through an alias target, that is not registered. It is wrapped with the
+// name; match it with errors.Is.
+var ErrUnknownProvider error = &pipeline.RefusalError{Code: pipeline.CodeInvalidRequest, Status: 400, Message: "unknown provider"}
+
 // ProviderCallMiddleware is the core middleware that routes to a provider and
 // executes the request. It is the pipeline's terminal stage and always runs last.
+//
+// A completion or stream goes to the provider the request names, else to the
+// provider of the alias target the alias stage chose, else to the providers
+// whose catalog lists the model (the router choosing among them), else to the
+// router's choice over every provider. An embedding goes to the provider the
+// request names, else to the embeddings providers that list the model (the
+// router choosing among them), else to the first embeddings provider. A named
+// provider is never swapped for another: one that is not registered is
+// refused with ErrUnknownProvider, and one that cannot embed is refused as an
+// invalid request wrapping provider.ErrNotSupported.
 //
 // Every call to a provider gets a client span that follows the OpenTelemetry
 // GenAI conventions: "chat {model}" or "embeddings {model}", with
@@ -128,13 +143,11 @@ func (m *ProviderCallMiddleware) handleEmbedding(ctx context.Context, req *pipel
 		return nil, errors.New("nexus: embedding request is nil")
 	}
 
-	// For embeddings, pick the first provider that supports embeddings
-	allProviders := m.providers.WithCapability("embeddings")
-	if len(allProviders) == 0 {
-		return nil, pipeline.Permanent(errors.New("nexus: no providers support embeddings"))
+	p, err := m.selectEmbeddingProvider(ctx, req.Embedding)
+	if err != nil {
+		return nil, err
 	}
 
-	p := allProviders[0]
 	ctx = pipeline.WithProviderName(ctx, p.Name())
 	req.State[pipeline.StateProviderName] = p.Name()
 
@@ -149,20 +162,92 @@ func (m *ProviderCallMiddleware) handleEmbedding(ctx context.Context, req *pipel
 	return &pipeline.Response{Embedding: resp}, nil
 }
 
+// selectProvider picks the provider for a completion or a stream.
 func (m *ProviderCallMiddleware) selectProvider(ctx context.Context, req *pipeline.Request) (provider.Provider, error) {
+	if name := req.Completion.Provider; name != "" {
+		return m.named(name)
+	}
+	if name := stateString(req, pipeline.StateAliasProvider); name != "" {
+		return m.named(name)
+	}
+
 	allProviders := m.providers.All()
 	if len(allProviders) == 0 {
 		return nil, pipeline.Permanent(errors.New("nexus: no providers registered"))
 	}
+	if listed := m.listing(ctx, allProviders, req.Completion.Model); len(listed) > 0 {
+		return m.route(ctx, req.Completion, listed)
+	}
+	return m.route(ctx, req.Completion, allProviders)
+}
 
-	if m.router != nil {
-		p, err := m.router.Route(ctx, req.Completion, allProviders)
+// selectEmbeddingProvider picks the provider for an embedding. A named
+// provider that cannot embed is refused, never replaced by one that can.
+func (m *ProviderCallMiddleware) selectEmbeddingProvider(ctx context.Context, emb *provider.EmbeddingRequest) (provider.Provider, error) {
+	if name := emb.Provider; name != "" {
+		p, err := m.named(name)
 		if err != nil {
-			return nil, pipeline.Permanent(fmt.Errorf("nexus: routing: %w", err))
+			return nil, err
+		}
+		if !p.Capabilities().Supports("embeddings") {
+			return nil, pipeline.Permanent(&pipeline.RefusalError{
+				Code:    pipeline.CodeInvalidRequest,
+				Status:  400,
+				Message: fmt.Sprintf("provider %s does not embed", name),
+				Cause:   provider.ErrNotSupported,
+			})
 		}
 		return p, nil
 	}
 
-	// No router configured — use first available provider
-	return allProviders[0], nil
+	embedders := m.providers.WithCapability("embeddings")
+	if len(embedders) == 0 {
+		return nil, pipeline.Permanent(errors.New("nexus: no providers support embeddings"))
+	}
+	if listed := m.listing(ctx, embedders, emb.Model); len(listed) > 0 {
+		// Strategies route completion requests; this one carries what an
+		// embedding has in common with them.
+		return m.route(ctx, &provider.CompletionRequest{
+			Model:    emb.Model,
+			TenantID: emb.TenantID,
+			KeyID:    emb.KeyID,
+		}, listed)
+	}
+	return embedders[0], nil
+}
+
+// named returns the registered provider called name, or refuses the request.
+func (m *ProviderCallMiddleware) named(name string) (provider.Provider, error) {
+	p, ok := m.providers.Get(name)
+	if !ok {
+		return nil, pipeline.Permanent(fmt.Errorf("%w: %q", ErrUnknownProvider, name))
+	}
+	return p, nil
+}
+
+// listing keeps the candidates whose catalog lists modelID, in order.
+func (m *ProviderCallMiddleware) listing(ctx context.Context, candidates []provider.Provider, modelID string) []provider.Provider {
+	if m.catalog == nil || modelID == "" {
+		return nil
+	}
+	var listed []provider.Provider
+	for _, p := range candidates {
+		if m.catalog.Lists(ctx, p.Name(), modelID) {
+			listed = append(listed, p)
+		}
+	}
+	return listed
+}
+
+// route asks the router to choose among candidates, or takes the first
+// when no router is configured.
+func (m *ProviderCallMiddleware) route(ctx context.Context, req *provider.CompletionRequest, candidates []provider.Provider) (provider.Provider, error) {
+	if m.router == nil {
+		return candidates[0], nil
+	}
+	p, err := m.router.Route(ctx, req, candidates)
+	if err != nil {
+		return nil, pipeline.Permanent(fmt.Errorf("nexus: routing: %w", err))
+	}
+	return p, nil
 }
