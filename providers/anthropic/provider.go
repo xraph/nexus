@@ -31,7 +31,9 @@ type Provider struct {
 	// blockBinding is the thinking block_binding prefix_mismatch_behavior,
 	// or "" to send none.
 	blockBinding string
-	client       *client
+	// cache is the prompt caching setup; nil sends no cache_control.
+	cache  *CacheConfig
+	client *client
 }
 
 // New creates a new Anthropic provider.
@@ -47,6 +49,7 @@ func New(apiKey string, opts ...Option) *Provider {
 	}
 	p.client = newClient(p.apiKey, p.baseURL, p.apiVersion, p.timeout)
 	p.client.blockBinding = p.blockBinding
+	p.client.cache = p.cache
 	return p
 }
 

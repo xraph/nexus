@@ -20,6 +20,8 @@ type client struct {
 	http       *http.Client
 	// blockBinding is the thinking block_binding mode, or "" for none.
 	blockBinding string
+	// cache is the prompt caching setup, or nil for none.
+	cache *CacheConfig
 }
 
 func newClient(apiKey, baseURL, apiVersion string, timeout time.Duration) *client {
@@ -49,7 +51,7 @@ func newHTTPClient(timeout time.Duration) *http.Client {
 type anthropicRequest struct {
 	Model         string               `json:"model"`
 	Messages      []anthropicMessage   `json:"messages"`
-	System        string               `json:"system,omitempty"`
+	System        any                  `json:"system,omitempty"` // string, or []anthropicSystemBlock with caching on
 	MaxTokens     int                  `json:"max_tokens"`
 	Stream        bool                 `json:"stream,omitempty"`
 	Temperature   *float64             `json:"temperature,omitempty"`
@@ -58,6 +60,9 @@ type anthropicRequest struct {
 	Tools         []anthropicTool      `json:"tools,omitempty"`
 	Thinking      *anthropicThinking   `json:"thinking,omitempty"`
 	ToolChoice    *anthropicToolChoice `json:"tool_choice,omitempty"`
+
+	// CacheControl is the automatic breakpoint on the conversation tail.
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
 
 	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
 }
@@ -97,6 +102,8 @@ type anthropicTool struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	InputSchema any    `json:"input_schema,omitempty"`
+
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
 }
 
 type anthropicResponse struct {
@@ -368,7 +375,6 @@ func (c *client) toAnthropicRequest(req *provider.CompletionRequest, stream bool
 	antReq := &anthropicRequest{
 		Model:         req.Model,
 		Messages:      messages,
-		System:        system,
 		MaxTokens:     maxTokensFor(req, stream, thinking),
 		Stream:        stream,
 		StopSequences: req.Stop,
@@ -392,6 +398,8 @@ func (c *client) toAnthropicRequest(req *provider.CompletionRequest, stream bool
 			InputSchema: t.Function.Parameters,
 		})
 	}
+
+	c.cache.apply(antReq, system)
 
 	toolChoice, err := toolChoiceFor(req, tr)
 	if err != nil {
