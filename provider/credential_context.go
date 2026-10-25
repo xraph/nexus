@@ -19,7 +19,16 @@ type Credential struct {
 	// String and GoString leave it out.
 	APIKey string
 	// BaseURL replaces the provider's configured base URL for the request.
-	// "" keeps the configured one.
+	// "" keeps the configured one. A credential with a BaseURL brings its
+	// own APIKey: the provider sends that key, empty or not, and never its
+	// configured one, to the host this URL names.
+	//
+	// Nexus trusts the URL as given and sends the request body there. A
+	// host that lets tenants choose it must validate it first: allow only
+	// https (or the schemes it means to), refuse private, loopback,
+	// link-local and cloud metadata addresses, and guard against DNS
+	// rebinding by checking the address the name resolves to at dial time,
+	// not only when the URL is saved.
 	BaseURL string
 }
 
@@ -49,6 +58,10 @@ func (c Credential) GoString() string { return c.String() }
 // the provider's own key. Any other error refuses the request: nothing is
 // sent and the gateway does not fall back to the provider's key. The error
 // must not contain a key.
+//
+// A resolver that returns a BaseURL is choosing where the gateway sends the
+// request, its body and the key. Nexus does not check that URL; validate it
+// as Credential.BaseURL describes before returning it.
 type CredentialResolver interface {
 	ResolveCredential(ctx context.Context, providerName string) (Credential, error)
 }

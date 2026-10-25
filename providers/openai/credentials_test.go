@@ -233,3 +233,48 @@ func TestOpenAITenantKeyDropsTheOperatorsOrganization(t *testing.T) {
 		t.Fatalf("OpenAI-Organization = %q, want org-operator with the configured key", got)
 	}
 }
+
+func TestOpenAIBaseURLCredentialNeverGetsTheConfiguredKey(t *testing.T) {
+	configured := streamingMock(t)
+	chosen := streamingMock(t)
+	p := New("global", WithBaseURL(configured.Server.URL), WithOrgID("org-operator"))
+
+	ctx := provider.WithCredential(context.Background(), provider.Credential{BaseURL: chosen.Server.URL})
+	if err := callKinds["complete"](ctx, p); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	h := chosen.Ctrl.GetLastHeader()
+	if h.Get("Authorization") != "" || h.Get("OpenAI-Organization") != "" {
+		t.Fatalf("the chosen host got the operator's credentials: Authorization %q, org %q", h.Get("Authorization"), h.Get("OpenAI-Organization"))
+	}
+	if configured.Ctrl.GetLastPath() != "" {
+		t.Fatal("the configured base URL was called")
+	}
+}
+
+func TestOpenAIShortKeysAreNotCutFromErrors(t *testing.T) {
+	m := testutil.NewMockServer(t)
+	m.Ctrl.SetStatusCode(http.StatusUnauthorized)
+	p := New("k", WithBaseURL(m.Server.URL))
+	err := callKinds["complete"](context.Background(), p)
+	if err == nil || !strings.Contains(err.Error(), "mock error") {
+		t.Fatalf("err = %v, want the body intact (a one-letter key must not be cut out of it)", err)
+	}
+}
+
+// otherRoundTripper stands in for an http.DefaultTransport someone replaced.
+type otherRoundTripper struct{}
+
+func (otherRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("unused")
+}
+
+func TestReplacedDefaultTransportKeepsTheStockSettings(t *testing.T) {
+	tr := newTransport(otherRoundTripper{}, time.Minute)
+	if tr.DialContext == nil || tr.TLSHandshakeTimeout == 0 || tr.IdleConnTimeout == 0 || !tr.ForceAttemptHTTP2 || tr.Proxy == nil {
+		t.Fatalf("fallback transport lost the stock settings: %+v", tr)
+	}
+	if tr.ResponseHeaderTimeout != time.Minute {
+		t.Fatalf("ResponseHeaderTimeout = %v, want 1m", tr.ResponseHeaderTimeout)
+	}
+}

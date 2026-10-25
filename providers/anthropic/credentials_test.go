@@ -147,3 +147,21 @@ func TestAnthropicErrorsNeverCarryTheKey(t *testing.T) {
 		})
 	}
 }
+
+func TestAnthropicBaseURLCredentialNeverGetsTheConfiguredKey(t *testing.T) {
+	for name, call := range anthropicCalls {
+		t.Run(name, func(t *testing.T) {
+			configured := anthropicMock(t)
+			chosen := anthropicMock(t)
+			p := anthropic.New("global", anthropic.WithBaseURL(configured.Server.URL))
+
+			ctx := provider.WithCredential(context.Background(), provider.Credential{BaseURL: chosen.Server.URL})
+			if err := call(ctx, p); !errors.Is(err, provider.ErrMissingAPIKey) {
+				t.Fatalf("err = %v, want ErrMissingAPIKey: a credential with a base URL brings its own key", err)
+			}
+			if chosen.Ctrl.GetLastPath() != "" || configured.Ctrl.GetLastPath() != "" {
+				t.Fatal("a request went out")
+			}
+		})
+	}
+}

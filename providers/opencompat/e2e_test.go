@@ -224,3 +224,28 @@ func TestOpenCompatStreamOutlivesTheResponseHeaderTimeout(t *testing.T) {
 		t.Fatalf("content = %v, want all five chunks", got)
 	}
 }
+
+func TestOpenCompatChosenBaseURLGoesKeyless(t *testing.T) {
+	configured := testutil.NewMockServer(t)
+	chosen := testutil.NewMockServer(t)
+	gw := nexus.New(
+		nexus.WithProvider(opencompat.New(compatName, configured.Server.URL, "sk-operator-global")),
+		nexus.WithCredentialProvider(endpoint{BaseURL: chosen.Server.URL}),
+	)
+	if err := gw.Initialize(context.Background()); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	t.Cleanup(func() { _ = gw.Shutdown(context.Background()) })
+
+	if _, err := gw.Engine().Complete(context.Background(), &provider.CompletionRequest{
+		Provider: compatName, Model: "local-model", Messages: []provider.Message{{Role: "user", Content: "hi"}},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got, sent := chosen.Ctrl.GetLastHeader()["Authorization"]; sent {
+		t.Fatalf("the chosen host got an Authorization header %q, want a keyless request", got)
+	}
+	if configured.Ctrl.GetLastPath() != "" {
+		t.Fatal("the configured base URL was called")
+	}
+}

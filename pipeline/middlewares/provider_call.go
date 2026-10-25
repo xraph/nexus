@@ -124,7 +124,7 @@ func (m *ProviderCallMiddleware) handleCompletion(ctx context.Context, req *pipe
 	resp, err := p.Complete(ctx, req.Completion)
 	call.end(ctx, completionResult(resp), err)
 	if err != nil {
-		return nil, fmt.Errorf("nexus: provider %s: %w", p.Name(), err)
+		return nil, permanentIfMisconfigured(fmt.Errorf("nexus: provider %s: %w", p.Name(), err))
 	}
 
 	// Store timing
@@ -153,7 +153,7 @@ func (m *ProviderCallMiddleware) handleStream(ctx context.Context, req *pipeline
 	stream, err := p.CompleteStream(ctx, req.Completion)
 	if err != nil {
 		call.end(ctx, genAIResult{}, err)
-		return nil, fmt.Errorf("nexus: provider %s stream: %w", p.Name(), err)
+		return nil, permanentIfMisconfigured(fmt.Errorf("nexus: provider %s stream: %w", p.Name(), err))
 	}
 	if stream == nil {
 		call.end(ctx, genAIResult{}, nil)
@@ -187,7 +187,7 @@ func (m *ProviderCallMiddleware) handleEmbedding(ctx context.Context, req *pipel
 	resp, err := p.Embed(ctx, req.Embedding)
 	call.end(ctx, embeddingResult(resp), err)
 	if err != nil {
-		return nil, fmt.Errorf("nexus: provider %s embed: %w", p.Name(), err)
+		return nil, permanentIfMisconfigured(fmt.Errorf("nexus: provider %s embed: %w", p.Name(), err))
 	}
 
 	return &pipeline.Response{Embedding: resp}, nil
@@ -281,4 +281,14 @@ func (m *ProviderCallMiddleware) route(ctx context.Context, req *provider.Comple
 		return nil, pipeline.Permanent(fmt.Errorf("nexus: routing: %w", err))
 	}
 	return p, nil
+}
+
+// permanentIfMisconfigured marks a provider error that another attempt
+// cannot fix, a missing key or base URL, as permanent, so the retry stage
+// gives up on it at once.
+func permanentIfMisconfigured(err error) error {
+	if errors.Is(err, provider.ErrMissingAPIKey) || errors.Is(err, provider.ErrMissingBaseURL) {
+		return pipeline.Permanent(err)
+	}
+	return err
 }

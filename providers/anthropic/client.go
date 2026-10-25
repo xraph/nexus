@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -37,14 +38,33 @@ func newClient(apiKey, baseURL, apiVersion string, timeout time.Duration) *clien
 // timeout would also cut a long stream after its headers arrived, so the
 // client sets none and leaves the rest to the caller's context.
 func newHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{Transport: newTransport(http.DefaultTransport, timeout)}
+}
+
+// newTransport is a copy of def, or the stock settings when def is not an
+// *http.Transport, with the response-header timeout set.
+func newTransport(def http.RoundTripper, timeout time.Duration) *http.Transport {
 	var transport *http.Transport
-	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+	if base, ok := def.(*http.Transport); ok {
 		transport = base.Clone()
 	} else {
-		transport = &http.Transport{Proxy: http.ProxyFromEnvironment}
+		// Someone replaced http.DefaultTransport: start from the stock
+		// settings, so dial, TLS and idle timeouts and HTTP/2 still apply.
+		transport = &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
 	}
 	transport.ResponseHeaderTimeout = timeout
-	return &http.Client{Transport: transport}
+	return transport
 }
 
 // Anthropic messages API request format.
@@ -274,20 +294,20 @@ func (c *client) ping(ctx context.Context) error {
 	return fmt.Errorf("anthropic: health check failed with status %d", httpResp.StatusCode)
 }
 
-// effective returns the key and base URL one request is sent with: the
-// context credential's (provider.WithCredential) where it sets them, else
-// the configured ones.
+// effective returns the key and base URL one request is sent with. A
+// context credential (provider.WithCredential) with a base URL brings its
+// own key, empty or not: the configured key never goes to a host the
+// credential chose. One with only a key keeps the configured base URL.
 func (c *client) effective(ctx context.Context) (key, base string) {
-	key, base = c.apiKey, c.baseURL
-	if cred, ok := provider.CredentialFromContext(ctx); ok {
-		if cred.APIKey != "" {
-			key = cred.APIKey
-		}
-		if cred.BaseURL != "" {
-			base = strings.TrimRight(cred.BaseURL, "/")
-		}
+	cred, ok := provider.CredentialFromContext(ctx)
+	switch {
+	case !ok:
+		return c.apiKey, c.baseURL
+	case cred.BaseURL != "":
+		return cred.APIKey, strings.TrimRight(cred.BaseURL, "/")
+	default:
+		return cred.APIKey, c.baseURL
 	}
-	return key, base
 }
 
 // requireEndpoint fails fast when the request has no key or no base URL.
@@ -306,9 +326,14 @@ func requireEndpoint(key, base string) error {
 
 // apiError reports a non-200 answer. The body is kept for the cause, with
 // the key the request was sent with cut out of it, in case it is echoed.
+// minRedactedKey is the shortest key cut out of an error body. A shorter
+// one (a placeholder like "k" for a server that takes no key) would mangle
+// the body without hiding a real secret.
+const minRedactedKey = 8
+
 func apiError(status int, body []byte, key string) error {
 	text := string(body)
-	if key != "" {
+	if len(key) >= minRedactedKey {
 		text = strings.ReplaceAll(text, key, "[redacted]")
 	}
 	return fmt.Errorf("anthropic: API error (status %d): %s", status, text)

@@ -329,3 +329,45 @@ func TestCredentialIsResolvedOnEveryAttempt(t *testing.T) {
 		}
 	}
 }
+
+// misconfigured is a provider that fails every call with err.
+type misconfigured struct {
+	*routed
+	err error
+}
+
+func (p *misconfigured) Complete(_ context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
+	p.record(req.Model)
+	return nil, p.err
+}
+
+func (p *misconfigured) CompleteStream(_ context.Context, req *provider.CompletionRequest) (provider.Stream, error) {
+	p.record(req.Model)
+	return nil, p.err
+}
+
+func (p *misconfigured) Embed(_ context.Context, req *provider.EmbeddingRequest) (*provider.EmbeddingResponse, error) {
+	p.record(req.Model)
+	return nil, p.err
+}
+
+func TestMissingKeyOrBaseURLIsNotRetried(t *testing.T) {
+	for _, sentinel := range []error{provider.ErrMissingAPIKey, provider.ErrMissingBaseURL} {
+		for _, typ := range credentialKinds {
+			t.Run(sentinel.Error()+"/"+string(typ), func(t *testing.T) {
+				p := &misconfigured{routed: newRouted("openai", true, "gpt-4o"), err: fmt.Errorf("openai: %w", sentinel)}
+				reg := provider.NewRegistry()
+				reg.Register(p)
+				mw := middlewares.NewProviderCall(nil, reg)
+
+				attempts, err := callOnceThroughRetry(t, mw, requestOf(typ, "gpt-4o", "openai"))
+				if !errors.Is(err, sentinel) || !pipeline.IsPermanent(err) {
+					t.Fatalf("err = %v, want %v marked permanent", err, sentinel)
+				}
+				if attempts != 1 || p.Calls() != 1 {
+					t.Fatalf("attempts %d, provider calls %d; want 1 and 1", attempts, p.Calls())
+				}
+			})
+		}
+	}
+}
