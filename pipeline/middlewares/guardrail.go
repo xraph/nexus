@@ -83,6 +83,11 @@ func (m *GuardrailMiddleware) Process(ctx context.Context, req *pipeline.Request
 			for i := range resp.Completion.Choices {
 				if i < len(outputResult.Messages) {
 					resp.Completion.Choices[i].Message = outputResult.Messages[i]
+					// Native still holds the text and thinking the guard
+					// rewrote. Dropping it keeps the original out of what
+					// consumers store; the turn is rebuilt from the
+					// rewritten fields, without thinking, on replay.
+					resp.Completion.Choices[i].Message.Native = nil
 				}
 			}
 		}

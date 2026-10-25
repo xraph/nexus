@@ -216,3 +216,41 @@ func TestThinkingBlockBindingIsSentOnlyWithAdaptiveThinking(t *testing.T) {
 		})
 	}
 }
+
+func TestThinkingBlockBindingAcceptsOnlyKnownModes(t *testing.T) {
+	cases := []struct {
+		mode string
+		want string // "" means no block_binding and no beta header
+	}{
+		{"error", "error"},
+		{"drop_block", "drop_block"},
+		{"bogus", ""},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		t.Run("mode "+tc.mode, func(t *testing.T) {
+			mock := testutil.NewMockServer(t)
+			p := anthropic.New("test-key", anthropic.WithBaseURL(mock.Server.URL), anthropic.WithThinkingBlockBinding(tc.mode))
+			completeWith(t, mock, p, &provider.CompletionRequest{Model: "claude-opus-5-5", Thinking: &provider.ThinkingConfig{Enabled: true}})
+
+			var thinking struct {
+				BlockBinding *struct {
+					PrefixMismatchBehavior string `json:"prefix_mismatch_behavior"`
+				} `json:"block_binding"`
+			}
+			if err := json.Unmarshal(lastBody(t, mock)["thinking"], &thinking); err != nil {
+				t.Fatalf("decode thinking: %v", err)
+			}
+			got := ""
+			if thinking.BlockBinding != nil {
+				got = thinking.BlockBinding.PrefixMismatchBehavior
+			}
+			if got != tc.want {
+				t.Errorf("prefix_mismatch_behavior = %q, want %q", got, tc.want)
+			}
+			if beta := mock.Ctrl.GetLastHeader().Get("anthropic-beta"); (beta != "") != (tc.want != "") {
+				t.Errorf("anthropic-beta = %q with mode %q", beta, tc.mode)
+			}
+		})
+	}
+}

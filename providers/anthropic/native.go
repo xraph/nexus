@@ -151,7 +151,9 @@ type nativeDelta struct {
 	Citation    json.RawMessage `json:"citation"`
 }
 
-func (b *nativeBlock) apply(d *nativeDelta) {
+// apply folds a delta into the block. It reports false for a delta type it
+// does not know, whose content the rebuilt block would miss.
+func (b *nativeBlock) apply(d *nativeDelta) bool {
 	switch d.Type {
 	case "text_delta":
 		b.hasText = true
@@ -171,7 +173,10 @@ func (b *nativeBlock) apply(d *nativeDelta) {
 			b.hasCitations = true
 			b.citations = append(b.citations, d.Citation)
 		}
+	default:
+		return false
 	}
+	return true
 }
 
 func (b *nativeBlock) build() json.RawMessage {

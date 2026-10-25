@@ -11,8 +11,9 @@ import "encoding/json"
 // provider that recognises it sends Content as is while the message still
 // matches it, and rebuilds the turn from the unified fields otherwise.
 //
-// It is never serialized, so it does not survive the response or stream
-// cache.
+// It is never serialized, and the response and stream caches drop it on
+// every backend, so a cached reply carries none. An output guard that
+// rewrites a message drops it too.
 type NativeContent struct {
 	// Provider names the provider whose wire format Content is in.
 	Provider string `json:"provider"`

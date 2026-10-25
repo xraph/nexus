@@ -171,7 +171,7 @@ func (m *CacheMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 	// still passes through (an output guard's redaction, output transforms)
 	// never write into the stored entry.
 	if resp != nil && resp.Completion != nil {
-		_ = m.cache.Set(ctx, key, copyCompletion(resp.Completion)) //nolint:errcheck // best-effort cache store
+		_ = m.cache.Set(ctx, key, cacheableCompletion(resp.Completion)) //nolint:errcheck // best-effort cache store
 	}
 
 	return resp, nil
@@ -187,6 +187,18 @@ func copyCompletion(r *provider.CompletionResponse) *provider.CompletionResponse
 	cp.Choices = slices.Clone(r.Choices)
 	cp.State = maps.Clone(r.State)
 	return &cp
+}
+
+// cacheableCompletion returns the copy of r the cache stores. Native content
+// is dropped: the serializing stores never keep it, and a hit must never
+// hand one caller's signed thinking to another. The caller's own response
+// keeps it.
+func cacheableCompletion(r *provider.CompletionResponse) *provider.CompletionResponse {
+	cp := copyCompletion(r)
+	for i := range cp.Choices {
+		cp.Choices[i].Message.Native = nil
+	}
+	return cp
 }
 
 // tenantScoped returns the request the cache key is computed from: the
@@ -291,6 +303,8 @@ func (s *recordingStream) recordFrame(c *provider.StreamChunk) {
 	}
 	s.bytesUsed += size
 	cp := *c
+	// Like a cached response, a cached stream never replays native content.
+	cp.Delta.Native = nil
 	s.frames = append(s.frames, cache.StreamFrame{
 		Chunk:    &cp,
 		OffsetMs: time.Since(s.startAt).Milliseconds(),

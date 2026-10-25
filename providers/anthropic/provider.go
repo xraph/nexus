@@ -129,9 +129,14 @@ func WithTimeout(d time.Duration) Option {
 // mismatched blocks, "error" fails the request. It adds the
 // thinking-binding-controls beta header and the thinking block_binding field
 // to requests whose thinking is adaptive, the only kind the API accepts it
-// on. An empty mode sends neither.
+// on. Any other mode is ignored and the provider keeps its default, which
+// sends neither.
 func WithThinkingBlockBinding(mode string) Option {
-	return func(p *Provider) { p.blockBinding = mode }
+	return func(p *Provider) {
+		if mode == "drop_block" || mode == "error" {
+			p.blockBinding = mode
+		}
+	}
 }
 
 // Compile-time check.

@@ -34,6 +34,9 @@ type anthropicStream struct {
 	// named.
 	blocks     map[int]*nativeBlock
 	replyModel string
+	// nativeLost is set when a delta could not be folded into its block, so
+	// the rebuilt content would differ from the reply and is not sent.
+	nativeLost bool
 
 	stopAfterFunc func() bool
 }
@@ -255,11 +258,14 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 	return nil, io.EOF
 }
 
-// stop ends the stream at message_stop. A reply with content blocks ends
-// with one EventMessageStop chunk carrying them as Delta.Native; the next
-// call returns io.EOF.
+// stop ends the stream at message_stop. A reply with content blocks, all of
+// them rebuilt in full, ends with one EventMessageStop chunk carrying them as
+// Delta.Native; the next call returns io.EOF.
 func (s *anthropicStream) stop() (*provider.StreamChunk, error) {
 	s.done = true
+	if s.nativeLost {
+		return nil, io.EOF
+	}
 	model := s.replyModel
 	if model == "" {
 		model = s.model
@@ -289,18 +295,22 @@ func (s *anthropicStream) startBlock(data string) {
 	s.blocks[ev.Index] = newNativeBlock(ev.ContentBlock)
 }
 
-// applyDelta folds a content_block_delta event into its block. A delta for a
-// block that never started is dropped.
+// applyDelta folds a content_block_delta event into its block. A delta of an
+// unknown type, for a block that never started, or that does not decode
+// loses content, so the reply then ends without native content and the turn
+// is rebuilt from its fields on replay.
 func (s *anthropicStream) applyDelta(data string) {
 	var ev struct {
 		Index int         `json:"index"`
 		Delta nativeDelta `json:"delta"`
 	}
 	if err := json.Unmarshal([]byte(data), &ev); err != nil {
+		s.nativeLost = true
 		return
 	}
-	if b, ok := s.blocks[ev.Index]; ok {
-		b.apply(&ev.Delta)
+	b, ok := s.blocks[ev.Index]
+	if !ok || !b.apply(&ev.Delta) {
+		s.nativeLost = true
 	}
 }
 

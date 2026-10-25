@@ -1051,3 +1051,36 @@ func streamAndAccumulate(t *testing.T, p *anthropic.Provider) (*provider.Complet
 	}
 	return provider.Accumulate(context.Background(), stream)
 }
+
+func TestStreamWithAnUnknownDeltaCarriesNoNative(t *testing.T) {
+	ev := testutil.AnthropicEventJSON
+	cases := map[string][]string{
+		"unknown delta type": {
+			ev("content_block_start", map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "text", "text": ""}}), "",
+			ev("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "text_delta", "text": "hi"}}), "",
+			ev("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "future_delta", "x": 1}}), "",
+		},
+		"delta for a block that never started": {
+			ev("content_block_start", map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "text", "text": ""}}), "",
+			ev("content_block_delta", map[string]any{"type": "content_block_delta", "index": 1, "delta": map[string]any{"type": "text_delta", "text": "lost"}}), "",
+		},
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			mock := testutil.NewMockServer(t)
+			lines := make([]string, 0, len(body)+4)
+			lines = append(lines, ev("message_start", map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_x", "model": nativeModel}}), "")
+			lines = append(lines, body...)
+			lines = append(lines, ev("message_stop", map[string]any{"type": "message_stop"}), "")
+			mock.Ctrl.SetStreamHandler(testutil.AnthropicStreamHandler(lines))
+			p := anthropic.New("test-key", anthropic.WithBaseURL(mock.Server.URL))
+			resp, err := streamAndAccumulate(t, p)
+			if err != nil {
+				t.Fatalf("accumulate: %v", err)
+			}
+			if native := resp.Choices[0].Message.Native; native != nil {
+				t.Fatalf("Native = %s, want none: the stream had content the rebuild cannot carry", native.Content)
+			}
+		})
+	}
+}
