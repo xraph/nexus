@@ -18,8 +18,10 @@ type anthropicStream struct {
 	usage   *provider.Usage
 	done    bool
 	msgID   string
-	// inputTokens captured from message_start.
-	inputTokens int
+	// wireUsage merges the usage objects of message_start and message_delta:
+	// each event reports only some fields, and a later value replaces an
+	// earlier one.
+	wireUsage anthropicUsage
 
 	// toolBlocks maps Anthropic content-block indexes to in-flight tool
 	// metadata (id + name). content_block_start fires first, then a stream
@@ -96,12 +98,14 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 		case "message_start":
 			if msg, ok := raw["message"].(map[string]any); ok {
 				s.msgID, _ = msg["id"].(string) //nolint:errcheck // zero value is fine
-				if u, ok := msg["usage"].(map[string]any); ok {
-					if f, ok := u["input_tokens"].(float64); ok {
-						s.inputTokens = int(f)
-						s.usage = &provider.Usage{PromptTokens: s.inputTokens}
-					}
-				}
+			}
+			var ev struct {
+				Message struct {
+					Usage json.RawMessage `json:"usage"`
+				} `json:"message"`
+			}
+			if err := json.Unmarshal([]byte(data), &ev); err == nil {
+				s.mergeUsage(ev.Message.Usage)
 			}
 			return &provider.StreamChunk{
 				ID:       s.msgID,
@@ -208,20 +212,12 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 			}
 
 		case "message_delta":
-			// Final delta with stop_reason and usage.
-			if u, ok := raw["usage"].(map[string]any); ok {
-				out, _ := u["output_tokens"].(float64) //nolint:errcheck // zero value is fine
-				outputTokens := int(out)
-				promptTokens := s.inputTokens
-				if in, ok := u["input_tokens"].(float64); ok {
-					promptTokens = int(in)
-				}
-				total := promptTokens + outputTokens
-				s.usage = &provider.Usage{
-					PromptTokens:     promptTokens,
-					CompletionTokens: outputTokens,
-					TotalTokens:      total,
-				}
+			// Final delta with stop_reason and the cumulative usage.
+			var ev struct {
+				Usage json.RawMessage `json:"usage"`
+			}
+			if err := json.Unmarshal([]byte(data), &ev); err == nil {
+				s.mergeUsage(ev.Usage)
 			}
 			stopReason, _ := raw["stop_reason"].(string) //nolint:errcheck // zero value is fine
 			if stopReason == "" {
@@ -234,6 +230,7 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 				Provider:     "anthropic",
 				Model:        s.model,
 				FinishReason: mapStopReason(stopReason),
+				Usage:        s.usage,
 			}, nil
 		}
 	}
@@ -256,6 +253,22 @@ func (s *anthropicStream) Close() error {
 
 func (s *anthropicStream) Usage() *provider.Usage {
 	return s.usage
+}
+
+// mergeUsage folds one event's usage object into the running usage. Fields
+// the event leaves out keep their earlier values. An absent or malformed
+// object changes nothing.
+func (s *anthropicStream) mergeUsage(raw json.RawMessage) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return
+	}
+	merged := s.wireUsage
+	if err := json.Unmarshal(raw, &merged); err != nil {
+		return
+	}
+	s.wireUsage = merged
+	u := merged.toProvider()
+	s.usage = &u
 }
 
 // indexOf reads the top-level `index` field from an Anthropic SSE event.

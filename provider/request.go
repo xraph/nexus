@@ -38,6 +38,10 @@ type ThinkingConfig struct {
 	Enabled         bool `json:"enabled,omitempty"`
 	BudgetTokens    int  `json:"budget_tokens,omitempty"`
 	IncludeThinking bool `json:"include_thinking,omitempty"`
+	// Effort steers how much the model thinks and spends: "low", "medium",
+	// "high", "xhigh" or "max". Empty keeps the model's default. A provider
+	// that knows the model rejects a level the model does not accept.
+	Effort string `json:"effort,omitempty"`
 }
 
 // Message represents a conversation message.

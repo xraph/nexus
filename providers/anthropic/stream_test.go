@@ -3,8 +3,12 @@ package anthropic_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/providers/anthropic"
@@ -760,5 +764,148 @@ func TestStream_UsageNilBeforeMessageDelta(t *testing.T) {
 	}
 	if usage.CompletionTokens != 10 {
 		t.Errorf("Usage.CompletionTokens = %d, want 10", usage.CompletionTokens)
+	}
+}
+
+// --------------------------------------------------------------------
+// Cache usage and timeouts
+// --------------------------------------------------------------------
+
+func TestStreamUsageReadsCacheTokens(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	lines := []string{
+		testutil.AnthropicEventJSON("message_start", map[string]any{
+			"type": "message_start",
+			"message": map[string]any{
+				"id":    "msg_cache",
+				"model": "claude-opus-5-5",
+				"usage": map[string]any{
+					"input_tokens":                100,
+					"cache_read_input_tokens":     600,
+					"cache_creation_input_tokens": 300,
+					"cache_creation": map[string]any{
+						"ephemeral_5m_input_tokens": 200,
+						"ephemeral_1h_input_tokens": 100,
+					},
+					"output_tokens": 1,
+				},
+			},
+		}),
+		"",
+		testutil.AnthropicEventJSON("content_block_delta", map[string]any{
+			"type":  "content_block_delta",
+			"index": 0,
+			"delta": map[string]any{"type": "text_delta", "text": "OK"},
+		}),
+		"",
+		testutil.AnthropicEventJSON("message_delta", map[string]any{
+			"type":  "message_delta",
+			"delta": map[string]any{"stop_reason": "end_turn"},
+			"usage": map[string]any{
+				"input_tokens":                100,
+				"cache_read_input_tokens":     600,
+				"cache_creation_input_tokens": 300,
+				"output_tokens":               50,
+			},
+		}),
+		"",
+		testutil.AnthropicEventJSON("message_stop", map[string]any{"type": "message_stop"}),
+		"",
+	}
+	mock.Ctrl.SetStreamHandler(testutil.AnthropicStreamHandler(lines))
+
+	p := anthropic.New("test-key", anthropic.WithBaseURL(mock.Server.URL))
+	ctx := context.Background()
+	stream, err := p.CompleteStream(ctx, &provider.CompletionRequest{
+		Model:    "claude-opus-5-5",
+		Messages: []provider.Message{{Role: "user", Content: "Hi"}},
+		Stream:   true,
+	})
+	if err != nil {
+		t.Fatalf("CompleteStream() error: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	for {
+		_, err := stream.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next() error: %v", err)
+		}
+	}
+
+	want := provider.Usage{
+		PromptTokens:         1000,
+		CompletionTokens:     50,
+		CacheReadTokens:      600,
+		CacheWriteTokens:     300,
+		CacheWriteLongTokens: 100,
+		TotalTokens:          1050,
+	}
+	got := stream.Usage()
+	if got == nil {
+		t.Fatal("Usage() = nil")
+	}
+	if *got != want {
+		t.Errorf("Usage = %+v, want %+v", *got, want)
+	}
+}
+
+func TestStreamOutlivesTheResponseHeaderTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush()
+		for i := range 5 {
+			time.Sleep(40 * time.Millisecond)
+			_, _ = fmt.Fprintf(w, "%s\n\n", testutil.AnthropicEventJSON("content_block_delta", map[string]any{
+				"type":  "content_block_delta",
+				"index": 0,
+				"delta": map[string]any{"type": "text_delta", "text": fmt.Sprintf("chunk%d", i)},
+			}))
+			flusher.Flush()
+		}
+		_, _ = fmt.Fprintf(w, "%s\n\n", testutil.AnthropicEventJSON("message_stop", map[string]any{"type": "message_stop"}))
+		flusher.Flush()
+	}))
+	t.Cleanup(srv.Close)
+
+	p := anthropic.New("test-key", anthropic.WithBaseURL(srv.URL), anthropic.WithTimeout(50*time.Millisecond))
+	ctx := context.Background()
+	stream, err := p.CompleteStream(ctx, &provider.CompletionRequest{
+		Model:    "claude-opus-5-5",
+		Messages: []provider.Message{{Role: "user", Content: "Hi"}},
+		Stream:   true,
+	})
+	if err != nil {
+		t.Fatalf("CompleteStream() error: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	var got []string
+	for {
+		chunk, err := stream.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next() error after %d chunks: %v", len(got), err)
+		}
+		got = append(got, chunk.Delta.Content)
+	}
+	if len(got) != 5 {
+		t.Fatalf("got %d chunks %q, want 5", len(got), got)
+	}
+	for i, c := range got {
+		if want := fmt.Sprintf("chunk%d", i); c != want {
+			t.Errorf("chunk %d = %q, want %q", i, c, want)
+		}
 	}
 }

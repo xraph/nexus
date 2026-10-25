@@ -13,22 +13,34 @@ import (
 	"github.com/xraph/nexus/provider"
 )
 
-const anthropicAPIVersion = "2023-06-01"
-
 type client struct {
-	apiKey  string
-	baseURL string
-	http    *http.Client
+	apiKey     string
+	baseURL    string
+	apiVersion string
+	http       *http.Client
 }
 
-func newClient(apiKey, baseURL string) *client {
+func newClient(apiKey, baseURL, apiVersion string, timeout time.Duration) *client {
 	return &client{
-		apiKey:  apiKey,
-		baseURL: baseURL,
-		http: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		apiKey:     apiKey,
+		baseURL:    baseURL,
+		apiVersion: apiVersion,
+		http:       newHTTPClient(timeout),
 	}
+}
+
+// newHTTPClient bounds only the wait for response headers. A whole-request
+// timeout would also cut a long stream after its headers arrived, so the
+// client sets none and leaves the rest to the caller's context.
+func newHTTPClient(timeout time.Duration) *http.Client {
+	var transport *http.Transport
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = base.Clone()
+	} else {
+		transport = &http.Transport{Proxy: http.ProxyFromEnvironment}
+	}
+	transport.ResponseHeaderTimeout = timeout
+	return &http.Client{Transport: transport}
 }
 
 // Anthropic messages API request format.
@@ -43,6 +55,8 @@ type anthropicRequest struct {
 	StopSequences []string           `json:"stop_sequences,omitempty"`
 	Tools         []anthropicTool    `json:"tools,omitempty"`
 	Thinking      *anthropicThinking `json:"thinking,omitempty"`
+
+	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
 }
 
 type anthropicMessage struct {
@@ -75,11 +89,6 @@ type anthropicTool struct {
 	InputSchema any    `json:"input_schema,omitempty"`
 }
 
-type anthropicThinking struct {
-	Type         string `json:"type"`
-	BudgetTokens int    `json:"budget_tokens,omitempty"`
-}
-
 type anthropicResponse struct {
 	ID         string                  `json:"id"`
 	Type       string                  `json:"type"`
@@ -87,10 +96,36 @@ type anthropicResponse struct {
 	Model      string                  `json:"model"`
 	Content    []anthropicContentBlock `json:"content"`
 	StopReason string                  `json:"stop_reason"`
-	Usage      struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
-	} `json:"usage"`
+	Usage      anthropicUsage          `json:"usage"`
+}
+
+// anthropicUsage is the Messages API usage object. input_tokens counts only
+// the uncached part of the prompt; cache reads and writes are reported
+// beside it.
+type anthropicUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheCreation            struct {
+		Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
+}
+
+// toProvider maps the usage onto provider.Usage, whose PromptTokens includes
+// cache reads and writes and whose cache counts are subsets of it.
+func (u *anthropicUsage) toProvider() provider.Usage {
+	writes := max(u.CacheCreationInputTokens, u.CacheCreation.Ephemeral5mInputTokens+u.CacheCreation.Ephemeral1hInputTokens)
+	prompt := u.InputTokens + u.CacheReadInputTokens + writes
+	return provider.Usage{
+		PromptTokens:         prompt,
+		CompletionTokens:     u.OutputTokens,
+		CacheReadTokens:      u.CacheReadInputTokens,
+		CacheWriteTokens:     writes,
+		CacheWriteLongTokens: u.CacheCreation.Ephemeral1hInputTokens,
+		TotalTokens:          prompt + u.OutputTokens,
+	}
 }
 
 type anthropicContentBlock struct {
@@ -107,8 +142,10 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 		return nil, err
 	}
 
-	antReq := c.toAnthropicRequest(req)
-	antReq.Stream = false
+	antReq, err := c.toAnthropicRequest(req, false)
+	if err != nil {
+		return nil, err
+	}
 
 	body, err := json.Marshal(antReq)
 	if err != nil {
@@ -147,8 +184,10 @@ func (c *client) completeStream(ctx context.Context, req *provider.CompletionReq
 		return nil, err
 	}
 
-	antReq := c.toAnthropicRequest(req)
-	antReq.Stream = true
+	antReq, err := c.toAnthropicRequest(req, true)
+	if err != nil {
+		return nil, err
+	}
 
 	body, err := json.Marshal(antReq)
 	if err != nil {
@@ -216,10 +255,19 @@ func (c *client) requireAPIKey() error {
 func (c *client) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", c.apiKey)
-	req.Header.Set("anthropic-version", anthropicAPIVersion)
+	req.Header.Set("anthropic-version", c.apiVersion)
 }
 
-func (c *client) toAnthropicRequest(req *provider.CompletionRequest) *anthropicRequest {
+// toAnthropicRequest shapes the request for the model: thinking, effort,
+// sampling and max_tokens follow the model's traits. It fails, before any
+// call, when the model does not accept the requested effort.
+func (c *client) toAnthropicRequest(req *provider.CompletionRequest, stream bool) (*anthropicRequest, error) {
+	tr, listed := traitsFor(req.Model)
+	effort, err := effortFor(req.Model, tr, listed, req.Thinking)
+	if err != nil {
+		return nil, err
+	}
+
 	messages := make([]anthropicMessage, 0, len(req.Messages))
 
 	// Extract system message, and translate OpenAI-style roles to the
@@ -278,19 +326,24 @@ func (c *client) toAnthropicRequest(req *provider.CompletionRequest) *anthropicR
 		}
 	}
 
-	maxTokens := req.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = 4096 // Anthropic requires max_tokens
-	}
-
+	thinking := thinkingFor(tr, listed, req.Thinking)
 	antReq := &anthropicRequest{
 		Model:         req.Model,
 		Messages:      messages,
 		System:        system,
-		MaxTokens:     maxTokens,
-		Temperature:   req.Temperature,
-		TopP:          req.TopP,
+		MaxTokens:     maxTokensFor(req, stream, thinking),
+		Stream:        stream,
 		StopSequences: req.Stop,
+		Thinking:      thinking,
+	}
+	if effort != "" {
+		antReq.OutputConfig = &anthropicOutputConfig{Effort: effort}
+	}
+	// Models with fixed sampling, and every model on 2026-10-21, reject
+	// temperature and top_p even at their defaults.
+	if !tr.fixedSampling && c.apiVersion != APIVersion20261021 {
+		antReq.Temperature = req.Temperature
+		antReq.TopP = req.TopP
 	}
 
 	// Convert tools
@@ -302,15 +355,7 @@ func (c *client) toAnthropicRequest(req *provider.CompletionRequest) *anthropicR
 		})
 	}
 
-	// Extended thinking
-	if req.Thinking != nil && req.Thinking.Enabled {
-		antReq.Thinking = &anthropicThinking{
-			Type:         "enabled",
-			BudgetTokens: req.Thinking.BudgetTokens,
-		}
-	}
-
-	return antReq
+	return antReq, nil
 }
 
 // messageText flattens a message's Content to a plain string for use inside a
@@ -391,11 +436,7 @@ func (c *client) fromAnthropicResponse(resp *anthropicResponse, elapsed time.Dur
 			},
 			FinishReason: mapStopReason(resp.StopReason),
 		}},
-		Usage: provider.Usage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
-		},
+		Usage:           resp.Usage.toProvider(),
 		Latency:         elapsed,
 		ThinkingContent: thinkingContent,
 	}
@@ -409,6 +450,10 @@ func mapStopReason(reason string) string {
 		return "length"
 	case "tool_use":
 		return "tool_calls"
+	case "refusal":
+		return "content_filter"
+	case "pause_turn":
+		return "pause_turn"
 	default:
 		return reason
 	}

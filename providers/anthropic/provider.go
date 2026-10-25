@@ -4,27 +4,45 @@ package anthropic
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/xraph/nexus/provider"
 )
 
+// Anthropic API versions, sent as the anthropic-version header.
+const (
+	// APIVersion20230601 is the default version.
+	APIVersion20230601 = "2023-06-01"
+	// APIVersion20261021 rejects temperature, top_p and top_k on every
+	// model, so the provider drops them from every request.
+	APIVersion20261021 = "2026-10-21"
+)
+
+// defaultTimeout bounds the wait for response headers, matching the
+// Anthropic SDKs' default request timeout.
+const defaultTimeout = 10 * time.Minute
+
 // Provider implements the Nexus provider interface for Anthropic.
 type Provider struct {
-	apiKey  string
-	baseURL string
-	client  *client
+	apiKey     string
+	baseURL    string
+	apiVersion string
+	timeout    time.Duration
+	client     *client
 }
 
 // New creates a new Anthropic provider.
 func New(apiKey string, opts ...Option) *Provider {
 	p := &Provider{
-		apiKey:  apiKey,
-		baseURL: "https://api.anthropic.com",
+		apiKey:     apiKey,
+		baseURL:    "https://api.anthropic.com",
+		apiVersion: APIVersion20230601,
+		timeout:    defaultTimeout,
 	}
 	for _, opt := range opts {
 		opt(p)
 	}
-	p.client = newClient(p.apiKey, p.baseURL)
+	p.client = newClient(p.apiKey, p.baseURL, p.apiVersion, p.timeout)
 	return p
 }
 
@@ -78,6 +96,28 @@ type Option func(*Provider)
 // WithBaseURL sets a custom API base URL.
 func WithBaseURL(url string) Option {
 	return func(p *Provider) { p.baseURL = url }
+}
+
+// WithAPIVersion sets the anthropic-version header. The default is
+// APIVersion20230601.
+func WithAPIVersion(v string) Option {
+	return func(p *Provider) {
+		if v != "" {
+			p.apiVersion = v
+		}
+	}
+}
+
+// WithTimeout bounds how long a request waits for response headers. The
+// default is 10 minutes; a zero or negative d keeps it. Once headers arrive
+// a stream is not cut by it, however long it runs: bound the whole call with
+// the request context instead.
+func WithTimeout(d time.Duration) Option {
+	return func(p *Provider) {
+		if d > 0 {
+			p.timeout = d
+		}
+	}
 }
 
 // Compile-time check.
