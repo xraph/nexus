@@ -133,28 +133,33 @@ func TestExplicitProviderWins(t *testing.T) {
 }
 
 func TestUnknownExplicitProviderIsRefused(t *testing.T) {
-	openai := newRouted("openai", true, "gpt-4o")
-	mw := middlewares.NewProviderCall(router.NewService(strategies.NewPriority()), registryOf(openai))
+	for _, typ := range []pipeline.RequestType{pipeline.RequestCompletion, pipeline.RequestStream} {
+		t.Run(string(typ), func(t *testing.T) {
+			openai := newRouted("openai", true, "gpt-4o")
+			mw := middlewares.NewProviderCall(router.NewService(strategies.NewPriority()), registryOf(openai))
 
-	req := routedCompletion("gpt-4o", "nope")
-	attempts, err := callOnceThroughRetry(t, mw, req)
-	if !errors.Is(err, middlewares.ErrUnknownProvider) {
-		t.Fatalf("err = %v, want ErrUnknownProvider", err)
-	}
-	if status, code := pipeline.HTTPStatus(err); status != 400 || code != pipeline.CodeInvalidRequest {
-		t.Fatalf("refusal = %d %s, want 400 invalid_request", status, code)
-	}
-	if !pipeline.IsPermanent(err) {
-		t.Fatalf("an unknown provider must be permanent")
-	}
-	if attempts != 1 {
-		t.Fatalf("attempts = %d, an unknown provider must not be retried", attempts)
-	}
-	if openai.Calls() != 0 {
-		t.Fatalf("openai called %d times, no provider may be called", openai.Calls())
-	}
-	if _, ok := req.State[pipeline.StateProviderName]; ok {
-		t.Fatalf("no provider name may be recorded for a refused request")
+			req := routedCompletion("gpt-4o", "nope")
+			req.Type = typ
+			attempts, err := callOnceThroughRetry(t, mw, req)
+			if !errors.Is(err, middlewares.ErrUnknownProvider) {
+				t.Fatalf("err = %v, want ErrUnknownProvider", err)
+			}
+			if status, code := pipeline.HTTPStatus(err); status != 400 || code != pipeline.CodeInvalidRequest {
+				t.Fatalf("refusal = %d %s, want 400 invalid_request", status, code)
+			}
+			if !pipeline.IsPermanent(err) {
+				t.Fatalf("an unknown provider must be permanent")
+			}
+			if attempts != 1 {
+				t.Fatalf("attempts = %d, an unknown provider must not be retried", attempts)
+			}
+			if openai.Calls() != 0 {
+				t.Fatalf("openai called %d times, no provider may be called", openai.Calls())
+			}
+			if _, ok := req.State[pipeline.StateProviderName]; ok {
+				t.Fatalf("no provider name may be recorded for a refused request")
+			}
+		})
 	}
 }
 
