@@ -29,10 +29,22 @@ type PriceLookup interface {
 	Price(ctx context.Context, providerName string, modelIDs ...string) (provider.Pricing, bool)
 }
 
-// UsageLogger receives insert failures. nexus.Logger implements it.
+// UsageLogger receives insert failures. nexus.Logger implements it. A
+// logger that also has a Warn method (nexus.Logger does) is warned once for
+// each provider and model whose usage could not be priced.
 type UsageLogger interface {
 	Error(msg string, args ...any)
 }
+
+// usageWarner is the optional Warn of a UsageLogger.
+type usageWarner interface {
+	Warn(msg string, args ...any)
+}
+
+// maxUnpricedWarnings bounds the (provider, model) pairs the usage stage
+// remembers having warned about, since the model is the client's string.
+// Past it, new pairs are still counted but not logged.
+const maxUnpricedWarnings = 1024
 
 // UsageMiddleware records exactly one usage record per request. It sits at
 // priority 15, outside everything but the request id and tracing, so it
@@ -54,6 +66,10 @@ type UsageMiddleware struct {
 	log    UsageLogger
 
 	insertFailures *telemetry.Counter
+	unpricedUsage  *telemetry.Counter
+
+	warnMu sync.Mutex
+	warned map[[2]string]struct{} // (provider, model) pairs warned about as unpriced
 
 	mu           sync.Mutex
 	idle         *sync.Cond // signalled when pending reaches zero
@@ -71,10 +87,15 @@ func NewUsage(u usage.Service, prices PriceLookup, log UsageLogger) *UsageMiddle
 }
 
 // WithMetrics counts the records InsertErrors counts on mm as well, as
-// nexus_usage_insert_errors_total. A nil mm counts nothing.
+// nexus_usage_insert_errors_total, and the records a provider served for a
+// model with no price as nexus_usage_unpriced_total{provider}. A nil mm
+// counts nothing.
 func (m *UsageMiddleware) WithMetrics(mm gometrics.Metrics) *UsageMiddleware {
 	m.insertFailures = telemetry.NewCounter(mm, telemetry.MetricUsageInsertErrors,
 		"Usage records that failed to store or were dropped after shutdown began.")
+	m.unpricedUsage = telemetry.NewCounter(mm, telemetry.MetricUsageUnpriced,
+		"Usage records for a model with no price at the provider that served it; their cost is unknown.",
+		telemetry.LabelProviderName)
 	return m
 }
 
@@ -322,11 +343,40 @@ func (m *UsageMiddleware) release() {
 // when the stage was already closed. ctx is the request's; only its trace is
 // carried into the insert.
 func (m *UsageMiddleware) finish(ctx context.Context, rec *usage.Record, reserved bool) {
+	m.noteUnpriced(rec)
 	if reserved {
 		m.insert(trace.SpanContextFromContext(ctx), rec)
 		return
 	}
 	m.drop(rec)
+}
+
+// noteUnpriced counts a record a provider served for a model with no price,
+// and warns once for each provider and model. A budget sums priced spend
+// only, so this is spend it cannot see.
+func (m *UsageMiddleware) noteUnpriced(rec *usage.Record) {
+	if rec.PricingStatus != usage.PricingUnpricedModel || rec.Provider == "" {
+		return
+	}
+	m.unpricedUsage.Inc(rec.Provider)
+	w, ok := m.log.(usageWarner)
+	if !ok {
+		return
+	}
+	pair := [2]string{rec.Provider, rec.Model}
+	m.warnMu.Lock()
+	_, seen := m.warned[pair]
+	full := len(m.warned) >= maxUnpricedWarnings
+	if !seen && !full {
+		if m.warned == nil {
+			m.warned = make(map[[2]string]struct{})
+		}
+		m.warned[pair] = struct{}{}
+	}
+	m.warnMu.Unlock()
+	if !seen && !full {
+		w.Warn("nexus: usage for a model with no price; its cost is unknown", "provider", rec.Provider, "model", rec.Model)
+	}
 }
 
 // drop counts and logs a record that arrived after Close.

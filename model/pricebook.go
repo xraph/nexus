@@ -11,12 +11,13 @@ import (
 // can be sold by several providers at different prices (gpt-4o through
 // openai, azureopenai and openrouter), so a price is only meaningful at the
 // provider that served the request. Each provider's price list is read once
-// and kept.
+// and kept. Overrides (SetOverrides) are consulted before the lists.
 type PriceBook struct {
 	providers provider.Registry
 
-	mu    sync.RWMutex
-	lists map[string]map[string]provider.Pricing
+	mu        sync.RWMutex
+	lists     map[string]map[string]provider.Pricing
+	overrides map[string]map[string]provider.Pricing // provider, then model
 }
 
 // NewPriceBook creates a price book over the given providers.
@@ -24,11 +25,16 @@ func NewPriceBook(providers provider.Registry) *PriceBook {
 	return &PriceBook{providers: providers, lists: make(map[string]map[string]provider.Pricing)}
 }
 
-// Price returns the list price at providerName of the first of modelIDs the
-// provider lists. A provider that implements provider.FreeOfCharge prices
-// every model at exactly $0. ok is false when the provider is unknown, its
-// list cannot be read, or it lists none of the models.
+// Price returns the price at providerName of the first of modelIDs with an
+// override there, else the list price of the first of modelIDs the provider
+// lists. A provider that implements provider.FreeOfCharge prices every model
+// it has no override for at exactly $0. ok is false when no override
+// matches and the provider is unknown, its list cannot be read, or it lists
+// none of the models.
 func (b *PriceBook) Price(ctx context.Context, providerName string, modelIDs ...string) (provider.Pricing, bool) {
+	if price, ok := b.override(providerName, modelIDs...); ok {
+		return price, true
+	}
 	p, ok := b.providers.Get(providerName)
 	if !ok {
 		return provider.Pricing{}, false
@@ -51,13 +57,17 @@ func (b *PriceBook) Price(ctx context.Context, providerName string, modelIDs ...
 	return provider.Pricing{}, false
 }
 
-// Lists reports whether the provider named providerName lists modelID. It
-// reads the same cached list as Price. Telemetry uses it to name only the
-// models a provider lists, so a client's arbitrary model string never becomes
-// a metric series or a span attribute.
+// Lists reports whether the provider named providerName lists modelID, or
+// has an override for it. It reads the same cached list as Price. Routing
+// uses it to find the providers that serve a model, and telemetry to name
+// only the models a provider lists, so a client's arbitrary model string
+// never becomes a metric series or a span attribute.
 func (b *PriceBook) Lists(ctx context.Context, providerName, modelID string) bool {
 	if modelID == "" {
 		return false
+	}
+	if _, ok := b.override(providerName, modelID); ok {
+		return true
 	}
 	p, ok := b.providers.Get(providerName)
 	if !ok {

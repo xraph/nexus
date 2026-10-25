@@ -1,6 +1,7 @@
 package nexus
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -276,4 +277,45 @@ func WithMetrics(m gometrics.Metrics) Option { return func(gw *Gateway) { gw.met
 // after Initialize are not wrapped.
 func WithProviderTransport(wrap func(http.RoundTripper) http.RoundTripper) Option {
 	return func(gw *Gateway) { gw.providerTransport = wrap }
+}
+
+// WithPriceOverrides prices models at the providers that serve them, over
+// the providers' own list prices and for models they do not list. Each
+// override names the provider by its registered name. Overrides from every
+// WithPriceOverrides add up; a later one for the same model and provider
+// wins. To replace them all at runtime, call PriceBook().SetOverrides.
+func WithPriceOverrides(overrides ...model.PriceOverride) Option {
+	return func(gw *Gateway) {
+		gw.priceOverrides = append(gw.priceOverrides, overrides...)
+		gw.priceBook.SetOverrides(gw.priceOverrides)
+	}
+}
+
+// UnpricedPolicy decides whether a request for a model with no price may
+// reach its provider. The gateway asks it after routing and before each
+// provider call, and only when the routed model has no price at the routed
+// provider for the kind of request: no input or output price for a
+// completion or a stream, no embedding price for an embedding. tenantID is
+// the request's nexus tenant, empty for an unattributed request.
+//
+// A nil error lets the call through: it is served and recorded with an
+// unknown cost, which no budget counts. A refusal such as ErrModelUnpriced
+// refuses the request at $0; any other error fails it. Neither is retried.
+type UnpricedPolicy func(ctx context.Context, tenantID, providerName, modelID string) error
+
+// WithUnpricedPolicy sets the policy for requests to models with no price.
+// Without one every such request is served, counted in
+// nexus_usage_unpriced_total and warned about once per provider and model.
+// Pass RefuseUnpriced so per-tenant budgets cannot miss spend. The policy
+// is part of the default pipeline: one set with WithPipeline does not get it
+// (add middlewares.NewProviderCall(...).WithUnpricedPolicy yourself).
+func WithUnpricedPolicy(p UnpricedPolicy) Option {
+	return func(gw *Gateway) { gw.unpricedPolicy = p }
+}
+
+// RefuseUnpriced is the UnpricedPolicy that refuses every request for a
+// model with no price with ErrModelUnpriced (400, model_unpriced), before
+// any provider is called.
+func RefuseUnpriced(ctx context.Context, tenantID, providerName, modelID string) error {
+	return middlewares.RefuseUnpriced(ctx, tenantID, providerName, modelID)
 }

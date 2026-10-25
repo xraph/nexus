@@ -74,8 +74,15 @@ type Gateway struct {
 	// routerStrategy is the name of the routing strategy in use.
 	routerStrategy string
 
-	// priceBook prices requests for the usage stage.
+	// priceBook prices requests for the usage stage. New creates it, so it
+	// exists before Initialize.
 	priceBook *model.PriceBook
+
+	// priceOverrides are every override WithPriceOverrides was given.
+	priceOverrides []model.PriceOverride
+
+	// unpricedPolicy decides about requests to models with no price.
+	unpricedPolicy UnpricedPolicy
 
 	// usageMW is the usage stage, kept so Shutdown can flush it.
 	usageMW *middlewares.UsageMiddleware
@@ -118,9 +125,11 @@ type Gateway struct {
 
 // New creates a new Nexus Gateway with the given options.
 func New(opts ...Option) *Gateway {
+	providers := provider.NewRegistry()
 	gw := &Gateway{
 		config:     DefaultConfig(),
-		providers:  provider.NewRegistry(),
+		providers:  providers,
+		priceBook:  model.NewPriceBook(providers),
 		extensions: plugin.NewRegistry(),
 	}
 
@@ -182,7 +191,6 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 	if gw.config.EnableCache && gw.cache == nil && gw.streamCache == nil {
 		gw.cache = cache.NewService(stores.NewMemory())
 	}
-	gw.priceBook = model.NewPriceBook(gw.providers)
 	gw.wrapProviderTransports()
 
 	// Initialize model service
@@ -324,9 +332,13 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 	}
 
 	// Priority 350: Core provider call (always present, always last)
-	b.Use(middlewares.NewProviderCall(gw.router, gw.providers).
+	call := middlewares.NewProviderCall(gw.router, gw.providers).
 		WithModelCatalog(gw.priceBook).
-		WithMetrics(gw.metrics))
+		WithMetrics(gw.metrics)
+	if gw.unpricedPolicy != nil {
+		call = call.WithUnpricedPolicy(gw.priceBook, middlewares.UnpricedPolicy(gw.unpricedPolicy))
+	}
+	b.Use(call)
 
 	return b.Build()
 }
@@ -537,7 +549,8 @@ func (gw *Gateway) UsageInsertErrors() int64 {
 	return gw.usageMW.InsertErrors()
 }
 
-// PriceBook returns the price book the usage stage prices requests with.
+// PriceBook returns the price book the usage stage prices requests with. It
+// exists from New, so overrides can be set before Initialize.
 func (gw *Gateway) PriceBook() *model.PriceBook { return gw.priceBook }
 
 // Limiter is the RPM and TPM limiter in use.

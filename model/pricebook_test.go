@@ -105,3 +105,77 @@ func TestPriceBookListsOnlyWhatTheProviderLists(t *testing.T) {
 		t.Fatalf("Models called %d times; Lists and Price share one cached list", openai.calls)
 	}
 }
+
+func TestOverrideWinsAndPricesUnlistedModels(t *testing.T) {
+	reg := provider.NewRegistry()
+	reg.Register(&listedProvider{name: "opencompat-x"})
+	reg.Register(&listedProvider{name: "openai", models: []provider.Model{{ID: "gpt-4o", Pricing: provider.Pricing{InputPerMillion: money.MustParse("2.50"), OutputPerMillion: money.MustParse("10")}}}})
+	book := model.NewPriceBook(reg)
+	ctx := context.Background()
+	if _, ok := book.Price(ctx, "opencompat-x", "llama3"); ok {
+		t.Fatalf("an unlisted model is priced before any override")
+	}
+	book.SetOverrides([]model.PriceOverride{
+		{Provider: "opencompat-x", Model: "llama3", Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.2"), OutputPerMillion: money.MustParse("0.4")}},
+		{Provider: "openai", Model: "gpt-4o", Pricing: provider.Pricing{InputPerMillion: money.MustParse("2"), OutputPerMillion: money.MustParse("8")}},
+	})
+	if p, ok := book.Price(ctx, "opencompat-x", "llama3"); !ok || !p.InputPerMillion.Equal(money.MustParse("0.2")) || !p.OutputPerMillion.Equal(money.MustParse("0.4")) {
+		t.Fatalf("override = %+v, %v", p, ok)
+	}
+	if !book.Lists(ctx, "opencompat-x", "llama3") {
+		t.Fatalf("an overridden model should be listed")
+	}
+	if !book.Priced(ctx, "opencompat-x", "llama3") {
+		t.Fatalf("an overridden model should be priced")
+	}
+	if p, ok := book.Price(ctx, "openai", "gpt-4o"); !ok || !p.InputPerMillion.Equal(money.MustParse("2")) {
+		t.Fatalf("an override for a listed model should replace the list price, got %+v, %v", p, ok)
+	}
+}
+
+func TestSetOverridesReplacesTheSet(t *testing.T) {
+	reg := provider.NewRegistry()
+	reg.Register(&listedProvider{name: "opencompat-x"})
+	book := model.NewPriceBook(reg)
+	ctx := context.Background()
+	llama := model.PriceOverride{Provider: "opencompat-x", Model: "llama3", Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.2")}}
+	mistral := model.PriceOverride{Provider: "opencompat-x", Model: "mistral", Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.1")}}
+	book.SetOverrides([]model.PriceOverride{llama})
+	if _, ok := book.Price(ctx, "opencompat-x", "llama3"); !ok {
+		t.Fatalf("first set not applied")
+	}
+	book.SetOverrides([]model.PriceOverride{mistral})
+	if _, ok := book.Price(ctx, "opencompat-x", "llama3"); ok {
+		t.Fatalf("an override left out of the new set should be gone")
+	}
+	if book.Lists(ctx, "opencompat-x", "llama3") || book.Priced(ctx, "opencompat-x", "llama3") {
+		t.Fatalf("an override left out of the new set should not be listed or priced")
+	}
+	if _, ok := book.Price(ctx, "opencompat-x", "mistral"); !ok {
+		t.Fatalf("second set not applied")
+	}
+}
+
+func TestPricedNeedsANonZeroPrice(t *testing.T) {
+	reg := provider.NewRegistry()
+	reg.Register(&listedProvider{name: "p", models: []provider.Model{
+		{ID: "listed-without-price"},
+		{ID: "embed", Pricing: provider.Pricing{EmbeddingPerMillion: money.MustParse("0.02")}},
+		{ID: "output-only", Pricing: provider.Pricing{OutputPerMillion: money.MustParse("1")}},
+		{ID: "free", Pricing: provider.Pricing{Free: true}},
+	}})
+	reg.Register(&freeProvider{listedProvider{name: "ollama"}})
+	book := model.NewPriceBook(reg)
+	ctx := context.Background()
+	for modelID, want := range map[string]bool{"listed-without-price": false, "embed": true, "output-only": true, "free": true, "unlisted": false} {
+		if got := book.Priced(ctx, "p", modelID); got != want {
+			t.Errorf("Priced(p, %s) = %v, want %v", modelID, got, want)
+		}
+	}
+	if !book.Priced(ctx, "ollama", "anything") {
+		t.Errorf("a free-of-charge provider prices every model")
+	}
+	if book.Priced(ctx, "nobody", "gpt-4o") {
+		t.Errorf("an unknown provider prices nothing")
+	}
+}

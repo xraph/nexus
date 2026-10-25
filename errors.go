@@ -1,6 +1,10 @@
 package nexus
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/xraph/nexus/pipeline/middlewares"
+)
 
 var (
 	// Provider errors
@@ -49,6 +53,11 @@ var (
 	// Batch
 	ErrBatchTooLarge = errors.New("nexus: batch exceeds maximum size")
 	ErrBatchNotFound = errors.New("nexus: batch job not found")
+
+	// ErrModelUnpriced refuses a request for a model with no price at the
+	// provider it was routed to (RefuseUnpriced). It is a *RefusalError with
+	// code model_unpriced and status 400.
+	ErrModelUnpriced = middlewares.ErrModelUnpriced
 
 	// Credentials
 	ErrCredentialExpired  = errors.New("nexus: provider credential expired")

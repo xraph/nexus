@@ -16,6 +16,7 @@ import (
 	"github.com/xraph/nexus/guard"
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/key"
+	"github.com/xraph/nexus/model"
 	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/pipeline/middlewares"
@@ -657,5 +658,67 @@ func TestShutdownWaitsForACompletionStillWithTheProvider(t *testing.T) {
 	}
 	if gw.UsageInsertErrors() != 0 {
 		t.Fatalf("insert errors = %d, want 0", gw.UsageInsertErrors())
+	}
+}
+
+func TestWithPriceOverridesPricesAGatewayRequest(t *testing.T) {
+	fp := &fakeProvider{name: "openai", price: listPrice}
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		if _, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "llama3",
+			Messages: []provider.Message{{Role: "user", Content: "hi"}}}); err != nil {
+			t.Fatalf("complete: %v", err)
+		}
+	}, nexus.WithProvider(fp), nexus.WithPriceOverrides(model.PriceOverride{Provider: "openai", Model: "llama3",
+		Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.2"), OutputPerMillion: money.MustParse("0.4")}}))
+	if len(recs) != 1 {
+		t.Fatalf("got %d records, want 1", len(recs))
+	}
+	// 1234 × 0.2 / 1e6 + 567 × 0.4 / 1e6
+	if r := recs[0]; r.PricingStatus != usage.PricingPriced || r.CostUSD == nil || !r.CostUSD.Equal(money.MustParse("0.0004736")) {
+		t.Fatalf("record = cost %v status %s; want 0.0004736 priced", r.CostUSD, r.PricingStatus)
+	}
+}
+
+func TestThePriceBookIsReadyBeforeInitialize(t *testing.T) {
+	gw := nexus.New(nexus.WithProvider(&fakeProvider{name: "openai", price: listPrice}),
+		nexus.WithPriceOverrides(model.PriceOverride{Provider: "openai", Model: "llama3", Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.2")}}),
+		nexus.WithPriceOverrides(model.PriceOverride{Provider: "openai", Model: "mistral", Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.1")}}))
+	book := gw.PriceBook()
+	if book == nil {
+		t.Fatal("PriceBook() is nil before Initialize")
+	}
+	ctx := context.Background()
+	if !book.Priced(ctx, "openai", "llama3") || !book.Priced(ctx, "openai", "mistral") {
+		t.Fatalf("every WithPriceOverrides should apply")
+	}
+	if err := gw.Initialize(ctx); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	if gw.PriceBook() != book {
+		t.Fatalf("Initialize replaced the price book")
+	}
+}
+
+func TestWithUnpricedPolicyRefusesAnUnpricedModel(t *testing.T) {
+	fp := &fakeProvider{name: "openai", price: listPrice}
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		_, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "o9",
+			Messages: []provider.Message{{Role: "user", Content: "hi"}}})
+		if !errors.Is(err, nexus.ErrModelUnpriced) {
+			t.Fatalf("err = %v, want ErrModelUnpriced", err)
+		}
+		if status, code := pipeline.HTTPStatus(err); status != 400 || code != "model_unpriced" {
+			t.Fatalf("status %d code %q", status, code)
+		}
+		if _, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "gpt-4o",
+			Messages: []provider.Message{{Role: "user", Content: "hi"}}}); err != nil {
+			t.Fatalf("a priced model was refused: %v", err)
+		}
+	}, nexus.WithProvider(fp), nexus.WithUnpricedPolicy(nexus.RefuseUnpriced))
+	if fp.calls != 1 {
+		t.Fatalf("provider called %d times, want 1 (the priced model only)", fp.calls)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("got %d records, want 2", len(recs))
 	}
 }

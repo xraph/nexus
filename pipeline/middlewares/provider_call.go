@@ -39,11 +39,19 @@ var ErrUnknownProvider error = &pipeline.RefusalError{Code: pipeline.CodeInvalid
 // gen_ai.provider.name, the request model, the response model and id, finish
 // reasons and token counts. A stream's span ends with the stream. The model
 // is named only when the provider lists it (see ModelCatalog).
+//
+// With an unpriced policy (WithUnpricedPolicy), a request for a model with
+// no price at the chosen provider is put to the policy before the provider
+// is called.
 type ProviderCallMiddleware struct {
 	router    router.Service
 	providers provider.Registry
 	catalog   ModelCatalog
 	metrics   *genAIMetrics
+
+	// prices and unpriced are the unpriced-model policy (WithUnpricedPolicy).
+	prices   PriceLookup
+	unpriced UnpricedPolicy
 }
 
 // NewProviderCall creates the core provider-calling middleware. Its model
@@ -95,6 +103,9 @@ func (m *ProviderCallMiddleware) handleCompletion(ctx context.Context, req *pipe
 	if err != nil {
 		return nil, err
 	}
+	if refused := m.checkPriced(ctx, p, req.Completion.Model, false); refused != nil {
+		return nil, refused
+	}
 
 	ctx = pipeline.WithProviderName(ctx, p.Name())
 	req.State[pipeline.StateProviderName] = p.Name()
@@ -118,6 +129,9 @@ func (m *ProviderCallMiddleware) handleStream(ctx context.Context, req *pipeline
 	p, err := m.selectProvider(ctx, req)
 	if err != nil {
 		return nil, err
+	}
+	if refused := m.checkPriced(ctx, p, req.Completion.Model, false); refused != nil {
+		return nil, refused
 	}
 
 	ctx = pipeline.WithProviderName(ctx, p.Name())
@@ -146,6 +160,9 @@ func (m *ProviderCallMiddleware) handleEmbedding(ctx context.Context, req *pipel
 	p, err := m.selectEmbeddingProvider(ctx, req.Embedding)
 	if err != nil {
 		return nil, err
+	}
+	if refused := m.checkPriced(ctx, p, req.Embedding.Model, true); refused != nil {
+		return nil, refused
 	}
 
 	ctx = pipeline.WithProviderName(ctx, p.Name())
