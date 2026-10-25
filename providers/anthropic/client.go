@@ -45,18 +45,26 @@ func newHTTPClient(timeout time.Duration) *http.Client {
 
 // Anthropic messages API request format.
 type anthropicRequest struct {
-	Model         string             `json:"model"`
-	Messages      []anthropicMessage `json:"messages"`
-	System        string             `json:"system,omitempty"`
-	MaxTokens     int                `json:"max_tokens"`
-	Stream        bool               `json:"stream,omitempty"`
-	Temperature   *float64           `json:"temperature,omitempty"`
-	TopP          *float64           `json:"top_p,omitempty"`
-	StopSequences []string           `json:"stop_sequences,omitempty"`
-	Tools         []anthropicTool    `json:"tools,omitempty"`
-	Thinking      *anthropicThinking `json:"thinking,omitempty"`
+	Model         string               `json:"model"`
+	Messages      []anthropicMessage   `json:"messages"`
+	System        string               `json:"system,omitempty"`
+	MaxTokens     int                  `json:"max_tokens"`
+	Stream        bool                 `json:"stream,omitempty"`
+	Temperature   *float64             `json:"temperature,omitempty"`
+	TopP          *float64             `json:"top_p,omitempty"`
+	StopSequences []string             `json:"stop_sequences,omitempty"`
+	Tools         []anthropicTool      `json:"tools,omitempty"`
+	Thinking      *anthropicThinking   `json:"thinking,omitempty"`
+	ToolChoice    *anthropicToolChoice `json:"tool_choice,omitempty"`
 
 	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
+}
+
+// anthropicToolChoice is the tool_choice request field: type is auto, none,
+// any or tool, and name is set only for tool.
+type anthropicToolChoice struct {
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
 }
 
 type anthropicMessage struct {
@@ -355,7 +363,41 @@ func (c *client) toAnthropicRequest(req *provider.CompletionRequest, stream bool
 		})
 	}
 
+	toolChoice, err := toolChoiceFor(req, tr)
+	if err != nil {
+		return nil, err
+	}
+	antReq.ToolChoice = toolChoice
+
 	return antReq, nil
+}
+
+// toolChoiceFor maps the request's OpenAI-shaped ToolChoice to Anthropic's.
+// It returns nil when there is no choice or no tools to choose from, since
+// the API rejects tool_choice without tools. A forced choice on a model that
+// rejects it fails here, before any request is sent.
+func toolChoiceFor(req *provider.CompletionRequest, tr traits) (*anthropicToolChoice, error) {
+	tc, ok, err := provider.ParseToolChoice(req.ToolChoice)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: %w", err)
+	}
+	if !ok || len(req.Tools) == 0 {
+		return nil, nil
+	}
+	switch tc.Mode {
+	case provider.ToolChoiceNone:
+		return &anthropicToolChoice{Type: "none"}, nil
+	case provider.ToolChoiceRequired, provider.ToolChoiceFunction:
+		if !tr.forcedToolChoice {
+			return nil, fmt.Errorf("%w (model %s)", ErrForcedToolChoice, req.Model)
+		}
+		if tc.Mode == provider.ToolChoiceFunction {
+			return &anthropicToolChoice{Type: "tool", Name: tc.Function}, nil
+		}
+		return &anthropicToolChoice{Type: "any"}, nil
+	default:
+		return &anthropicToolChoice{Type: "auto"}, nil
+	}
 }
 
 // messageText flattens a message's Content to a plain string for use inside a

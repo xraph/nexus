@@ -1,5 +1,16 @@
 package anthropic
 
+import (
+	"fmt"
+
+	"github.com/xraph/nexus/provider"
+)
+
+// ErrForcedToolChoice is returned, before any request is sent, when a request
+// forces a tool call ("required" or a named function) on a model that rejects
+// tool_choice "any" and "tool". It wraps provider.ErrNotSupported.
+var ErrForcedToolChoice = fmt.Errorf("anthropic: forced tool choice is not supported by this model: %w", provider.ErrNotSupported)
+
 // thinkingMode is how a model takes the thinking request field.
 type thinkingMode int
 
