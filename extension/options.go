@@ -33,6 +33,8 @@ func WithGatewayOption(opt nexus.Option) Option {
 }
 
 // WithBasePath sets the HTTP base path for gateway routes.
+//
+// Deprecated: the extension never mounts routes; mount the api or proxy packages on your router yourself.
 func WithBasePath(path string) Option {
 	return func(e *Extension) {
 		e.config.BasePath = path
@@ -45,6 +47,8 @@ func WithConfig(cfg Config) Option {
 }
 
 // WithDisableRoutes prevents HTTP route registration.
+//
+// Deprecated: the extension never mounts routes; mount the api or proxy packages on your router yourself.
 func WithDisableRoutes() Option {
 	return func(e *Extension) { e.config.DisableRoutes = true }
 }

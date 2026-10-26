@@ -140,6 +140,7 @@ func New(opts ...Option) *Gateway {
 		priceBook:  model.NewPriceBook(providers),
 		extensions: plugin.NewRegistry(),
 	}
+	gw.engine = newEngine(gw)
 
 	for _, opt := range opts {
 		opt(gw)
@@ -213,9 +214,6 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 		gw.routerStrategy = s.Name()
 	}
 
-	// Initialize engine
-	gw.engine = newEngine(gw)
-
 	if gw.limiter == nil {
 		gw.limiter = ratelimit.NewMemory()
 	}
@@ -230,6 +228,7 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 	}
 
 	gw.initialized = true
+	gw.engine.ready.Store(true)
 	if !gw.config.EnableUsage {
 		gw.logger.Warn("nexus: usage recording is off: the monthly budget will not apply",
 			"enable_usage", false)

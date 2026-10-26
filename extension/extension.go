@@ -69,7 +69,8 @@ func New(opts ...Option) *Extension {
 }
 
 // Gateway returns the underlying Nexus gateway instance.
-// This is nil until Start is called.
+// It is non-nil after Register and is the same pointer the DI container
+// provides. Its engine returns nexus.ErrNotInitialized until Start.
 func (e *Extension) Gateway() *nexus.Gateway { return e.gateway }
 
 // Register implements [forge.Extension]. It loads configuration
@@ -109,10 +110,17 @@ func (e *Extension) Register(fapp forge.App) error {
 	// Apply extension config to gateway options.
 	e.applyConfigToGatewayOpts()
 
+	e.warnDeprecatedRouteSettings()
+
+	// Build the gateway now so other extensions can resolve a usable pointer
+	// from their own Register. Start initializes it.
+	e.gateway = nexus.New(e.gatewayOpts...)
+
 	// Register the gateway in the DI container so other extensions
 	// (Chronicle, Shield, Relay, Authsome) can discover it.
+	gw := e.gateway
 	return vessel.Provide(fapp.Container(), func() (*nexus.Gateway, error) {
-		return e.gateway, nil
+		return gw, nil
 	})
 }
 
@@ -125,11 +133,13 @@ func (e *Extension) Start(ctx context.Context) error {
 			e.bootstrapSourceName(), len(k))
 	}
 
-	gw := nexus.New(e.gatewayOpts...)
+	gw := e.gateway
+	if gw == nil {
+		return errors.New("nexus: gateway not created: Register has not run")
+	}
 	if err := gw.Initialize(ctx); err != nil {
 		return fmt.Errorf("nexus: failed to initialize gateway: %w", err)
 	}
-	e.gateway = gw
 
 	// Run store migration unless disabled.
 	if !e.config.DisableMigrate && gw.Store() != nil {
@@ -147,7 +157,6 @@ func (e *Extension) Start(ctx context.Context) error {
 	e.Logger().Info("nexus: gateway started",
 		forge.F("providers", gw.Providers().Count()),
 		forge.F("extensions", gw.Extensions().Count()),
-		forge.F("base_path", e.config.BasePath),
 	)
 
 	e.MarkStarted()
@@ -172,6 +181,25 @@ func (e *Extension) Health(_ context.Context) error {
 		return fmt.Errorf("nexus: gateway not initialized")
 	}
 	return nil
+}
+
+// warnDeprecatedRouteSettings logs one warning when the retired route
+// settings are in use: disable_routes set, or base_path other than its default.
+func (e *Extension) warnDeprecatedRouteSettings() {
+	var used []string
+	if e.config.DisableRoutes {
+		used = append(used, "disable_routes")
+	}
+	if e.config.BasePath != DefaultConfig().BasePath {
+		used = append(used, "base_path")
+	}
+	if len(used) == 0 {
+		return
+	}
+	e.Logger().Warn("nexus: "+strings.Join(used, " and ")+" are deprecated and ignored: "+
+		"the extension never mounts routes; mount the api or proxy packages on your router yourself",
+		forge.F("settings", strings.Join(used, ",")),
+	)
 }
 
 // --- Config Loading (mirrors grove extension pattern) ---

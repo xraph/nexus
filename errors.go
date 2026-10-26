@@ -7,6 +7,10 @@ import (
 	"github.com/xraph/nexus/provider"
 )
 
+// ErrNotInitialized is returned by the engine's calls before
+// [Gateway.Initialize] has finished.
+var ErrNotInitialized = errors.New("nexus: gateway not initialized")
+
 var (
 	// Provider errors
 	ErrProviderNotFound    = errors.New("nexus: provider not found")

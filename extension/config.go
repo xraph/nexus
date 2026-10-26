@@ -7,12 +7,16 @@ import "time"
 // YAML configuration files (under "extensions.nexus" or "nexus" keys).
 type Config struct {
 	// DisableRoutes prevents HTTP route registration.
+	//
+	// Deprecated: the extension never mounts routes; mount the api or proxy packages on your router yourself.
 	DisableRoutes bool `json:"disable_routes" mapstructure:"disable_routes" yaml:"disable_routes"`
 
 	// DisableMigrate prevents auto-migration of the persistence store on start.
 	DisableMigrate bool `json:"disable_migrate" mapstructure:"disable_migrate" yaml:"disable_migrate"`
 
 	// BasePath is the URL prefix for gateway routes (default: "/nexus").
+	//
+	// Deprecated: the extension never mounts routes; mount the api or proxy packages on your router yourself.
 	BasePath string `json:"base_path" mapstructure:"base_path" yaml:"base_path"`
 
 	// DefaultTimeout is the default timeout for provider requests.
