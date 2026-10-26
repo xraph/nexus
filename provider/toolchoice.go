@@ -54,6 +54,59 @@ func (tc ToolChoice) OpenAI() any {
 	}
 }
 
+// OpenAIToolChoice returns v in the shape OpenAI's chat API takes, or nil
+// when v is nil. Every shape ParseToolChoice reads is converted. An object
+// with a "type" this package does not model, such as OpenAI's
+// {"type":"allowed_tools",...} or {"type":"custom",...}, is OpenAI's own and
+// is returned unchanged, so a newer OpenAI tool_choice keeps working. A value
+// that is malformed (an unknown string, an object with no type, a function
+// with no name) fails with an error that wraps ErrNotSupported.
+func OpenAIToolChoice(v any) (any, error) {
+	tc, ok, err := ParseToolChoice(v)
+	if err != nil {
+		if isForeignToolChoice(v) {
+			return v, nil
+		}
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	return tc.OpenAI(), nil
+}
+
+// isForeignToolChoice reports whether v is an object whose "type" is a
+// non-empty string this package does not model.
+func isForeignToolChoice(v any) bool {
+	var m map[string]any
+	switch x := v.(type) {
+	case map[string]any:
+		m = x
+	case json.RawMessage:
+		if json.Unmarshal(x, &m) != nil {
+			return false
+		}
+	case []byte:
+		if json.Unmarshal(x, &m) != nil {
+			return false
+		}
+	case string, ToolChoice, *ToolChoice:
+		return false
+	default:
+		raw, err := json.Marshal(v)
+		if err != nil || json.Unmarshal(raw, &m) != nil {
+			return false
+		}
+	}
+	typ := stringField(m, "type")
+	switch typ {
+	case "", "auto", "none", "required", "any", "function", "tool":
+		return false
+	default:
+		return true
+	}
+}
+
 func parseToolChoice(v any) (ToolChoice, bool, error) {
 	switch x := v.(type) {
 	case nil:

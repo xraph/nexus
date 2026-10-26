@@ -100,7 +100,7 @@ Reasoning models (the GPT-6 and GPT-5.6 families, `gpt-5.5`, `gpt-5`, `gpt-5-min
 
 ## Tool choice
 
-`CompletionRequest.ToolChoice` is sent in OpenAI's shape whatever shape you used: OpenAI's own (`"auto"`, `"none"`, `"required"`, `{"type":"function","function":{"name":...}}`), Anthropic's (`"any"`, `{"type":"any"}`, `{"type":"tool","name":...}`) or the typed `provider.ToolChoice`. `"any"` goes out as `"required"`. A value the provider cannot read fails before anything is sent, with an error that wraps `provider.ErrNotSupported`; the gateway refuses it with 400 `invalid_request` and does not retry it. Every provider built on this one (opencompat, groq, openrouter and the rest) and `azureopenai` do the same.
+`CompletionRequest.ToolChoice` is sent in OpenAI's shape whatever shape you used: OpenAI's own (`"auto"`, `"none"`, `"required"`, `{"type":"function","function":{"name":...}}`), Anthropic's (`"any"`, `{"type":"any"}`, `{"type":"tool","name":...}`) or the typed `provider.ToolChoice`. `"any"` goes out as `"required"`. An object with a `type` this provider does not model, such as OpenAI's `{"type":"allowed_tools",...}` or `{"type":"custom",...}`, is sent unchanged. A malformed value (an unknown string, an object with no `type`, a function with no name) fails before anything is sent, with an error that wraps `provider.ErrNotSupported`; the gateway refuses it with 400 `invalid_request` and does not retry it. Every provider built on this one (opencompat, groq, openrouter and the rest) and `azureopenai` do the same.
 
 `ThinkingConfig.Effort` is not sent to OpenAI: the provider has no `reasoning_effort` mapping, so the field is ignored here.
 

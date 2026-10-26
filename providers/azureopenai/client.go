@@ -247,13 +247,9 @@ func (c *client) setHeaders(req *http.Request) {
 // OpenAI's shape whichever shape the caller used; one that cannot be read
 // fails before any request is sent.
 func (c *client) toOAIRequest(req *provider.CompletionRequest) (*oaiRequest, error) {
-	var toolChoice any
-	tc, ok, err := provider.ParseToolChoice(req.ToolChoice)
+	toolChoice, err := provider.OpenAIToolChoice(req.ToolChoice)
 	if err != nil {
 		return nil, fmt.Errorf("azureopenai: %w", err)
-	}
-	if ok {
-		toolChoice = tc.OpenAI()
 	}
 	messages := make([]oaiMessage, len(req.Messages))
 	for i, m := range req.Messages {

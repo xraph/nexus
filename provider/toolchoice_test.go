@@ -89,3 +89,39 @@ func TestToolChoiceInOpenAIShape(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenAIToolChoicePassesThroughShapesOpenAIOwns(t *testing.T) {
+	allowed := map[string]any{"type": "allowed_tools", "allowed_tools": map[string]any{
+		"mode":  "auto",
+		"tools": []any{map[string]any{"type": "function", "function": map[string]any{"name": "f"}}},
+	}}
+	custom := map[string]any{"type": "custom", "custom": map[string]any{"name": "grammar_tool"}}
+	raw := json.RawMessage(`{"type":"custom","custom":{"name":"g"}}`)
+	for name, in := range map[string]any{"allowed_tools": allowed, "custom": custom} {
+		got, err := provider.OpenAIToolChoice(in)
+		if err != nil || !reflect.DeepEqual(got, in) {
+			t.Errorf("%s: got (%#v, %v), want it unchanged", name, got, err)
+		}
+	}
+	if got, err := provider.OpenAIToolChoice(raw); err != nil || !reflect.DeepEqual(got, any(raw)) {
+		t.Errorf("raw JSON: got (%#v, %v), want it unchanged", got, err)
+	}
+	// ParseToolChoice still does not model them: Anthropic refuses them.
+	if _, _, err := provider.ParseToolChoice(allowed); !errors.Is(err, provider.ErrNotSupported) {
+		t.Errorf("ParseToolChoice(allowed_tools) = %v, want ErrNotSupported", err)
+	}
+}
+
+func TestOpenAIToolChoiceStillRefusesMalformedValues(t *testing.T) {
+	for _, in := range []any{
+		"sometimes", 42, map[string]any{}, map[string]any{"type": ""},
+		map[string]any{"type": "function"}, map[string]any{"type": "tool"}, json.RawMessage(`{`),
+	} {
+		if _, err := provider.OpenAIToolChoice(in); !errors.Is(err, provider.ErrNotSupported) {
+			t.Errorf("OpenAIToolChoice(%v) = %v, want an error wrapping ErrNotSupported", in, err)
+		}
+	}
+	if got, err := provider.OpenAIToolChoice(nil); got != nil || err != nil {
+		t.Errorf("OpenAIToolChoice(nil) = (%v, %v), want (nil, nil)", got, err)
+	}
+}

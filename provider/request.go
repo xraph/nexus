@@ -19,7 +19,7 @@ type CompletionRequest struct {
 
 	// Tool calling
 	Tools      []Tool `json:"tools,omitempty"`
-	ToolChoice any    `json:"tool_choice,omitempty"`
+	ToolChoice any    `json:"tool_choice,omitempty"` // honoured by anthropic, openai (and providers built on it) and azureopenai; others drop it
 
 	// Structured output
 	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`

@@ -412,18 +412,15 @@ func (c *client) toOpenAIRequest(req *provider.CompletionRequest, completionToke
 	return out, nil
 }
 
-// openAIToolChoice reads a CompletionRequest.ToolChoice in any shape
-// provider.ParseToolChoice accepts (OpenAI's, Anthropic's, the typed
-// provider.ToolChoice) and returns it in OpenAI's, or nil for none.
+// openAIToolChoice returns a CompletionRequest.ToolChoice in OpenAI's
+// shape. Objects OpenAI defines that nexus does not model pass through
+// unchanged; see provider.OpenAIToolChoice.
 func openAIToolChoice(v any) (any, error) {
-	tc, ok, err := provider.ParseToolChoice(v)
+	tc, err := provider.OpenAIToolChoice(v)
 	if err != nil {
 		return nil, fmt.Errorf("openai: %w", err)
 	}
-	if !ok {
-		return nil, nil
-	}
-	return tc.OpenAI(), nil
+	return tc, nil
 }
 
 func (c *client) fromOpenAIResponse(resp *openAIResponse, elapsed time.Duration) *provider.CompletionResponse {

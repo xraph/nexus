@@ -13,11 +13,16 @@ import (
 
 func TestToolChoiceIsSentInOpenAIShape(t *testing.T) {
 	fn := map[string]any{"type": "function", "function": map[string]any{"name": "f"}}
+	allowed := map[string]any{"type": "allowed_tools", "allowed_tools": map[string]any{
+		"mode":  "auto",
+		"tools": []any{map[string]any{"type": "function", "function": map[string]any{"name": "f"}}},
+	}}
 	tests := []struct {
 		name string
 		in   any
 		want any
 	}{
+		{"allowed_tools passes through", allowed, allowed},
 		{"auto", "auto", "auto"},
 		{"none", "none", "none"},
 		{"required", "required", "required"},

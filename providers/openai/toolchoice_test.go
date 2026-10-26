@@ -23,6 +23,11 @@ func toolChoiceRequest(choice any) *provider.CompletionRequest {
 
 func TestToolChoiceIsSentInOpenAIShape(t *testing.T) {
 	fn := map[string]any{"type": "function", "function": map[string]any{"name": "get_weather"}}
+	allowed := map[string]any{"type": "allowed_tools", "allowed_tools": map[string]any{
+		"mode":  "required",
+		"tools": []any{map[string]any{"type": "function", "function": map[string]any{"name": "get_weather"}}},
+	}}
+	custom := map[string]any{"type": "custom", "custom": map[string]any{"name": "grammar_tool"}}
 	tests := []struct {
 		name string
 		in   any
@@ -39,6 +44,8 @@ func TestToolChoiceIsSentInOpenAIShape(t *testing.T) {
 		{"typed auto", provider.ToolChoice{Mode: provider.ToolChoiceAuto}, "auto"},
 		{"typed none pointer", &provider.ToolChoice{Mode: provider.ToolChoiceNone}, "none"},
 		{"typed function", provider.ToolChoice{Mode: provider.ToolChoiceFunction, Function: "get_weather"}, fn},
+		{"allowed_tools passes through", allowed, allowed},
+		{"custom passes through", custom, custom},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
