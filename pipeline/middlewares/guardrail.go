@@ -2,6 +2,7 @@ package middlewares
 
 import (
 	"context"
+	"maps"
 
 	"go.opentelemetry.io/otel/trace"
 
@@ -36,9 +37,10 @@ func (m *GuardrailMiddleware) Process(ctx context.Context, req *pipeline.Request
 	input := &guard.CheckInput{
 		Messages: req.Completion.Messages,
 		TenantID: pipeline.TenantID(ctx),
+		Metadata: cloneMetadata(req.Completion.Metadata),
 	}
 
-	result, err := m.check(ctx, guard.PhaseInput, input)
+	result, err := checkGuards(ctx, m.guard, guard.PhaseInput, input)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +57,7 @@ func (m *GuardrailMiddleware) Process(ctx context.Context, req *pipeline.Request
 		return resp, err
 	}
 
-	// Output guardrails (non-streaming only)
+	// Output guardrails. Streamed output is the stream guardrail stage's.
 	if resp != nil && resp.Completion != nil && len(resp.Completion.Choices) > 0 {
 		// Build output check input from response messages
 		outputMsgs := make([]provider.Message, len(resp.Completion.Choices))
@@ -66,9 +68,10 @@ func (m *GuardrailMiddleware) Process(ctx context.Context, req *pipeline.Request
 		outputInput := &guard.CheckInput{
 			Messages: outputMsgs,
 			TenantID: pipeline.TenantID(ctx),
+			Metadata: cloneMetadata(req.Completion.Metadata),
 		}
 
-		outputResult, err := m.check(ctx, guard.PhaseOutput, outputInput)
+		outputResult, err := checkGuards(ctx, m.guard, guard.PhaseOutput, outputInput)
 		if err != nil {
 			return nil, err
 		}
@@ -96,13 +99,22 @@ func (m *GuardrailMiddleware) Process(ctx context.Context, req *pipeline.Request
 	return resp, nil
 }
 
-// check runs one phase of the guardrails under its own span.
-func (m *GuardrailMiddleware) check(ctx context.Context, phase guard.Phase, input *guard.CheckInput) (*guard.CheckResult, error) {
+// cloneMetadata gives each guard check its own copy of the request's
+// metadata, so a guard that edits it changes neither the request nor what
+// the next check sees.
+func cloneMetadata(m map[string]string) map[string]string {
+	return maps.Clone(m)
+}
+
+// checkGuards runs one phase of svc's guards under a "check guardrails" span
+// with the phase, whether it blocked or modified the messages, and the name
+// of the guard that blocked. The reason and the messages never go on it.
+func checkGuards(ctx context.Context, svc guard.Service, phase guard.Phase, input *guard.CheckInput) (*guard.CheckResult, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "check guardrails",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(telemetry.GuardrailPhase.String(string(phase))))
 	defer span.End()
-	result, err := m.guard.CheckPhase(ctx, phase, input)
+	result, err := svc.CheckPhase(ctx, phase, input)
 	if err != nil {
 		telemetry.Fail(span, err)
 		return nil, err

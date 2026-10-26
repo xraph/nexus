@@ -11,6 +11,8 @@ import (
 
 	nexus "github.com/xraph/nexus"
 	"github.com/xraph/nexus/cache/stores"
+	"github.com/xraph/nexus/guard"
+	"github.com/xraph/nexus/guard/guards"
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/model"
@@ -482,4 +484,80 @@ func TestABlockedModelIsRefusedThroughAnAliasBeforeTheCache(t *testing.T) {
 	if r.RefusalCode != pipeline.CodeForbidden || r.TenantID != tn.ID || r.CostUSD == nil || !r.CostUSD.IsZero() {
 		t.Fatalf("record = code %q tenant %s cost %v; want a $0 forbidden refusal charged to the tenant", r.RefusalCode, r.TenantID, r.CostUSD)
 	}
+}
+
+func TestGatewayGuardsStreamsByDefault(t *testing.T) {
+	s := store.NewMemory()
+	spent := &provider.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}
+	p := &fakeProvider{name: "openai", price: listPrice, stream: []*provider.StreamChunk{
+		{Provider: "openai", Model: "gpt-4o", Delta: provider.Delta{Content: "the secret"}}, {Kind: provider.EventUsage, Usage: spent},
+	}}
+	gw, tn, k := enforcedWith(t, s, tenant.Quota{}, p, nexus.WithGuard(guards.NewContentFilter(guard.ActionBlock, "secret")))
+	ctx := context.Background()
+	st, err := gw.Engine().CompleteStream(ctx, &provider.CompletionRequest{
+		Model: "gpt-4o", Stream: true, TenantID: tn.ID.String(), KeyID: k.ID.String(),
+		Messages: []provider.Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	resp, err := provider.Accumulate(ctx, st)
+	// Accumulate leaves a failed stream open, and Shutdown waits for it.
+	_ = st.Close()
+	var blocked *guard.BlockedError
+	if !errors.As(err, &blocked) || blocked.Phase != guard.PhaseOutput || blocked.Guard != "content_filter" {
+		t.Fatalf("Accumulate = %v, want an output block by content_filter", err)
+	}
+	if strings.Contains(resp.Choices[0].Message.Content.(string), "secret") {
+		t.Fatal("the blocked text reached the consumer")
+	}
+	recs := records(t, gw, s)
+	if len(recs) != 1 {
+		t.Fatalf("records = %+v; want one", recs)
+	}
+	if r := recs[0]; r.Outcome != usage.OutcomeBlocked || r.BlockedBy != "content_filter" || r.TotalTokens != 15 || r.PromptTokens != 10 || r.CompletionTokens != 5 {
+		t.Fatalf("record = %s by %q, tokens %d/%d/%d; want blocked with the stream's tokens", r.Outcome, r.BlockedBy, r.PromptTokens, r.CompletionTokens, r.TotalTokens)
+	}
+}
+
+func TestNoOutputGuardsMeansNoStage(t *testing.T) {
+	stage := func(opts ...nexus.Option) (pipeline.Stage, bool) {
+		t.Helper()
+		gw := nexus.New(opts...)
+		if err := gw.Initialize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = gw.Shutdown(context.Background()) })
+		for _, s := range gw.PipelineStages() {
+			if s.Name == "stream_guardrail" {
+				return s, true
+			}
+		}
+		return pipeline.Stage{}, false
+	}
+	if _, ok := stage(nexus.WithGuard(guards.NewInjection())); ok {
+		t.Fatal("an input-phase guard alone added the stream guard stage")
+	}
+	if _, ok := stage(); ok {
+		t.Fatal("a gateway without guards has a stream guard stage")
+	}
+	if s, ok := stage(nexus.WithGuard(guards.NewPII(guard.ActionRedact))); !ok || s.Priority != 155 {
+		t.Fatalf("an output guard: stage %+v, present %v; want stream_guardrail at 155", s, ok)
+	}
+	if _, ok := stage(nexus.WithStreamGuard(streamWordGuard{}), nexus.WithStreamGuardStrategy(guard.StrategyChunkwise)); !ok {
+		t.Fatal("a registered stream guard did not add the stage")
+	}
+}
+
+// streamWordGuard is a stream guard that passes every chunk.
+type streamWordGuard struct{}
+
+func (streamWordGuard) Name() string       { return "word" }
+func (streamWordGuard) Phase() guard.Phase { return guard.PhaseOutput }
+func (streamWordGuard) Check(context.Context, *guard.CheckInput) (*guard.CheckResult, error) {
+	return &guard.CheckResult{Passed: true, Action: guard.ActionAllow}, nil
+}
+
+func (streamWordGuard) CheckChunk(context.Context, *provider.StreamChunk) (*guard.CheckResult, error) {
+	return &guard.CheckResult{Passed: true, Action: guard.ActionAllow}, nil
 }

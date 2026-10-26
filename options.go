@@ -70,7 +70,8 @@ func WithCache(c cache.Cache) Option {
 	}
 }
 
-// WithGuard adds a guardrail to the pipeline.
+// WithGuard adds a guardrail to the pipeline. A guard whose phase is output
+// or both also checks streamed replies; see WithStreamGuardStrategy.
 func WithGuard(g guard.Guard) Option {
 	return func(gw *Gateway) {
 		if gw.guard == nil {
@@ -78,6 +79,34 @@ func WithGuard(g guard.Guard) Option {
 		}
 		gw.guard.Register(g)
 	}
+}
+
+// WithStreamGuardStrategy sets when streamed output reaches the consumer
+// relative to the output guards' verdict. Output guards are the WithGuard
+// guards whose phase is output or both.
+//
+//   - guard.StrategyBuffer (the default) delivers nothing until the whole
+//     reply has passed. A block ends the stream with *guard.BlockedError, and
+//     a redacting guard's rewrite is what the consumer receives.
+//   - guard.StrategyPassthrough streams as the provider answers and checks
+//     the reply when it ends: a block replaces io.EOF with
+//     *guard.BlockedError, so run tool calls only after a clean end. A
+//     rewrite comes too late to apply; it is logged as a warning and the
+//     stream ends normally. Pick guard.StrategyBuffer when a redacting guard
+//     must take effect.
+//   - guard.StrategyChunkwise runs the WithStreamGuard guards on every chunk
+//     before delivering it, then checks the reply as StrategyPassthrough does.
+func WithStreamGuardStrategy(s guard.StreamStrategy) Option {
+	return func(gw *Gateway) { gw.streamGuardStrategy = s }
+}
+
+// WithStreamGuard adds a guard that checks every streamed chunk, under
+// guard.StrategyBuffer before anything is delivered and under
+// guard.StrategyChunkwise before each chunk goes out.
+// guard.StrategyPassthrough does not run it. It is not one of the WithGuard
+// guards: its Check method is not called.
+func WithStreamGuard(g guard.StreamGuard) Option {
+	return func(gw *Gateway) { gw.streamGuards = append(gw.streamGuards, g) }
 }
 
 // WithMiddleware adds a custom middleware to the pipeline.

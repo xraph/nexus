@@ -116,6 +116,11 @@ type Gateway struct {
 	// Custom middleware to add to the pipeline
 	customMiddleware []pipeline.Middleware
 
+	// streamGuards check each streamed chunk; streamGuardStrategy decides
+	// when streamed output reaches the consumer. See WithStreamGuardStrategy.
+	streamGuards        []guard.StreamGuard
+	streamGuardStrategy guard.StreamStrategy
+
 	// Stream lifecycle config — tunes per-chunk hook fan-out for streaming.
 	streamLifecycleCfg middlewares.StreamLifecycleConfig
 
@@ -300,6 +305,14 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 		b.Use(middlewares.NewGuardrail(gw.guard))
 	}
 
+	// Priority 155: output guards on streamed responses, when a guard
+	// checks output or a stream guard was registered
+	if hasOutputGuards(gw.guard) || len(gw.streamGuards) > 0 {
+		b.Use(middlewares.NewStreamGuardrail(gw.streamGuards, gw.streamGuardStrategy).
+			WithOutputGuards(gw.guard).
+			WithLogger(gw.logger))
+	}
+
 	// Priority 200: Transforms (if configured)
 	if gw.transforms != nil {
 		b.Use(middlewares.NewTransform(gw.transforms))
@@ -347,6 +360,19 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 	b.Use(call)
 
 	return b.Build()
+}
+
+// hasOutputGuards reports whether svc has a guard that checks output.
+func hasOutputGuards(svc guard.Service) bool {
+	if svc == nil {
+		return false
+	}
+	for _, g := range svc.List() {
+		if p := g.Phase(); p == guard.PhaseOutput || p == guard.PhaseBoth {
+			return true
+		}
+	}
+	return false
 }
 
 // wrapProviderTransports hands each registered provider that owns an HTTP

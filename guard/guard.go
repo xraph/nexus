@@ -44,7 +44,7 @@ type CheckResult struct {
 	Modified bool               // true if messages were altered (e.g., PII redacted)
 	Messages []provider.Message // modified messages (if Modified)
 	Details  map[string]any     // guard-specific details
-	Guard    string             // name of the guard that blocked (set by Service when Blocked)
+	Guard    string             // set by Service: the guard that blocked, or the last one that modified the messages
 }
 
 // Action describes the guard's response.
@@ -102,6 +102,7 @@ func (s *guardService) Check(ctx context.Context, input *CheckInput) (*CheckResu
 			input.Messages = r.Messages
 			result.Modified = true
 			result.Messages = r.Messages
+			result.Guard = g.Name()
 		}
 	}
 	return result, nil
@@ -126,6 +127,7 @@ func (s *guardService) CheckPhase(ctx context.Context, phase Phase, input *Check
 			input.Messages = r.Messages
 			result.Modified = true
 			result.Messages = r.Messages
+			result.Guard = g.Name()
 		}
 	}
 	return result, nil

@@ -126,6 +126,9 @@ func TestDimensionsLengthIsChecked(t *testing.T) {
 	if err == nil || err.Error() != "nexus: provider compat returned 768 dimensions, want 1024" {
 		t.Fatalf("err = %v, want the 768 vs 1024 mismatch", err)
 	}
+	if !errors.Is(err, middlewares.ErrDimensionsMismatch) {
+		t.Fatalf("errors.Is(%v, ErrDimensionsMismatch) = false", err)
+	}
 	if attempts != 1 || compat.calls.Load() != 1 {
 		t.Fatalf("attempts %d, calls %d; a wrong width will not change on retry", attempts, compat.calls.Load())
 	}

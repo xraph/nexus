@@ -194,7 +194,7 @@ type gatewayResponse struct {
 }
 
 func gatewayGet(ctx context.Context, gw *nexus.Gateway, _ struct{}) (gatewayResponse, error) {
-	out := gatewayResponse{Stages: []stageRow{}, RoutingStrategy: gw.RoutingStrategy(), RoutingCaveats: []string{}, Guards: []guardRow{}, GuardCaveats: []string{"The default pipeline does not guard streamed output. Built-in text guards skip non-text content."}, Aliases: []aliasRow{}, Transforms: []transformRow{}, Posture: gatewayPosture(gw), EnforcementCaveats: []string{"Monthly budgets are soft limits. In-flight requests, unpriced calls and records that fail to store can exceed the budget.", "Limiter failures allow requests through; limiterErrors counts them."}}
+	out := gatewayResponse{Stages: []stageRow{}, RoutingStrategy: gw.RoutingStrategy(), RoutingCaveats: []string{}, Guards: []guardRow{}, GuardCaveats: []string{"Output guards check a streamed reply when it ends. The default buffer strategy holds the reply until then; passthrough and chunkwise streams cannot take back a redaction. Built-in text guards skip non-text content."}, Aliases: []aliasRow{}, Transforms: []transformRow{}, Posture: gatewayPosture(gw), EnforcementCaveats: []string{"Monthly budgets are soft limits. In-flight requests, unpriced calls and records that fail to store can exceed the budget.", "Limiter failures allow requests through; limiterErrors counts them."}}
 	_, out.StagesAvailable = gw.Pipeline().(pipeline.Inspector)
 	for _, s := range gw.PipelineStages() {
 		out.Stages = append(out.Stages, stageRow{Name: s.Name, Priority: s.Priority, Terminal: s.Terminal})

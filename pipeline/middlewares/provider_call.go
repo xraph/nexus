@@ -354,6 +354,11 @@ func checkWidth(providerName string, emb *provider.EmbeddingRequest, resp *provi
 	return nil
 }
 
+// ErrDimensionsMismatch is the error, matched with errors.Is, for an
+// embedding the provider returned at a width other than the one the request
+// asked for.
+var ErrDimensionsMismatch = errors.New("nexus: embedding dimensions mismatch")
+
 // dimensionsMismatchError is an embedding the provider served, and charged
 // for, at the wrong width. It carries the response's usage so the usage
 // stage can still price the call.
@@ -367,3 +372,6 @@ type dimensionsMismatchError struct {
 func (e *dimensionsMismatchError) Error() string {
 	return fmt.Sprintf("nexus: provider %s returned %d dimensions, want %d", e.provider, e.got, e.want)
 }
+
+// Unwrap lets callers match the error with errors.Is(err, ErrDimensionsMismatch).
+func (e *dimensionsMismatchError) Unwrap() error { return ErrDimensionsMismatch }
