@@ -483,7 +483,9 @@ func TestARecordAfterShutdownIsCountedAndNotStored(t *testing.T) {
 	if err := gw.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
-	if _, err := gw.Engine().Complete(context.Background(), &provider.CompletionRequest{Model: "gpt-4o"}); err != nil {
+	// The engine refuses new calls after Shutdown, so run the pipeline
+	// directly, as a request already past the engine when Shutdown began.
+	if _, err := gw.Pipeline().Execute(context.Background(), &provider.CompletionRequest{Model: "gpt-4o"}); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 	res, err := s.Usage().Query(context.Background(), &usage.QueryOptions{Limit: 100})

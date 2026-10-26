@@ -605,6 +605,10 @@ func (gw *Gateway) FlushUsage(ctx context.Context) error {
 	return gw.usageMW.Flush(ctx)
 }
 
+// Initialized reports whether Initialize has succeeded and Shutdown has not
+// run since. The engine serves requests only while it is true.
+func (gw *Gateway) Initialized() bool { return gw.engine.ready.Load() }
+
 // Health checks the health of the Gateway.
 func (gw *Gateway) Health(_ context.Context) error {
 	return nil
@@ -615,13 +619,22 @@ func (gw *Gateway) Health(_ context.Context) error {
 // records still being stored, then closes the store. When ctx ends first,
 // the records not yet stored are lost: Shutdown logs how many and returns
 // the flush error, joined with any error from closing the store.
+//
+// Shutdown clears [Gateway.Initialized], so the engine refuses new calls with
+// [ErrNotInitialized]. It is safe on a gateway that was never initialized.
+// A gateway is not restarted after Shutdown.
 func (gw *Gateway) Shutdown(ctx context.Context) error {
-	gw.logger.Info("nexus gateway shutting down")
+	gw.engine.ready.Store(false)
+	logger := gw.logger
+	if logger == nil {
+		logger = NewNoopLogger()
+	}
+	logger.Info("nexus gateway shutting down")
 	var flushErr error
 	if gw.usageMW != nil {
 		gw.usageMW.Close()
 		if err := gw.usageMW.Flush(ctx); err != nil {
-			gw.logger.Warn("nexus: usage records not stored at shutdown", "pending", gw.usageMW.Pending(), "error", err)
+			logger.Warn("nexus: usage records not stored at shutdown", "pending", gw.usageMW.Pending(), "error", err)
 			flushErr = fmt.Errorf("nexus: flushing usage records: %w", err)
 		}
 	}

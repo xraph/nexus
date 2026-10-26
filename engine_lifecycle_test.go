@@ -79,3 +79,37 @@ func TestEngineIsSafeDuringInitialize(t *testing.T) {
 	default:
 	}
 }
+
+func TestGatewayInitializedTracksLifecycle(t *testing.T) {
+	gw := nexus.New(nexus.WithDatabase(store.NewMemory()), nexus.WithProvider(&fakeProvider{name: "openai", price: listPrice}))
+	if gw.Initialized() {
+		t.Fatal("Initialized must be false before Initialize")
+	}
+	ctx := context.Background()
+	if err := gw.Initialize(ctx); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	if !gw.Initialized() {
+		t.Fatal("Initialized must be true after Initialize")
+	}
+	if err := gw.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if gw.Initialized() {
+		t.Fatal("Initialized must be false after Shutdown")
+	}
+	req := &provider.CompletionRequest{Model: "gpt-4o", Messages: []provider.Message{{Role: "user", Content: "hi"}}}
+	if _, err := gw.Engine().Complete(ctx, req); !errors.Is(err, nexus.ErrNotInitialized) {
+		t.Fatalf("Complete after Shutdown: %v, want ErrNotInitialized", err)
+	}
+}
+
+func TestShutdownWithoutInitializeDoesNotPanic(t *testing.T) {
+	gw := nexus.New(nexus.WithDatabase(store.NewMemory()))
+	if err := gw.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown before Initialize: %v", err)
+	}
+	if gw.Initialized() {
+		t.Fatal("Initialized must stay false")
+	}
+}

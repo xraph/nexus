@@ -164,8 +164,9 @@ func (e *Extension) Start(ctx context.Context) error {
 }
 
 // Stop implements [forge.Extension]. It gracefully shuts down the gateway.
+// A gateway that never finished Initialize has nothing to shut down.
 func (e *Extension) Stop(ctx context.Context) error {
-	if e.gateway != nil {
+	if e.gateway != nil && e.gateway.Initialized() {
 		if err := e.gateway.Shutdown(ctx); err != nil {
 			e.MarkStopped()
 			return fmt.Errorf("nexus: shutdown error: %w", err)
@@ -175,10 +176,11 @@ func (e *Extension) Stop(ctx context.Context) error {
 	return nil
 }
 
-// Health implements [forge.Extension].
+// Health implements [forge.Extension]. It reports not ready until Start has
+// initialized the gateway, and again after Stop.
 func (e *Extension) Health(_ context.Context) error {
-	if e.gateway == nil {
-		return fmt.Errorf("nexus: gateway not initialized")
+	if e.gateway == nil || !e.gateway.Initialized() {
+		return fmt.Errorf("nexus: %w", nexus.ErrNotInitialized)
 	}
 	return nil
 }

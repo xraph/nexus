@@ -108,3 +108,41 @@ func TestDeprecatedRouteSettingsWarn(t *testing.T) {
 		t.Fatalf("defaults must not warn, got %+v", got)
 	}
 }
+
+func TestHealthNotReadyUntilStart(t *testing.T) {
+	app := forge.New(forge.WithAppName("health"), forge.WithAppLogger(forge.NewNoopLogger()))
+	ext := New(WithDatabase(store.NewMemory()), WithProvider(okProvider{}))
+	ctx := context.Background()
+	if err := ext.Health(ctx); err == nil {
+		t.Fatal("Health before Register must report not ready")
+	}
+	if err := ext.Register(app); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := ext.Health(ctx); err == nil {
+		t.Fatal("Health after Register but before Start must report not ready")
+	}
+	if err := ext.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := ext.Health(ctx); err != nil {
+		t.Fatalf("Health after Start: %v", err)
+	}
+	if err := ext.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if err := ext.Health(ctx); err == nil {
+		t.Fatal("Health after Stop must report not ready")
+	}
+}
+
+func TestStopWithoutStartDoesNotPanic(t *testing.T) {
+	app := forge.New(forge.WithAppName("stop"), forge.WithAppLogger(forge.NewNoopLogger()))
+	ext := New(WithDatabase(store.NewMemory()), WithProvider(okProvider{}))
+	if err := ext.Register(app); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := ext.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop without Start: %v", err)
+	}
+}
