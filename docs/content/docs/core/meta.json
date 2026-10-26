@@ -3,6 +3,8 @@
   "pages": [
     "providers",
     "routing",
+    "credentials",
+    "pricing",
     "guardrails",
     "caching",
     "transforms",

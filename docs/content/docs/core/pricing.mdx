@@ -1,0 +1,112 @@
+---
+title: Pricing
+description: How Nexus prices usage, including cache and long-context tokens, how to override list prices, and what happens to a model with no price.
+---
+
+Every usage record carries an exact cost in `money.USD`, worked out from the token counts the provider reported and the price of the model at the provider that served it. Prices come from each provider's built-in catalog. You can replace any of them, or price a model the catalog doesn't list, with `nexus.WithPriceOverrides`.
+
+```go
+gw := nexus.New(
+    nexus.WithProvider(opencompat.New("vllm", "http://vllm.internal:8000/v1", "")),
+    nexus.WithPriceOverrides(model.PriceOverride{
+        Provider: "vllm", // the registered provider name
+        Model:    "meta-llama/Llama-3.1-8B-Instruct",
+        Pricing: provider.Pricing{
+            InputPerMillion:  money.MustParse("0.20"),
+            OutputPerMillion: money.MustParse("0.40"),
+        },
+    }),
+    nexus.WithUnpricedPolicy(nexus.RefuseUnpriced),
+)
+```
+
+## Prices
+
+A model's `provider.Pricing` holds USD per million tokens:
+
+```go
+type Pricing struct {
+    InputPerMillion          money.USD
+    OutputPerMillion         money.USD
+    EmbeddingPerMillion      money.USD
+    CacheReadPerMillion      money.USD
+    CacheWritePerMillion     money.USD // 5-minute cache writes
+    CacheWriteLongPerMillion money.USD // 1-hour cache writes
+    LongContextAbove         int       // prompt tokens; 0 means no tier
+    LongContext              *Pricing
+    Free                     bool
+}
+```
+
+A completion pays its uncached prompt tokens at the input price, cache reads at the cache read price, cache writes at the write prices and completion tokens at the output price. A cache price left at zero falls back: reads and 5-minute writes to the input price, 1-hour writes to the 5-minute write price and then to the input price. An embedding pays its prompt tokens at the embedding price. `Free: true` costs exactly $0.
+
+## The token convention
+
+`Usage.PromptTokens` counts every input token, cached or not. The cache counts are parts of it, never extra:
+
+| Field | What it counts |
+|-------|----------------|
+| `PromptTokens` | All input tokens, including cache reads and writes |
+| `CacheReadTokens` | Input tokens read from the provider's prompt cache |
+| `CacheWriteTokens` | Input tokens written to the cache, at either lifetime |
+| `CacheWriteLongTokens` | The 1-hour part of `CacheWriteTokens` |
+| `CompletionTokens` | Output tokens |
+
+So the uncached input is `PromptTokens - CacheReadTokens - CacheWriteTokens`. If you write a provider, map its usage this way. Anthropic's API reports `input_tokens` without the cache tokens, so the Anthropic provider adds them back. A provider that reports no cache tokens has them charged as uncached input.
+
+Here's a `claude-sonnet-4-6` call with 10,000 prompt tokens, 8,000 of them read from the cache and 1,000 written for five minutes, and a 500-token answer:
+
+| Tokens | Price per million | Cost |
+|--------|-------------------|------|
+| 1,000 uncached input | $3.00 | $0.003 |
+| 8,000 cache reads | $0.30 | $0.0024 |
+| 1,000 cache writes (5 minutes) | $3.75 | $0.00375 |
+| 500 output | $15.00 | $0.0075 |
+| | | $0.01665 |
+
+## Long-context prices
+
+Some models charge more for long prompts. When `LongContextAbove` is above zero and the request's `PromptTokens`, cache tokens included, go past it, every token of that request is priced at the `LongContext` tier, not only the tokens past the line. `claude-haiku-5-5` has a tier above 100,000 prompt tokens. OpenAI's GPT-6, GPT-5.6, GPT-5.5 and GPT-5.4 models have one above 272,000.
+
+## Overriding prices
+
+`WithPriceOverrides` sets prices per registered provider name and model id. An override wins over the provider's list price, and an override for a model the provider does not list prices it anyway. It also makes that provider count as listing the model, so [routing](/docs/core/routing) sends requests for the model there. Several `WithPriceOverrides` options add up, and a later entry for the same provider and model wins.
+
+To change prices while the gateway runs, replace the whole set on the price book:
+
+```go
+gw.PriceBook().SetOverrides([]model.PriceOverride{
+    {Provider: "vllm", Model: "meta-llama/Llama-3.1-8B-Instruct", Pricing: newPrice},
+})
+```
+
+`SetOverrides` replaces every override, including the ones from `WithPriceOverrides`, and it is safe to call while requests are in flight. Entries without a provider or a model are ignored. `PriceBook()` is ready from `nexus.New`, before `Initialize`.
+
+`gw.PriceBook().Priced(ctx, providerName, modelID)` tells you whether a model has a price at a provider: `Free`, or a non-zero input, output or embedding price.
+
+## Models with no price
+
+A model with no input and no output price (or, for an embedding, no embedding price) is unpriced. Its usage records a `nil` cost and the pricing status `unpriced_model`, never $0. The gateway counts each one in `nexus_usage_unpriced_total{provider}` and logs a warning once per provider and model.
+
+By default such a request is still served. To stop it before it reaches the provider, set a policy:
+
+```go
+nexus.WithUnpricedPolicy(nexus.RefuseUnpriced)
+```
+
+The gateway asks the policy after routing and before each provider call, and only when the routed model is unpriced at the routed provider for that kind of request. A completion to a model priced only for embeddings is unpriced; an embedding to it is not. `RefuseUnpriced` refuses with `nexus.ErrModelUnpriced`, 400 `model_unpriced`, and the provider is never called. Your own policy gets the tenant id, the provider name and the model, so you can refuse some tenants and let others through:
+
+```go
+nexus.WithUnpricedPolicy(func(ctx context.Context, tenantID, providerName, modelID string) error {
+    if providerName == "ollama" {
+        return nil // local models cost us nothing to run
+    }
+    return nexus.RefuseUnpriced(ctx, tenantID, providerName, modelID)
+})
+```
+
+A `nil` error serves the request. A `*pipeline.RefusalError` refuses it at $0, and any other error fails it. Neither is retried. Like the credential provider, the policy belongs to the default pipeline: with `WithPipeline`, call `WithUnpricedPolicy` on your own provider call stage.
+
+## Budgets and unpriced usage
+
+A tenant's monthly budget adds up priced spend only. An unpriced request has no cost to add, so a tenant that only calls unpriced models never reaches its budget. With `RefuseUnpriced`, or a policy of your own that refuses, no unpriced request reaches a provider, and the budget cannot miss spend that way. See [Multi-Tenancy](/docs/concepts/multi-tenancy#quotas) for the other ways a budget can be exceeded.

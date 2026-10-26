@@ -25,7 +25,7 @@ gw := nexus.New(
 
 A client that sends `"model": "fast"` gets its request rewritten to `gpt-4o-mini`. A model name that isn't an alias passes through unchanged.
 
-The alias stage rewrites only the model. The target's `Provider` is recorded in the request state, but routing ignores it, so the routing strategy still decides which provider gets the request. If you register several providers, an alias for an Anthropic model can end up at OpenAI. See [Routing](/docs/core/routing#what-the-router-sees).
+The alias stage rewrites the model, and the target's `Provider` decides where the request goes: an alias for an Anthropic model reaches Anthropic even with OpenAI registered first. A target whose provider isn't registered refuses the request with `ErrUnknownProvider` (400). A target with no `Provider` leaves the choice to the model's catalog listing and then the strategy. See [Routing](/docs/core/routing#how-a-provider-is-picked).
 
 ## Weighted Targets
 

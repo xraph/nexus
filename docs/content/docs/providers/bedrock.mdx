@@ -1,6 +1,6 @@
 ---
 title: Amazon Bedrock
-description: Use Amazon Bedrock models with Nexus — AWS SigV4 auth and Converse API.
+description: Use Amazon Bedrock models with Nexus, using AWS SigV4 auth and the Converse API.
 ---
 
 The Amazon Bedrock provider connects to the AWS Bedrock Converse API. It uses AWS SigV4 request signing instead of API keys, and the Converse API format instead of OpenAI's.
@@ -58,6 +58,8 @@ provider := bedrock.New(accessKeyID, secretAccessKey, region,
 ```
 
 ## Models
+
+This catalog is out of date. It still lists an old Claude id and its old price, and it wasn't updated in v1.9.0. Until it is, price the Bedrock models you call with [`WithPriceOverrides`](/docs/core/pricing#overriding-prices), under the provider name `bedrock` and the Bedrock model id you send.
 
 | Model | Context | Max Output | Input Price | Output Price |
 |-------|---------|-----------|-------------|-------------|

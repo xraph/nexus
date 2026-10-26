@@ -85,7 +85,7 @@ The request and response follow OpenAI's chat completions format. Set `stream: t
 POST /v1/embeddings
 ```
 
-Embeddings go to the first registered provider that supports them.
+Embeddings go to the provider the body names in `provider`, else to an embeddings provider that lists the model, else to the first registered provider that can embed. See [Routing](/docs/core/routing#embeddings).
 
 ### Models
 

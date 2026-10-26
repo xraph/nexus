@@ -72,7 +72,7 @@ gw := nexus.New(
 )
 ```
 
-With the default priority strategy every request goes to the first provider you registered. The router doesn't pick a provider by model yet, so read [Routing](/docs/core/routing) before you register a second one.
+A request for `gpt-4o` goes to OpenAI and one for `claude-sonnet-4-6` to Anthropic, because each provider's catalog lists its own models. Set `Provider` on the request when you want to name it outright. [Routing](/docs/core/routing) has the full order.
 
 ## Run as an OpenAI-Compatible Proxy
 

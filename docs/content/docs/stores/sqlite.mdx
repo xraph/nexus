@@ -40,7 +40,12 @@ gw := nexus.New(
 | Driver | Grove with `sqlitedriver` |
 | Migrations | `sqlite.Migrations`, run by Grove's orchestrator in `Migrate()` |
 | Tables | `tenants`, `api_keys`, `usage_records` (no `nexus_` prefix) |
+| Usage metadata | `usage_records.metadata`, JSON text, `'{}'` when the request set none |
 | Close | `s.Close()` closes the `grove.DB`, and `gw.Shutdown` calls it |
+
+## Usage metadata
+
+The `usage_metadata` migration (version `20261024000001`, group `nexus`) adds a `metadata` text column to `usage_records`. A metadata filter matches each pair with `json_extract`. The column has no index, so a filter reads every row in the other filters' range. That's fine at SQLite's scale, but use PostgreSQL if you filter large usage tables by metadata.
 
 ## When to use
 

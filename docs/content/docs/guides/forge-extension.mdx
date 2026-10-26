@@ -55,17 +55,27 @@ admin := api.New(gw).Handler()    // /v1 routes plus /admin
 
 Both are plain `net/http` handlers. See the [HTTP API](/docs/api-reference/http-api) for the routes.
 
-`base_path` and `disable_routes` (and `WithBasePath`, `WithDisableRoutes`) are accepted but do nothing in the extension today. `base_path` ends up in the gateway's config and its startup log line, and `disable_routes` has no routes to turn off.
+`base_path` and `disable_routes` (and `WithBasePath`, `WithDisableRoutes`) are deprecated and do nothing. When `disable_routes` is true or `base_path` isn't `/nexus`, `Register` logs one warning naming them. Remove them from your config.
 
 ## Getting the gateway
 
-The extension registers `*nexus.Gateway` in the container during `Register`, but the gateway itself is created in `Start`. Resolve it after the app has started, or you get nil:
+The extension builds the gateway in `Register` and puts that same pointer in the container, so another extension can resolve it from its own `Register`:
 
 ```go
-gw, err := forge.Inject[*nexus.Gateway](app.Container())
+gw, err := vessel.Inject[*nexus.Gateway](app.Container())
 ```
 
-`vessel.Inject[*nexus.Gateway](container)` does the same from another extension, and `ext.Gateway()` returns it straight from the extension (nil until `Start`).
+`forge.Inject[*nexus.Gateway](app.Container())` works the same, and `ext.Gateway()` returns the pointer straight from the extension, non-nil once `Register` has run. `Start` initializes that gateway; it never replaces it.
+
+Until `Start` has run, the engine refuses every call with `nexus.ErrNotInitialized`, so keep the pointer and call it later. For something built lazily, such as an embedder, pass the method value:
+
+```go
+newEmbedder(ext.Gateway) // a func() *nexus.Gateway, called when the first embedding is needed
+```
+
+The extension's `Health` reports not ready until `Start` has initialized the gateway, and again after `Stop`. `gw.Initialized()` tells you the same thing from the gateway.
+
+`Stop` shuts the gateway down: it flushes usage records, closes the store and clears `Initialized`, so later engine calls get `ErrNotInitialized`. A gateway that was never initialized has nothing to shut down, and `Stop` leaves it alone.
 
 ## What it wires in
 
@@ -83,6 +93,16 @@ nexusext.New(
 Authsome isn't wired in either. The gateway checks its own gateway keys, so an Authsome token sent to it gets a 401. See [Identity & Auth](/docs/concepts/identity).
 
 The extension also implements the Forge dashboard contract (`RegisterContractContributor`), which serves tenants, keys, usage and gateway settings to a Forge dashboard host once the gateway has started.
+
+For per-tenant provider keys, prices and the unpriced policy, pass the gateway options through `WithGatewayOption`:
+
+```go
+nexusext.New(
+    nexusext.WithProvider(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"))),
+    nexusext.WithGatewayOption(nexus.WithCredentialProvider(tenantKeys)),
+    nexusext.WithGatewayOption(nexus.WithUnpricedPolicy(nexus.RefuseUnpriced)),
+)
+```
 
 ## YAML configuration
 
@@ -120,8 +140,8 @@ extensions:
 | `GroveDatabase` | `grove_database` | `string` | `""` | Name of the `grove.DB` to resolve from DI; setting it turns Grove resolution on |
 | `DisableMigrate` | `disable_migrate` | `bool` | `false` | Skip the store migration on start |
 | `BootstrapAdminKey` | `bootstrap_admin_key` | `string` | `""` | The raw value of the first admin key: `nxs_` and 64 lowercase hex digits. When empty, the `NEXUS_BOOTSTRAP_ADMIN_KEY` environment variable is used. |
-| `BasePath` | `base_path` | `string` | `"/nexus"` | Not used by the extension (no routes) |
-| `DisableRoutes` | `disable_routes` | `bool` | `false` | Not used by the extension (no routes) |
+| `BasePath` | `base_path` | `string` | `"/nexus"` | Deprecated. Ignored, with a warning when set to anything else |
+| `DisableRoutes` | `disable_routes` | `bool` | `false` | Deprecated. Ignored, with a warning when true |
 
 A zero `default_timeout` or `default_max_retries` is treated as unset and gets the default, so you can't turn the timeout or retries off from config. Use `WithGatewayOption(nexus.WithMaxRetries(0))` in code for that.
 
@@ -171,8 +191,8 @@ When `RequireConfig` is true and neither key exists, `Register` returns an error
 | `WithConfig(cfg)` | Set the extension config in code |
 | `WithRequireConfig(bool)` | Fail `Register` when the config key is missing |
 | `WithDisableMigrate()` | Skip the store migration on start |
-| `WithBasePath(path)` | Accepted, has no effect |
-| `WithDisableRoutes()` | Accepted, has no effect |
+| `WithBasePath(path)` | Deprecated, has no effect |
+| `WithDisableRoutes()` | Deprecated, has no effect |
 
 ## Grove database integration
 

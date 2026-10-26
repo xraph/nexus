@@ -1,6 +1,126 @@
 # Nexus migration notes
 
-## Upgrade behavior changes
+## v1.9.0
+
+Upgrade the root module, `config` and every provider module you use to v1.9.0 together. This release needs Forge v1.13.0 and Grove v1.9.1 (with `pgdriver`, `sqlitedriver` and `mongodriver` v1.9.1) or later. Run your store's migration before the new version takes traffic, and read the Postgres note under [Usage metadata](#usage-metadata) first if your usage table is large.
+
+The one compile break is the audit recorder's signature. Everything else is new fields, options and errors, so your code builds as it is, and some of it behaves differently. That's what this section is about.
+
+### Routing prefers the provider you named
+
+A completion now goes to the provider the request names in `Provider`, else to the alias target's provider, else to a provider whose catalog lists the model, and only then to your routing strategy. Before, the strategy picked among every provider and ignored all three. With OpenAI and Anthropic both registered, a request for a Claude model now reaches Anthropic.
+
+Things that change for you:
+
+- `CompletionRequest.Provider` was ignored before. It's honoured now, over HTTP too (`"provider"` in the body), and a name that isn't registered is refused with `middlewares.ErrUnknownProvider`, 400 `invalid_request`.
+- An alias target whose `Provider` is not registered now refuses the request with the same error. Before, the strategy quietly picked some other provider. Check your aliases.
+- When a request names a provider and the alias has several targets, only targets for that provider (or with no provider) are picked.
+- Embeddings follow the same idea: `EmbeddingRequest.Provider` (new, with a `"provider"` JSON tag), then the embeddings providers that list the model, then the first one that can embed. A named provider that cannot embed is refused with 400 `invalid_request`, and `errors.Is(err, provider.ErrNotSupported)` still matches.
+- A price override makes its provider count as listing the model, so routing follows your overrides.
+- Cache keys now include the requested provider. Entries cached before the upgrade miss once and expire by their TTL.
+
+If you relied on a strategy to spread one model across providers that all list it, it still does: the strategy picks among the providers that list the model.
+
+### Streamed output is guarded, and buffered by default
+
+Output guards now check streamed replies. When any guard runs on output (`guard.PhaseOutput` or `guard.PhaseBoth`; `guards.NewPII` and `guards.NewContentFilter` both count), the gateway adds a stream guard stage at priority 155 with `guard.StrategyBuffer`. Your clients then get nothing until the whole reply has ended and passed the guards. That is a big change to time to first token. If you stream chat to people, pick passthrough:
+
+```go
+nexus.WithStreamGuardStrategy(guard.StrategyPassthrough)
+```
+
+With passthrough, a block replaces `io.EOF` with `*guard.BlockedError` at the end of the stream, and a redaction cannot take effect (the gateway logs a warning). Run tool calls only after a stream ends without an error.
+
+- A blocked stream now returns `*guard.BlockedError` from `Next`, with the usage, model and provider of the refused reply. Code that only expected `io.EOF` or a transport error needs to handle it.
+- A buffered reply that a guard rewrote is replayed as a rebuilt stream: the rewritten text, the tool calls, the finish reason and the usage. Reasoning, citations, audio and images from the original are dropped.
+- The gateway decides whether to add the stage when `Initialize` runs. An output guard you register later through `gw.Guard().Register` does not reach streams unless the stage was already there. Register guards with `WithGuard`.
+- `middlewares.NewStreamGuardrail` with an empty strategy now means buffer. It meant passthrough before. If you added this stage yourself with `WithMiddleware`, set the strategy explicitly, and remove it if the gateway now adds its own, or streams get checked twice.
+- `guard.CheckInput.Metadata` is now a copy of the request's `Metadata` in both phases, and `CheckResult.Guard` names the last guard that modified the messages, not only one that blocked.
+- `guard/shieldadapter` is deprecated.
+
+The "Streaming output is not guarded" item under [Known limits](#known-limits) no longer applies.
+
+### audit_hook takes the event by pointer
+
+`audit_hook.Recorder.Record` and `audit_hook.RecorderFunc` now take `*AuditEvent` instead of `AuditEvent`, matching Chronicle's emitter and Dispatch's audit hook. Change your recorder to:
+
+```go
+func(ctx context.Context, ev *audit_hook.AuditEvent) error
+```
+
+`AuditEvent` also gains `TenantID`, set by the request, tenant, key and budget hooks. It is empty for provider, guardrail, key-revoked and stream events, which have no tenant to give.
+
+### Anthropic
+
+The catalog was rebuilt from Anthropic's pricing and models pages, with cache prices on every model. It now lists `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5`, `claude-sonnet-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-5` and `claude-sonnet-4-5`, with their dated ids.
+
+- These ids are gone: `claude-3-5-haiku-20241022`, `claude-3-5-sonnet-20241022`, `claude-sonnet-4-5-20250514` and `claude-opus-4-5-20250630`. A request for one still goes out, but it records an unknown cost and is not routed to Anthropic by its listing. Move to a current id, or set `Provider: "anthropic"` and a price override.
+- The default `max_tokens` was 4096 for every model. It is now `min(16000, max output)` for `Complete`, `min(64000, max output)` for streams, and 8192 for an id the catalog does not list. Replies can run longer and cost more. Set `MaxTokens` on the request if you want the old cap.
+- `temperature` and `top_p` are dropped, without an error, on models that reject them (every Claude 5 model, plus Opus 4.7 and 4.8), and on every model when you set `WithAPIVersion(anthropic.APIVersion20261021)`.
+- Thinking now maps per model. Adaptive models get `{"type":"adaptive"}`, and turning thinking off sends `disabled` or `between_tools` where the model needs one. Budget models get `budget_tokens` raised to at least 1024. `ThinkingConfig.Effort` is new and goes to `output_config.effort`. An effort the model does not accept fails before the call with an error wrapping `provider.ErrNotSupported`.
+- `ToolChoice` used to be ignored by this provider. It is sent now, and `"required"` or a named function on `claude-opus-5-5`, `claude-fable-5-1` or `claude-sonnet-5-5` fails with `anthropic.ErrForcedToolChoice` before the call.
+- The HTTP client had a 120 second timeout on the whole request, which cut long streams. It now has a 10 minute response-header timeout (`anthropic.WithTimeout`) and nothing on the body, so a stream runs as long as it needs. A non-streamed call is bounded by `nexus.WithTimeout` (30 seconds by default) and your context.
+- A `refusal` stop reason now maps to `FinishReason` `content_filter`. It came through as `refusal` before. `pause_turn` passes through.
+- `PromptTokens` now includes cache reads and writes. Anthropic's `input_tokens` leaves them out, so prompt counts for cached requests go up, and costs follow the cache prices.
+- The `message_delta` chunk of a stream now carries the usage, so `provider.Accumulate` gets the completion tokens it used to miss.
+- A stream with content ends with one more chunk, `provider.EventMessageStop`, carrying `Delta.Native`. The HTTP stream sends it to clients as an empty delta event.
+- Replies carry `Message.Native`. Store it with the assistant message and send it back unchanged to keep thinking valid across tool turns. See the [Anthropic page](https://www.xraph.com/docs/nexus/providers/anthropic).
+- Prompt caching is new and off by default (`anthropic.WithPromptCaching`).
+
+### OpenAI and compatible providers
+
+The OpenAI catalog lists what OpenAI's Chat Completions API served on 2026-10-25, with cached-input and long-context prices.
+
+- `gpt-4-turbo`, `o1` and `o1-mini` were removed: OpenAI shut them down. Requests for them record an unknown cost.
+- On `https://api.openai.com/v1` the output cap is sent as `max_completion_tokens`. Other base URLs keep `max_tokens` unless you set `openai.WithMaxCompletionTokens(true)` (or the same option on opencompat).
+- Reasoning models (the GPT-6 and GPT-5.6 families, `gpt-5.5`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `o3`) no longer get `temperature` or `top_p`, on any base URL.
+- The 120 second whole-request timeout is gone here too, and in every provider that wraps `providers/openai` (Groq, Together, Fireworks and the rest). Requests wait up to 10 minutes for headers (`openai.WithTimeout`, `opencompat.WithTimeout`) and streams are not cut. Non-streamed calls through the gateway are still bounded by `nexus.WithTimeout`.
+- `prompt_tokens_details.cached_tokens` and `cache_write_tokens` now fill `CacheReadTokens` and `CacheWriteTokens`.
+- A provider with an empty key no longer sends `Authorization: Bearer ` with nothing after it. It sends no `Authorization` header.
+- `EmbeddingRequest.Dimensions` is new. With it set, the gateway refuses a provider that cannot return that width with `middlewares.ErrDimensionsUnsupported` (400, wrapping `provider.ErrNotSupported`). On OpenAI's own endpoint only `text-embedding-3-*` can. It fails a response whose vectors have another length (`middlewares.ErrDimensionsMismatch`), and records the usage it was charged.
+- opencompat's default capabilities now include embeddings, tools, streamed tools and JSON output. An opencompat provider registered ahead of OpenAI can now be the first provider that embeds, so an embedding request that names no provider, for a model no catalog lists, can land on it. Name the provider, or pass `WithCapabilities` to keep the old set.
+
+### Gateway and Forge extension lifecycle
+
+- `gw.Engine()` returned nil before `Initialize`. It now returns the engine from `nexus.New` on, and its calls return `nexus.ErrNotInitialized` until `Initialize` finishes.
+- `gw.Initialized()` is new. `Shutdown` clears it, after which engine calls return `ErrNotInitialized` again. `Shutdown` on a gateway that was never initialized no longer panics.
+- The Forge extension builds the gateway in `Register` and provides that pointer in the container, so `vessel.Inject[*nexus.Gateway]` works from another extension's `Register`. It was nil until `Start` before. `Start` initializes it, `Health` reports not ready until then, and `Stop` skips a gateway that never started.
+- `Config.DisableRoutes`, `Config.BasePath`, `WithDisableRoutes` and `WithBasePath` are deprecated no-ops. `Register` logs a warning when `disable_routes` is true or `base_path` is not `/nexus`.
+- `gw.PriceBook()` exists from `nexus.New`, so `WithPriceOverrides` applies before `Initialize`.
+
+### Usage metadata
+
+`CompletionRequest.Metadata` and the new `EmbeddingRequest.Metadata` are stored on usage records, and `usage.QueryOptions` and `usage.SeriesOptions` can filter by them. The gateway now validates request metadata: at most 16 pairs, keys matching `^[A-Za-z0-9_-]{1,64}$`, values up to 256 bytes. A request that breaks a rule is refused with 400 `invalid_request` before any provider call. It was never checked before, so look at what you put there.
+
+The `usage_metadata` migration (version `20261024000001`, group `nexus`) adds the storage:
+
+- Postgres: a `metadata` JSONB column and a GIN index, `idx_nexus_usage_metadata`. The migration's `CREATE INDEX` blocks writes to `nexus_usage_records` while it builds, and on a large table usage inserts back up behind it. Create the column and the index yourself before the upgrade, with `CREATE INDEX CONCURRENTLY` outside a transaction, and the migration skips both. The statements are on the [PostgreSQL page](https://www.xraph.com/docs/nexus/stores/postgres).
+- SQLite: a `metadata` text column, no index.
+- MongoDB: a `metadata` field and a wildcard index on `metadata.$**`.
+
+### Prices and unpriced models
+
+- `provider.Pricing` gains cache read, 5-minute and 1-hour cache write, and long-context prices. `provider.Usage` gains `CacheWriteLongTokens`. `PromptTokens` includes the cache tokens, and the cache counts are parts of it. If you wrote a provider, report usage that way.
+- `nexus.WithPriceOverrides` and `gw.PriceBook().SetOverrides` set or replace prices per provider and model.
+- An unpriced request is still served by default, but it is now counted in `nexus_usage_unpriced_total{provider}` and logged once per provider and model. `nexus.WithUnpricedPolicy(nexus.RefuseUnpriced)` refuses it with 400 `model_unpriced` before the call, so budgets cannot miss spend.
+
+### Tenant credentials
+
+`nexus.WithCredentialProvider` is new: one gateway can serve each tenant on its own Anthropic, OpenAI or opencompat key, and on opencompat its own base URL. Nothing changes unless you set it, apart from these:
+
+- `provider.ErrCredentialNotFound` is exported (it was unexported), and `StaticCredential` and `EnvCredential` return it.
+- A provider error wrapping `provider.ErrMissingAPIKey` or `provider.ErrMissingBaseURL` is now permanent, so the retry stage does not retry it.
+- The gateway clears any credential on the caller's context before the provider call, so `provider.WithCredential` on a context you pass to `Engine` has no effect. Only the credential the gateway resolved reaches the provider.
+
+Nexus trusts the base URL a resolver returns and sends the request body and the tenant's key there. If your tenants choose that URL, validate it on your side: allow only the schemes you mean to, refuse private, loopback, link-local and cloud metadata addresses, and check the resolved address at dial time against DNS rebinding.
+
+### Known stale: Bedrock
+
+`providers/bedrock` was not updated in this release. Its catalog still lists an old Claude id, `anthropic.claude-3-5-sonnet-20241022-v2:0`, at its old price. Price the Bedrock models you call with `WithPriceOverrides` until it is.
+
+## Before v1.9.0
+
+### Upgrade behavior changes
 
 This upgrade changes the gateway's money types, authentication, accounting and
 quota enforcement. Plan a maintenance window and upgrade the root Nexus module
@@ -26,7 +146,7 @@ Memory rate limits apply per replica. Use the Redis limiter when replicas must
 share rate counters. Limiter failures fail open and are counted; failures reading
 quota data from the store fail closed.
 
-## Exact money and storage
+### Exact money and storage
 
 Prices, budgets, record costs and aggregate costs now use `money.USD`. JSON money
 values are decimal strings. An unpriced record has null cost and an explicit
@@ -48,7 +168,7 @@ migration orchestrator must call it too. The composite usage index can block
 writes on a large table. On Postgres, you can create the exact index concurrently
 before the upgrade, outside a transaction, so the migration skips that work.
 
-## Pipeline and API contracts
+### Pipeline and API contracts
 
 The provider call is terminal and runs after the other stages. Usage and stream
 lifecycle wrappers now execute. Custom middleware previously sorted after the
@@ -70,7 +190,7 @@ secret response for replay. A replay can return a typed `CONFLICT` inside an HTT
 must retain its idempotency key. Installed dashboard authorization and durable
 shared idempotency storage require deployment verification.
 
-## Dashboard migration status
+### Dashboard migration status
 
 The Go contract, React read routes, tenant forms, status controls, key dialogs and
 usage charts are implemented. All 12 routes passed desktop and narrow fixture
@@ -102,12 +222,13 @@ was committed before the legacy directory was deleted.
 | Three widgets | Aggregate stats, monthly spend, recent activity | Widget slots deliberately dropped because the React shell has no equivalent slot. Their data remains on Overview, Usage and Request log. |
 | Topbar API Docs | Link to a route Nexus did not mount | Deliberately dropped. |
 
-## Known limits
+### Known limits
 
 - Routing has no per-request decision explanation. Cost and latency strategies
   select the first healthy provider while candidates have no cost/latency data.
-- Streaming output is not guarded; non-text guard content is skipped. A recorded
-  block names its guard, but absence of a block does not prove every guard ran.
+- Built-in guards skip non-text content. A recorded block names its guard, but
+  absence of a block does not prove every guard ran. (Streamed output is guarded
+  from v1.9.0 on.)
 - Cache entry/byte counts are not tracked. Completion and stream cache backends
   are reported separately. Redis cache Clear is an existing no-op.
 - Fallback, circuit breakers, batch and MCP are not wired into this gateway.
@@ -119,7 +240,7 @@ was committed before the legacy directory was deleted.
 - Fixture timestamp validation accepts some dates JavaScript normalizes but Go
   rejects. This is a fixture parity gap, not a production parser change.
 
-## Verification
+### Verification
 
 The root race suite passed with real Postgres, MongoDB and Redis test containers,
 plus memory and SQLite coverage. All 37 nested modules passed standalone vet and

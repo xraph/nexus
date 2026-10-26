@@ -9,7 +9,7 @@ Nexus is a library, not a service. You bring your own providers, database and HT
 
 ## What it does
 
-- Multi-provider routing: register OpenAI, Anthropic or any OpenAI-compatible API, and pick a priority, round-robin, weighted, cost or latency strategy. Routing doesn't take the requested model into account yet, see [Routing](/docs/core/routing).
+- Multi-provider routing: register OpenAI, Anthropic or any OpenAI-compatible API, and route each request to the provider it names, its alias target's provider or the provider that lists the model, with a priority, round-robin, weighted, cost or latency strategy for the rest. See [Routing](/docs/core/routing).
 - Content guardrails: PII detection, prompt injection blocking, blocklists and your own regex rules, with block, redact or warn actions.
 - Response caching: exact-match cache keys per tenant, in memory or Redis, plus record-and-replay for streamed responses.
 - Multi-tenant isolation: tenants, `nxs_` gateway keys with scopes, RPM and TPM windows, daily request caps, monthly budgets and usage records with exact cost.

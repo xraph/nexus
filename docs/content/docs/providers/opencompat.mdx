@@ -30,10 +30,12 @@ gw := nexus.New(
 |--------|-------------|
 | `opencompat.WithCapabilities(caps)` | Override the default capabilities |
 | `opencompat.WithModels(models)` | Provide a list of available models |
+| `opencompat.WithTimeout(d)` | How long a request waits for response headers. Default 10 minutes; a stream isn't cut by it |
+| `opencompat.WithMaxCompletionTokens(on)` | Send `max_completion_tokens` instead of `max_tokens`, for a server that wants the newer field |
 
 ## Capabilities
 
-Default capabilities are Chat and Streaming. Override with `WithCapabilities`:
+The defaults are chat, streaming, tools (streamed too), JSON output and embeddings, which most OpenAI-compatible servers support. `WithCapabilities` replaces them all:
 
 ```go
 provider := opencompat.New("my-provider", baseURL, apiKey,
@@ -61,3 +63,44 @@ provider := opencompat.New("vllm", baseURL, apiKey,
     }),
 )
 ```
+
+Without a catalog entry, a model has no price, so its usage records an unknown cost. Give it one with [`WithPriceOverrides`](/docs/core/pricing#overriding-prices).
+
+## Embedding dimensions
+
+`EmbeddingRequest.Dimensions` goes to the server as it is. The gateway can't know whether the server honours it, so it checks the vectors that come back and fails the call when one has a different length. See [OpenAI](/docs/providers/openai#embedding-dimensions).
+
+## A base URL per tenant
+
+opencompat applies a per-request [tenant credential](/docs/core/credentials), key and base URL both. That lets one registered provider serve every tenant that brings its own OpenAI-compatible server. Register it with no base URL and no key, and have your resolver return both:
+
+```go
+type workspaceEndpoints struct{ store EndpointStore }
+
+func (w workspaceEndpoints) GetCredential(ctx context.Context, name string) (string, error) {
+    c, err := w.ResolveCredential(ctx, name)
+    return c.APIKey, err
+}
+
+func (w workspaceEndpoints) ResolveCredential(ctx context.Context, name string) (provider.Credential, error) {
+    if name != "custom" {
+        return provider.Credential{}, provider.ErrCredentialNotFound
+    }
+    ep, err := w.store.Endpoint(ctx, pipeline.TenantID(ctx)) // validated when it was saved
+    if err != nil {
+        return provider.Credential{}, err
+    }
+    return provider.Credential{APIKey: ep.Key, BaseURL: ep.URL}, nil
+}
+
+gw := nexus.New(
+    nexus.WithProvider(opencompat.New("custom", "", "")),
+    nexus.WithCredentialProvider(workspaceEndpoints{store: endpoints}),
+)
+```
+
+Clients then name the provider on each request (`"provider": "custom"`), because the model ids are the tenant's and no catalog lists them.
+
+The key you return goes only to the URL you return. With an empty key the request is sent with no `Authorization` header, and a provider configured with its own key never sends that key to a URL a resolver chose. A request with no base URL from either place fails with `provider.ErrMissingBaseURL` before any network call.
+
+Nexus sends the request wherever `BaseURL` points. Validate tenant URLs on your side, as [Tenant Credentials](/docs/core/credentials#validate-the-base-url-yourself) describes, or a tenant can aim the gateway at your internal network.
