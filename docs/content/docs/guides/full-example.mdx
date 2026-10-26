@@ -33,7 +33,7 @@ func main() {
     ctx := context.Background()
 
     // Audit recorder: here it just logs. In production, write to your audit store.
-    recorder := audit_hook.RecorderFunc(func(ctx context.Context, event audit_hook.AuditEvent) error {
+    recorder := audit_hook.RecorderFunc(func(ctx context.Context, event *audit_hook.AuditEvent) error {
         slog.Info("audit", "action", event.Action, "resource", event.ResourceID)
         return nil
     })
