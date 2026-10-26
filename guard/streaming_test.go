@@ -301,3 +301,121 @@ func TestAnUnknownStrategyBuffers(t *testing.T) {
 		t.Fatalf("delivered %d chunks before the verdict (err %v)", len(got), err)
 	}
 }
+
+// argRedactor rewrites "secret" to "[x]" in the text and the tool call
+// arguments of the message it checks.
+type argRedactor struct{}
+
+func (argRedactor) Name() string       { return "arg-redactor" }
+func (argRedactor) Phase() guard.Phase { return guard.PhaseOutput }
+func (argRedactor) Check(_ context.Context, in *guard.CheckInput) (*guard.CheckResult, error) {
+	msg := in.Messages[0]
+	if s, ok := msg.Content.(string); ok {
+		msg.Content = strings.ReplaceAll(s, "secret", "[x]")
+	}
+	msg.ToolCalls = append([]provider.ToolCall(nil), msg.ToolCalls...)
+	for i := range msg.ToolCalls {
+		msg.ToolCalls[i].Function.Arguments = strings.ReplaceAll(msg.ToolCalls[i].Function.Arguments, "secret", "[x]")
+	}
+	return &guard.CheckResult{Passed: true, Action: guard.ActionRedact, Modified: true, Messages: []provider.Message{msg}}, nil
+}
+
+func toolDeltas(chunks []*provider.StreamChunk) []*provider.StreamChunk {
+	var out []*provider.StreamChunk
+	for _, c := range chunks {
+		if c.Kind == provider.EventToolCallDelta {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func TestBufferedRewriteReplaysToolCallsWithIDsOnePerDelta(t *testing.T) {
+	u := streamUsage
+	native := &provider.NativeContent{Provider: "anthropic", Model: "claude", Content: json.RawMessage(`[]`)}
+	// Anthropic-style: every tool delta is a one-element slice, and the
+	// parallel calls are told apart by id.
+	inner := testutil.NewFakeStream([]*provider.StreamChunk{
+		{ID: "m1", Provider: "anthropic", Model: "claude", Delta: provider.Delta{Role: "assistant", Content: "reading the secret"}},
+		{Kind: provider.EventToolCallDelta, Delta: provider.Delta{ToolCalls: []provider.ToolCall{{ID: "c1", Type: "function", Function: provider.ToolCallFunc{Name: "sh", Arguments: `{"cmd":`}}}}},
+		{Kind: provider.EventToolCallDelta, Delta: provider.Delta{ToolCalls: []provider.ToolCall{{ID: "c2", Type: "function", Function: provider.ToolCallFunc{Name: "ls", Arguments: `{}`}}}}},
+		{Kind: provider.EventToolCallDelta, Delta: provider.Delta{ToolCalls: []provider.ToolCall{{ID: "c1", Function: provider.ToolCallFunc{Arguments: `"cat secret"}`}}}}},
+		{Kind: provider.EventMessageStop, Delta: provider.Delta{Native: native}, FinishReason: "tool_calls"},
+		{Kind: provider.EventUsage, Usage: &u},
+	}, nil)
+	s := guard.NewOutputGuardedStream(inner, outputService(argRedactor{}), &guard.CheckInput{}, guard.StrategyBuffer)
+
+	got, err := drain(t, s)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("the stream ended with %v", err)
+	}
+	if carriesNative(got) {
+		t.Fatal("a rewritten replay carried native content")
+	}
+	deltas := toolDeltas(got)
+	if len(deltas) != 2 {
+		t.Fatalf("replayed %d tool call deltas, want one per call (2)", len(deltas))
+	}
+	want := []provider.ToolCall{
+		{ID: "c1", Type: "function", Function: provider.ToolCallFunc{Name: "sh", Arguments: `{"cmd":"cat [x]"}`}},
+		{ID: "c2", Type: "function", Function: provider.ToolCallFunc{Name: "ls", Arguments: `{}`}},
+	}
+	for i, d := range deltas {
+		if len(d.Delta.ToolCalls) != 1 || !reflect.DeepEqual(d.Delta.ToolCalls[0], want[i]) {
+			t.Fatalf("tool delta %d = %+v, want the whole call %+v", i, d.Delta.ToolCalls, want[i])
+		}
+	}
+
+	resp, err := provider.Accumulate(context.Background(), testutil.NewFakeStream(got, nil))
+	if err != nil {
+		t.Fatalf("accumulate the replay: %v", err)
+	}
+	msg := resp.Choices[0].Message
+	if msg.Content != "reading the [x]" || !reflect.DeepEqual(msg.ToolCalls, want) {
+		t.Fatalf("read back = %q %+v, want the rewritten text and calls", msg.Content, msg.ToolCalls)
+	}
+	if resp.Choices[0].FinishReason != "tool_calls" || resp.Usage != streamUsage || resp.ID != "m1" {
+		t.Fatalf("read back finish %q usage %+v id %q, want tool_calls, the stream's usage and m1",
+			resp.Choices[0].FinishReason, resp.Usage, resp.ID)
+	}
+}
+
+func TestBufferedRewriteReplaysToolCallsWithoutIDsInOneDelta(t *testing.T) {
+	u := streamUsage
+	// A server that sends no call ids: calls are told apart by their slot,
+	// so they must travel back in one delta to keep their slots.
+	inner := testutil.NewFakeStream([]*provider.StreamChunk{
+		{ID: "m2", Delta: provider.Delta{ToolCalls: []provider.ToolCall{
+			{Type: "function", Function: provider.ToolCallFunc{Name: "sh", Arguments: `{"cmd":`}},
+			{Type: "function", Function: provider.ToolCallFunc{Name: "ls", Arguments: `{}`}},
+		}}},
+		{Delta: provider.Delta{ToolCalls: []provider.ToolCall{{Function: provider.ToolCallFunc{Arguments: `"cat secret"}`}}}}},
+		{FinishReason: "tool_calls"},
+		{Kind: provider.EventUsage, Usage: &u},
+	}, nil)
+	s := guard.NewOutputGuardedStream(inner, outputService(argRedactor{}), &guard.CheckInput{}, guard.StrategyBuffer)
+
+	got, err := drain(t, s)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("the stream ended with %v", err)
+	}
+	want := []provider.ToolCall{
+		{Type: "function", Function: provider.ToolCallFunc{Name: "sh", Arguments: `{"cmd":"cat [x]"}`}},
+		{Type: "function", Function: provider.ToolCallFunc{Name: "ls", Arguments: `{}`}},
+	}
+	deltas := toolDeltas(got)
+	if len(deltas) != 1 || !reflect.DeepEqual(deltas[0].Delta.ToolCalls, want) {
+		t.Fatalf("tool deltas = %+v, want one delta carrying both calls %+v", deltas, want)
+	}
+
+	resp, err := provider.Accumulate(context.Background(), testutil.NewFakeStream(got, nil))
+	if err != nil {
+		t.Fatalf("accumulate the replay: %v", err)
+	}
+	if calls := resp.Choices[0].Message.ToolCalls; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("read back calls = %+v, want %+v", calls, want)
+	}
+	if resp.Choices[0].FinishReason != "tool_calls" || resp.Usage != streamUsage {
+		t.Fatalf("read back finish %q usage %+v", resp.Choices[0].FinishReason, resp.Usage)
+	}
+}

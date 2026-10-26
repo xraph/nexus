@@ -175,3 +175,70 @@ func TestCredentialNotFoundIsOneValue(t *testing.T) {
 		t.Fatal("nexus.ErrCredentialNotFound and provider.ErrCredentialNotFound differ")
 	}
 }
+
+// echoKeyProvider answers each call with the key and the tenant it was
+// called with, so a caller can see which credential served it. It keeps no
+// state, so it is safe to call from many goroutines.
+type echoKeyProvider struct{ *fakeProvider }
+
+func (p echoKeyProvider) AcceptsCredentials() bool { return true }
+
+func (p echoKeyProvider) Complete(ctx context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
+	key := "global"
+	if c, ok := provider.CredentialFromContext(ctx); ok && c.APIKey != "" {
+		key = c.APIKey
+	}
+	return &provider.CompletionResponse{Provider: p.name, Model: req.Model,
+		Choices: []provider.Choice{{Message: provider.Message{Role: "assistant", Content: key + "|" + pipeline.TenantID(ctx)}}},
+		Usage:   provider.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}}, nil
+}
+
+func TestConcurrentTenantsEachUseOnlyTheirOwnKey(t *testing.T) {
+	const perTenant = 25
+	keys := &tenantKeys{keys: map[string]string{}, down: map[string]bool{}}
+	p := echoKeyProvider{&fakeProvider{name: "anthropic", price: listPrice}}
+
+	var a, b string
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		a, _ = tenantAndKey(t, gw)
+		b, _ = tenantAndKey(t, gw)
+		keys.set(a, "key-a")
+		keys.set(b, "key-b")
+
+		var wg sync.WaitGroup
+		wrong := make(chan string, 2*perTenant)
+		for _, tc := range []struct{ tenant, key string }{{a, "key-a"}, {b, "key-b"}} {
+			for range perTenant {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					resp, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "gpt-4o", TenantID: tc.tenant,
+						Messages: []provider.Message{{Role: "user", Content: "hi"}}})
+					if err != nil {
+						wrong <- fmt.Sprintf("%s: %v", tc.tenant, err)
+						return
+					}
+					if got, want := resp.Choices[0].Message.Content, tc.key+"|"+tc.tenant; got != want {
+						wrong <- fmt.Sprintf("tenant %s was served with %q, want %q", tc.tenant, got, want)
+					}
+				}()
+			}
+		}
+		wg.Wait()
+		close(wrong)
+		for msg := range wrong {
+			t.Error(msg)
+		}
+	}, nexus.WithProvider(p), nexus.WithCredentialProvider(keys))
+
+	count := map[string]int{}
+	for _, r := range recs {
+		if r.Outcome != usage.OutcomeOK {
+			t.Fatalf("record = %+v, want every call served", r)
+		}
+		count[r.TenantID.String()]++
+	}
+	if count[a] != perTenant || count[b] != perTenant {
+		t.Fatalf("records per tenant = %v, want %d each", count, perTenant)
+	}
+}

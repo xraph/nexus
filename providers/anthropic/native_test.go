@@ -254,3 +254,90 @@ func TestThinkingBlockBindingAcceptsOnlyKnownModes(t *testing.T) {
 		})
 	}
 }
+
+// TestStreamedReplyRoundTripsThroughAccumulate streams a reply with signed
+// thinking and a tool call, accumulates it as a caller would, and sends the
+// accumulated assistant message back in the next turn: the content blocks
+// must go out exactly as the stream rebuilt them, signatures included.
+func TestStreamedReplyRoundTripsThroughAccumulate(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	ev := testutil.AnthropicEventJSON
+	delta := func(idx int, d map[string]any) string {
+		return ev("content_block_delta", map[string]any{"type": "content_block_delta", "index": idx, "delta": d})
+	}
+	start := func(idx int, b map[string]any) string {
+		return ev("content_block_start", map[string]any{"type": "content_block_start", "index": idx, "content_block": b})
+	}
+	stop := func(idx int) string {
+		return ev("content_block_stop", map[string]any{"type": "content_block_stop", "index": idx})
+	}
+	mock.Ctrl.SetStreamHandler(testutil.AnthropicStreamHandler([]string{
+		ev("message_start", map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_rt", "model": nativeModel,
+			"usage": map[string]any{"input_tokens": 20}}}), "",
+		start(0, map[string]any{"type": "thinking", "thinking": "", "signature": ""}), "",
+		delta(0, map[string]any{"type": "thinking_delta", "thinking": "look it up"}), "",
+		delta(0, map[string]any{"type": "signature_delta", "signature": "sig1"}), "",
+		stop(0), "",
+		start(1, map[string]any{"type": "text", "text": ""}), "",
+		delta(1, map[string]any{"type": "text_delta", "text": "checking"}), "",
+		stop(1), "",
+		start(2, map[string]any{"type": "tool_use", "id": "t1", "name": "f", "input": map[string]any{}}), "",
+		delta(2, map[string]any{"type": "input_json_delta", "partial_json": `{"a":`}), "",
+		delta(2, map[string]any{"type": "input_json_delta", "partial_json": `1}`}), "",
+		stop(2), "",
+		ev("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "tool_use"}, "usage": map[string]any{"output_tokens": 9}}), "",
+		ev("message_stop", map[string]any{"type": "message_stop"}), "",
+	}))
+	mock.Ctrl.SetCompletion(anthropicCompletionResp())
+	p := anthropic.New("test-key", anthropic.WithBaseURL(mock.Server.URL))
+
+	resp, err := streamAndAccumulate(t, p)
+	if err != nil {
+		t.Fatalf("accumulate: %v", err)
+	}
+	assistant := resp.Choices[0].Message
+	if assistant.Native == nil {
+		t.Fatal("the accumulated message has no Native content")
+	}
+	if assistant.Content != "checking" || len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].ID != "t1" ||
+		assistant.ToolCalls[0].Function.Arguments != `{"a":1}` {
+		t.Fatalf("accumulated message = %q %+v, want text checking and tool call t1 {\"a\":1}", assistant.Content, assistant.ToolCalls)
+	}
+	if resp.Choices[0].FinishReason != "tool_calls" {
+		t.Errorf("finish reason = %q, want tool_calls", resp.Choices[0].FinishReason)
+	}
+
+	_, err = p.Complete(context.Background(), &provider.CompletionRequest{
+		Model: nativeModel,
+		Messages: []provider.Message{
+			{Role: "user", Content: "q"},
+			assistant,
+			{Role: "tool", ToolCallID: "t1", Content: "r"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete() error: %v", err)
+	}
+	var body struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(mock.Ctrl.GetLastBody(), &body); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if len(body.Messages) < 2 || body.Messages[1].Role != "assistant" {
+		t.Fatalf("sent messages = %+v, want the assistant turn second", body.Messages)
+	}
+	if !bytes.Equal(body.Messages[1].Content, assistant.Native.Content) {
+		t.Fatalf("assistant content sent = %s\nwant the streamed blocks %s", body.Messages[1].Content, assistant.Native.Content)
+	}
+	var blocks []map[string]any
+	if err := json.Unmarshal(body.Messages[1].Content, &blocks); err != nil {
+		t.Fatalf("decode sent content: %v", err)
+	}
+	if len(blocks) != 3 || blocks[0]["type"] != "thinking" || blocks[0]["signature"] != "sig1" || blocks[0]["thinking"] != "look it up" {
+		t.Fatalf("sent content = %s, want the signed thinking block first", body.Messages[1].Content)
+	}
+}
