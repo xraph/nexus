@@ -9,10 +9,11 @@ import (
 )
 
 // ErrUnpricedLongContext rejects a price override whose long-context tier
-// has neither an input nor an output price. Cost would charge a long prompt
-// at the base price instead, which is not what the override says, and a
-// budget would be wrong about it. SetOverrides wraps it with the provider
-// and the model; match it with errors.Is.
+// lacks an input price or an output price. With neither, Cost would charge a
+// long prompt at the base price, which is not what the override says. With
+// only one, it would charge the other side at $0 and a budget would
+// undercount. SetOverrides wraps it with the provider, the model and the
+// missing price; match it with errors.Is.
 var ErrUnpricedLongContext = errors.New("nexus: long-context tier has no input or output price")
 
 // PriceOverride sets the price of Model at Provider, the registered name of
@@ -30,18 +31,25 @@ type PriceOverride struct {
 // same provider the later wins. It is safe to call while requests are being
 // priced, so a host can reload its prices at runtime.
 //
-// An entry whose LongContext tier has neither an input nor an output price
-// (and is not on a Free price) fails the whole call with
-// ErrUnpricedLongContext, naming the model and the provider, and the
-// overrides already set stay as they were.
+// An entry whose LongContext tier lacks an input price or an output price
+// fails the whole call with ErrUnpricedLongContext, naming the model and the
+// provider, and the overrides already set stay as they were. A Free price,
+// or a Free tier, may leave either price at zero. OverridesErr reports the
+// latest failure until a call succeeds.
 func (b *PriceBook) SetOverrides(overrides []PriceOverride) error {
 	set := make(map[string]map[string]provider.Pricing)
 	for _, o := range overrides {
 		if o.Provider == "" || o.Model == "" {
 			continue
 		}
-		if tier := o.Pricing.LongContext; tier != nil && !o.Pricing.Free && !hasTokenPrice(*tier) {
-			return fmt.Errorf("%w: model %s at %s", ErrUnpricedLongContext, o.Model, o.Provider)
+		if tier := o.Pricing.LongContext; tier != nil && !o.Pricing.Free && !tier.Free {
+			if missing := missingTierPrice(*tier); missing != "" {
+				err := fmt.Errorf("%w: model %s at %s has no %s in its long-context tier", ErrUnpricedLongContext, o.Model, o.Provider, missing)
+				b.mu.Lock()
+				b.rejected = err
+				b.mu.Unlock()
+				return err
+			}
 		}
 		if set[o.Provider] == nil {
 			set[o.Provider] = make(map[string]provider.Pricing)
@@ -50,8 +58,31 @@ func (b *PriceBook) SetOverrides(overrides []PriceOverride) error {
 	}
 	b.mu.Lock()
 	b.overrides = set
+	b.rejected = nil
 	b.mu.Unlock()
 	return nil
+}
+
+// OverridesErr is the error of the latest SetOverrides call, or nil when it
+// succeeded or none was made. A later successful call clears it.
+func (b *PriceBook) OverridesErr() error {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.rejected
+}
+
+// missingTierPrice names the token price a long-context tier lacks, or "".
+func missingTierPrice(tier provider.Pricing) string {
+	switch {
+	case tier.InputPerMillion.IsZero() && tier.OutputPerMillion.IsZero():
+		return "input or output price"
+	case tier.InputPerMillion.IsZero():
+		return "input price"
+	case tier.OutputPerMillion.IsZero():
+		return "output price"
+	default:
+		return ""
+	}
 }
 
 // Priced reports whether modelID has a price at providerName: Free, or any

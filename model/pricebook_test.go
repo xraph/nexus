@@ -200,8 +200,10 @@ func TestSetOverridesRejectsAnUnpricedLongContextTier(t *testing.T) {
 	}
 
 	for name, tier := range map[string]*provider.Pricing{
-		"an empty tier":                  {},
-		"a tier with only a cache price": {CacheReadPerMillion: money.MustParse("0.1")},
+		"an empty tier":                    {},
+		"a tier with only a cache price":   {CacheReadPerMillion: money.MustParse("0.1")},
+		"a tier with only an input price":  {InputPerMillion: money.MustParse("0.4")},
+		"a tier with only an output price": {OutputPerMillion: money.MustParse("0.8")},
 	} {
 		bad := base
 		bad.LongContext = tier
@@ -221,12 +223,33 @@ func TestSetOverridesRejectsAnUnpricedLongContextTier(t *testing.T) {
 	}
 
 	priced := base
-	priced.LongContext = &provider.Pricing{InputPerMillion: money.MustParse("0.4")}
+	priced.LongContext = &provider.Pricing{InputPerMillion: money.MustParse("0.4"), OutputPerMillion: money.MustParse("0.8")}
 	if err := book.SetOverrides([]model.PriceOverride{{Provider: "opencompat-x", Model: "mistral-long", Pricing: priced}}); err != nil {
-		t.Fatalf("a tier with an input price is accepted: %v", err)
+		t.Fatalf("a tier with an input and an output price is accepted: %v", err)
+	}
+	freeTier := base
+	freeTier.LongContext = &provider.Pricing{Free: true}
+	if err := book.SetOverrides([]model.PriceOverride{{Provider: "opencompat-x", Model: "mistral-long", Pricing: freeTier}}); err != nil {
+		t.Fatalf("a free tier is accepted: %v", err)
 	}
 	free := provider.Pricing{Free: true, LongContextAbove: 1, LongContext: &provider.Pricing{}}
 	if err := book.SetOverrides([]model.PriceOverride{{Provider: "opencompat-x", Model: "local", Pricing: free}}); err != nil {
 		t.Fatalf("a free price ignores its tier: %v", err)
+	}
+}
+
+func TestAPartiallyPricedTierNamesTheMissingPrice(t *testing.T) {
+	book := model.NewPriceBook(provider.NewRegistry())
+	bad := provider.Pricing{InputPerMillion: money.MustParse("0.2"), OutputPerMillion: money.MustParse("0.4"),
+		LongContextAbove: 1000, LongContext: &provider.Pricing{InputPerMillion: money.MustParse("0.4")}}
+	err := book.SetOverrides([]model.PriceOverride{{Provider: "p", Model: "m", Pricing: bad}})
+	if !errors.Is(err, model.ErrUnpricedLongContext) || !strings.Contains(err.Error(), "output price") || !strings.Contains(err.Error(), "m at p") {
+		t.Fatalf("err = %v, want ErrUnpricedLongContext naming the model and the output price", err)
+	}
+	if !errors.Is(book.OverridesErr(), model.ErrUnpricedLongContext) {
+		t.Fatalf("OverridesErr = %v, want the rejection", book.OverridesErr())
+	}
+	if err := book.SetOverrides(nil); err != nil || book.OverridesErr() != nil {
+		t.Fatalf("a successful call should clear OverridesErr: %v, %v", err, book.OverridesErr())
 	}
 }

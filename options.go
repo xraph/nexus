@@ -315,11 +315,12 @@ func WithProviderTransport(wrap func(http.RoundTripper) http.RoundTripper) Optio
 // wins. To replace them all at runtime, call PriceBook().SetOverrides.
 //
 // An override the price book rejects (see model.PriceBook.SetOverrides)
-// leaves the overrides unset, and Initialize returns the error.
+// leaves the overrides unset, and Initialize returns the error unless a
+// later PriceBook().SetOverrides call with valid prices succeeds first.
 func WithPriceOverrides(overrides ...model.PriceOverride) Option {
 	return func(gw *Gateway) {
 		gw.priceOverrides = append(gw.priceOverrides, overrides...)
-		gw.priceOverridesErr = gw.priceBook.SetOverrides(gw.priceOverrides)
+		_ = gw.priceBook.SetOverrides(gw.priceOverrides) //nolint:errcheck // Initialize reports it through PriceBook().OverridesErr
 	}
 }
 

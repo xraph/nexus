@@ -18,6 +18,7 @@ type PriceBook struct {
 	mu        sync.RWMutex
 	lists     map[string]map[string]provider.Pricing
 	overrides map[string]map[string]provider.Pricing // provider, then model
+	rejected  error                                  // why the latest SetOverrides failed; nil once one succeeds
 }
 
 // NewPriceBook creates a price book over the given providers.

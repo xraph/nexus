@@ -776,6 +776,30 @@ func TestAnUnpricedLongContextOverrideFailsInitialize(t *testing.T) {
 	}
 }
 
+func TestValidPricesSetBeforeInitializeClearAnEarlierRejection(t *testing.T) {
+	bad := model.PriceOverride{Provider: "openai", Model: "llama3-long", Pricing: provider.Pricing{
+		InputPerMillion: money.MustParse("0.2"), OutputPerMillion: money.MustParse("0.4"),
+		LongContextAbove: 1000, LongContext: &provider.Pricing{InputPerMillion: money.MustParse("0.4")},
+	}}
+	gw := nexus.New(nexus.WithDatabase(store.NewMemory()), nexus.WithProvider(&fakeProvider{name: "openai", price: listPrice}),
+		nexus.WithPriceOverrides(bad))
+	err := gw.Initialize(context.Background())
+	if !errors.Is(err, model.ErrUnpricedLongContext) || !strings.Contains(err.Error(), "PriceBook().SetOverrides") {
+		t.Fatalf("Initialize = %v, want ErrUnpricedLongContext and a hint to fix it", err)
+	}
+	good := bad
+	good.Pricing.LongContext = &provider.Pricing{InputPerMillion: money.MustParse("0.4"), OutputPerMillion: money.MustParse("0.8")}
+	if err := gw.PriceBook().SetOverrides([]model.PriceOverride{good}); err != nil {
+		t.Fatalf("SetOverrides: %v", err)
+	}
+	if err := gw.Initialize(context.Background()); err != nil {
+		t.Fatalf("Initialize after valid prices: %v", err)
+	}
+	if !gw.Initialized() {
+		t.Fatal("the gateway did not initialize")
+	}
+}
+
 func TestWithUnpricedPolicyRefusesAnUnpricedModel(t *testing.T) {
 	fp := &fakeProvider{name: "openai", price: listPrice}
 	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
