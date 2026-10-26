@@ -113,3 +113,49 @@ func TestShutdownWithoutInitializeDoesNotPanic(t *testing.T) {
 		t.Fatal("Initialized must stay false")
 	}
 }
+
+func TestInitializeAfterShutdownFails(t *testing.T) {
+	gw := nexus.New(nexus.WithDatabase(store.NewMemory()), nexus.WithProvider(&fakeProvider{name: "openai", price: listPrice}))
+	ctx := context.Background()
+	if err := gw.Initialize(ctx); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	if err := gw.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	err := gw.Initialize(ctx)
+	if !errors.Is(err, nexus.ErrNotInitialized) {
+		t.Fatalf("Initialize after Shutdown = %v, want an error wrapping ErrNotInitialized", err)
+	}
+	if gw.Initialized() {
+		t.Fatal("a failed Initialize must leave the gateway not ready")
+	}
+
+	never := nexus.New(nexus.WithDatabase(store.NewMemory()))
+	if err := never.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown before Initialize: %v", err)
+	}
+	if err := never.Initialize(ctx); !errors.Is(err, nexus.ErrNotInitialized) {
+		t.Fatalf("Initialize after a Shutdown that closed the store = %v, want ErrNotInitialized", err)
+	}
+}
+
+func TestGatewayHealthFollowsTheLifecycle(t *testing.T) {
+	gw := nexus.New(nexus.WithDatabase(store.NewMemory()), nexus.WithProvider(&fakeProvider{name: "openai", price: listPrice}))
+	ctx := context.Background()
+	if err := gw.Health(ctx); !errors.Is(err, nexus.ErrNotInitialized) {
+		t.Fatalf("Health before Initialize = %v, want ErrNotInitialized", err)
+	}
+	if err := gw.Initialize(ctx); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	if err := gw.Health(ctx); err != nil {
+		t.Fatalf("Health after Initialize = %v, want nil", err)
+	}
+	if err := gw.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if err := gw.Health(ctx); !errors.Is(err, nexus.ErrNotInitialized) {
+		t.Fatalf("Health after Shutdown = %v, want ErrNotInitialized", err)
+	}
+}

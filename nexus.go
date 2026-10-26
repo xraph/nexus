@@ -131,6 +131,9 @@ type Gateway struct {
 	streamCacheCfg cache.StreamCacheOptions
 
 	initialized bool
+
+	// shutDown is set by Shutdown; Initialize refuses to run after it.
+	shutDown bool
 }
 
 // New creates a new Nexus Gateway with the given options.
@@ -151,8 +154,14 @@ func New(opts ...Option) *Gateway {
 	return gw
 }
 
-// Initialize sets up all services and validates configuration.
+// Initialize sets up all services and validates configuration. A second
+// call on an initialized gateway does nothing. After Shutdown it fails with
+// an error that wraps ErrNotInitialized: a gateway is not restarted, so
+// create a new one.
 func (gw *Gateway) Initialize(_ context.Context) error {
+	if gw.shutDown {
+		return fmt.Errorf("nexus: gateway was shut down and cannot be initialized again: %w", ErrNotInitialized)
+	}
 	if gw.initialized {
 		return nil
 	}
@@ -614,8 +623,12 @@ func (gw *Gateway) FlushUsage(ctx context.Context) error {
 // run since. The engine serves requests only while it is true.
 func (gw *Gateway) Initialized() bool { return gw.engine.ready.Load() }
 
-// Health checks the health of the Gateway.
+// Health reports whether the gateway serves requests. It returns
+// ErrNotInitialized before Initialize and after Shutdown, as the engine does.
 func (gw *Gateway) Health(_ context.Context) error {
+	if !gw.Initialized() {
+		return ErrNotInitialized
+	}
 	return nil
 }
 
@@ -627,8 +640,9 @@ func (gw *Gateway) Health(_ context.Context) error {
 //
 // Shutdown clears [Gateway.Initialized], so the engine refuses new calls with
 // [ErrNotInitialized]. It is safe on a gateway that was never initialized.
-// A gateway is not restarted after Shutdown.
+// A gateway is not restarted after Shutdown: Initialize returns an error.
 func (gw *Gateway) Shutdown(ctx context.Context) error {
+	gw.shutDown = true
 	gw.engine.ready.Store(false)
 	logger := gw.logger
 	if logger == nil {

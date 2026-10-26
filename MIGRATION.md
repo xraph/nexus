@@ -84,6 +84,8 @@ The OpenAI catalog lists what OpenAI's Chat Completions API served on 2026-10-25
 
 - `gw.Engine()` returned nil before `Initialize`. It now returns the engine from `nexus.New` on, and its calls return `nexus.ErrNotInitialized` until `Initialize` finishes.
 - `gw.Initialized()` is new. `Shutdown` clears it, after which engine calls return `ErrNotInitialized` again. `Shutdown` on a gateway that was never initialized no longer panics.
+- A gateway is not restarted. `Initialize` after `Shutdown` returned nil and left every call failing; it now returns an error that wraps `ErrNotInitialized`, so the Forge extension's `Start` after `Stop` fails too. Create a new gateway instead.
+- `gw.Health` returned nil whatever the state. It now returns `ErrNotInitialized` before `Initialize` and after `Shutdown`.
 - The Forge extension builds the gateway in `Register` and provides that pointer in the container, so `vessel.Inject[*nexus.Gateway]` works from another extension's `Register`. It was nil until `Start` before. `Start` initializes it, `Health` reports not ready until then, and `Stop` skips a gateway that never started.
 - `Config.DisableRoutes`, `Config.BasePath`, `WithDisableRoutes` and `WithBasePath` are deprecated no-ops. `Register` logs a warning when `disable_routes` is true or `base_path` is not `/nexus`.
 - `gw.PriceBook()` exists from `nexus.New`, so `WithPriceOverrides` applies before `Initialize`.

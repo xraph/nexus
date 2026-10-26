@@ -134,6 +134,12 @@ func TestHealthNotReadyUntilStart(t *testing.T) {
 	if err := ext.Health(ctx); err == nil {
 		t.Fatal("Health after Stop must report not ready")
 	}
+	if err := ext.Start(ctx); err == nil {
+		t.Fatal("Start after Stop must fail: a stopped gateway is not restarted")
+	}
+	if err := ext.Health(ctx); err == nil {
+		t.Fatal("Health after a failed restart must report not ready")
+	}
 }
 
 func TestStopWithoutStartDoesNotPanic(t *testing.T) {
