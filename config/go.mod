@@ -3,37 +3,37 @@ module github.com/xraph/nexus/config
 go 1.26.0
 
 require (
-	github.com/xraph/nexus v1.8.1
-	github.com/xraph/nexus/providers/ai21 v1.8.1
-	github.com/xraph/nexus/providers/anthropic v1.8.1
-	github.com/xraph/nexus/providers/anyscale v1.8.1
-	github.com/xraph/nexus/providers/azureopenai v1.8.1
-	github.com/xraph/nexus/providers/bedrock v1.8.1
-	github.com/xraph/nexus/providers/cerebras v1.8.1
-	github.com/xraph/nexus/providers/cohere v1.8.1
-	github.com/xraph/nexus/providers/deepinfra v1.8.1
-	github.com/xraph/nexus/providers/deepseek v1.8.1
-	github.com/xraph/nexus/providers/fireworks v1.8.1
-	github.com/xraph/nexus/providers/gemini v1.8.1
-	github.com/xraph/nexus/providers/groq v1.8.1
-	github.com/xraph/nexus/providers/hyperbolic v1.8.1
-	github.com/xraph/nexus/providers/jinaai v1.8.1
-	github.com/xraph/nexus/providers/lepton v1.8.1
-	github.com/xraph/nexus/providers/lmstudio v1.8.1
-	github.com/xraph/nexus/providers/mistral v1.8.1
-	github.com/xraph/nexus/providers/nebius v1.8.1
-	github.com/xraph/nexus/providers/novita v1.8.1
-	github.com/xraph/nexus/providers/nvidia v1.8.1
-	github.com/xraph/nexus/providers/ollama v1.8.1
-	github.com/xraph/nexus/providers/openai v1.8.1
-	github.com/xraph/nexus/providers/opencompat v1.8.1
-	github.com/xraph/nexus/providers/openrouter v1.8.1
-	github.com/xraph/nexus/providers/perplexity v1.8.1
-	github.com/xraph/nexus/providers/sambanova v1.8.1
-	github.com/xraph/nexus/providers/together v1.8.1
-	github.com/xraph/nexus/providers/vertex v1.8.1
-	github.com/xraph/nexus/providers/voyageai v1.8.1
-	github.com/xraph/nexus/providers/xai v1.8.1
+	github.com/xraph/nexus v1.9.0
+	github.com/xraph/nexus/providers/ai21 v1.9.0
+	github.com/xraph/nexus/providers/anthropic v1.9.0
+	github.com/xraph/nexus/providers/anyscale v1.9.0
+	github.com/xraph/nexus/providers/azureopenai v1.9.0
+	github.com/xraph/nexus/providers/bedrock v1.9.0
+	github.com/xraph/nexus/providers/cerebras v1.9.0
+	github.com/xraph/nexus/providers/cohere v1.9.0
+	github.com/xraph/nexus/providers/deepinfra v1.9.0
+	github.com/xraph/nexus/providers/deepseek v1.9.0
+	github.com/xraph/nexus/providers/fireworks v1.9.0
+	github.com/xraph/nexus/providers/gemini v1.9.0
+	github.com/xraph/nexus/providers/groq v1.9.0
+	github.com/xraph/nexus/providers/hyperbolic v1.9.0
+	github.com/xraph/nexus/providers/jinaai v1.9.0
+	github.com/xraph/nexus/providers/lepton v1.9.0
+	github.com/xraph/nexus/providers/lmstudio v1.9.0
+	github.com/xraph/nexus/providers/mistral v1.9.0
+	github.com/xraph/nexus/providers/nebius v1.9.0
+	github.com/xraph/nexus/providers/novita v1.9.0
+	github.com/xraph/nexus/providers/nvidia v1.9.0
+	github.com/xraph/nexus/providers/ollama v1.9.0
+	github.com/xraph/nexus/providers/openai v1.9.0
+	github.com/xraph/nexus/providers/opencompat v1.9.0
+	github.com/xraph/nexus/providers/openrouter v1.9.0
+	github.com/xraph/nexus/providers/perplexity v1.9.0
+	github.com/xraph/nexus/providers/sambanova v1.9.0
+	github.com/xraph/nexus/providers/together v1.9.0
+	github.com/xraph/nexus/providers/vertex v1.9.0
+	github.com/xraph/nexus/providers/voyageai v1.9.0
+	github.com/xraph/nexus/providers/xai v1.9.0
 )
 
 require (
