@@ -75,12 +75,14 @@ Some models charge more for long prompts. When `LongContextAbove` is above zero 
 To change prices while the gateway runs, replace the whole set on the price book:
 
 ```go
-gw.PriceBook().SetOverrides([]model.PriceOverride{
+err := gw.PriceBook().SetOverrides([]model.PriceOverride{
     {Provider: "vllm", Model: "meta-llama/Llama-3.1-8B-Instruct", Pricing: newPrice},
 })
 ```
 
 `SetOverrides` replaces every override, including the ones from `WithPriceOverrides`, and it is safe to call while requests are in flight. Entries without a provider or a model are ignored. `PriceBook()` is ready from `nexus.New`, before `Initialize`.
+
+An override with a `LongContext` tier must give that tier an input or an output price. One without either is rejected: `SetOverrides` returns `model.ErrUnpricedLongContext` naming the model and the provider, and keeps the overrides it already had. With `WithPriceOverrides`, `Initialize` returns that error. A tier in a provider's own price list that has no price is ignored, and long prompts are charged at the base price.
 
 `gw.PriceBook().Priced(ctx, providerName, modelID)` tells you whether a model has a price at a provider: `Free`, or a non-zero input, output or embedding price.
 

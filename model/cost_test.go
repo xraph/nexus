@@ -111,3 +111,18 @@ func TestCostUsesTheLongContextTier(t *testing.T) {
 		t.Fatalf("over the threshold: cost = %v, status = %s; want 0.0300005", cost, status)
 	}
 }
+
+func TestCostFallsBackToTheBaseTierWhenTheTierHasNoPrice(t *testing.T) {
+	p := provider.Pricing{
+		InputPerMillion:  money.MustParse("0.10"),
+		OutputPerMillion: money.MustParse("0.50"),
+		LongContextAbove: 100_000,
+		LongContext:      &provider.Pricing{CacheReadPerMillion: money.MustParse("0.05")},
+	}
+	// Over the line, but the tier has no input or output price: the base
+	// price. 200_000 × 0.10 + 1_000 × 0.50.
+	cost, status := model.Cost(provider.Usage{PromptTokens: 200_000, CompletionTokens: 1_000}, p, false)
+	if status != usage.PricingPriced || cost == nil || !cost.Equal(money.MustParse("0.0205")) {
+		t.Fatalf("over the line with an unpriced tier: cost = %v, status = %s; want 0.0205 priced", cost, status)
+	}
+}

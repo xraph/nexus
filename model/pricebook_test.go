@@ -2,6 +2,8 @@ package model_test
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/xraph/nexus/model"
@@ -115,10 +117,12 @@ func TestOverrideWinsAndPricesUnlistedModels(t *testing.T) {
 	if _, ok := book.Price(ctx, "opencompat-x", "llama3"); ok {
 		t.Fatalf("an unlisted model is priced before any override")
 	}
-	book.SetOverrides([]model.PriceOverride{
+	if err := book.SetOverrides([]model.PriceOverride{
 		{Provider: "opencompat-x", Model: "llama3", Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.2"), OutputPerMillion: money.MustParse("0.4")}},
 		{Provider: "openai", Model: "gpt-4o", Pricing: provider.Pricing{InputPerMillion: money.MustParse("2"), OutputPerMillion: money.MustParse("8")}},
-	})
+	}); err != nil {
+		t.Fatalf("SetOverrides: %v", err)
+	}
 	if p, ok := book.Price(ctx, "opencompat-x", "llama3"); !ok || !p.InputPerMillion.Equal(money.MustParse("0.2")) || !p.OutputPerMillion.Equal(money.MustParse("0.4")) {
 		t.Fatalf("override = %+v, %v", p, ok)
 	}
@@ -140,11 +144,15 @@ func TestSetOverridesReplacesTheSet(t *testing.T) {
 	ctx := context.Background()
 	llama := model.PriceOverride{Provider: "opencompat-x", Model: "llama3", Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.2")}}
 	mistral := model.PriceOverride{Provider: "opencompat-x", Model: "mistral", Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.1")}}
-	book.SetOverrides([]model.PriceOverride{llama})
+	if err := book.SetOverrides([]model.PriceOverride{llama}); err != nil {
+		t.Fatalf("SetOverrides: %v", err)
+	}
 	if _, ok := book.Price(ctx, "opencompat-x", "llama3"); !ok {
 		t.Fatalf("first set not applied")
 	}
-	book.SetOverrides([]model.PriceOverride{mistral})
+	if err := book.SetOverrides([]model.PriceOverride{mistral}); err != nil {
+		t.Fatalf("SetOverrides: %v", err)
+	}
 	if _, ok := book.Price(ctx, "opencompat-x", "llama3"); ok {
 		t.Fatalf("an override left out of the new set should be gone")
 	}
@@ -177,5 +185,48 @@ func TestPricedNeedsANonZeroPrice(t *testing.T) {
 	}
 	if book.Priced(ctx, "nobody", "gpt-4o") {
 		t.Errorf("an unknown provider prices nothing")
+	}
+}
+
+func TestSetOverridesRejectsAnUnpricedLongContextTier(t *testing.T) {
+	reg := provider.NewRegistry()
+	reg.Register(&listedProvider{name: "opencompat-x"})
+	book := model.NewPriceBook(reg)
+	ctx := context.Background()
+	base := provider.Pricing{InputPerMillion: money.MustParse("0.2"), OutputPerMillion: money.MustParse("0.4"), LongContextAbove: 100_000}
+	llama := model.PriceOverride{Provider: "opencompat-x", Model: "llama3", Pricing: base}
+	if err := book.SetOverrides([]model.PriceOverride{llama}); err != nil {
+		t.Fatalf("a line with no tier is accepted: %v", err)
+	}
+
+	for name, tier := range map[string]*provider.Pricing{
+		"an empty tier":                  {},
+		"a tier with only a cache price": {CacheReadPerMillion: money.MustParse("0.1")},
+	} {
+		bad := base
+		bad.LongContext = tier
+		err := book.SetOverrides([]model.PriceOverride{{Provider: "opencompat-x", Model: "mistral-long", Pricing: bad}})
+		if !errors.Is(err, model.ErrUnpricedLongContext) {
+			t.Fatalf("%s: err = %v, want ErrUnpricedLongContext", name, err)
+		}
+		if !strings.Contains(err.Error(), "mistral-long") || !strings.Contains(err.Error(), "opencompat-x") {
+			t.Fatalf("%s: err = %q, want it to name the model and the provider", name, err)
+		}
+		if _, ok := book.Price(ctx, "opencompat-x", "llama3"); !ok {
+			t.Fatalf("%s: a rejected set replaced the overrides already set", name)
+		}
+		if book.Lists(ctx, "opencompat-x", "mistral-long") {
+			t.Fatalf("%s: a rejected override was stored", name)
+		}
+	}
+
+	priced := base
+	priced.LongContext = &provider.Pricing{InputPerMillion: money.MustParse("0.4")}
+	if err := book.SetOverrides([]model.PriceOverride{{Provider: "opencompat-x", Model: "mistral-long", Pricing: priced}}); err != nil {
+		t.Fatalf("a tier with an input price is accepted: %v", err)
+	}
+	free := provider.Pricing{Free: true, LongContextAbove: 1, LongContext: &provider.Pricing{}}
+	if err := book.SetOverrides([]model.PriceOverride{{Provider: "opencompat-x", Model: "local", Pricing: free}}); err != nil {
+		t.Fatalf("a free price ignores its tier: %v", err)
 	}
 }

@@ -10,7 +10,10 @@ import (
 // its uncached prompt tokens at the input price, cache reads and writes at
 // their own prices (see provider.Pricing for the fallbacks) and completion
 // tokens at the output price. A request whose prompt is longer than the
-// model's LongContextAbove is charged entirely at the LongContext tier.
+// model's LongContextAbove is charged entirely at the LongContext tier. A
+// tier with neither an input nor an output price is ignored and the request
+// is charged at the base price, so a missing tier never turns a priced model
+// into an unknown cost.
 //
 // An embedding charges prompt tokens at the embedding price. An embedding
 // provider that reports only a total (Voyage does) is priced from the
@@ -39,10 +42,10 @@ func Cost(u provider.Usage, p provider.Pricing, embedding bool) (*money.USD, usa
 		c := p.EmbeddingPerMillion.PerMillion(int64(tokens))
 		return &c, usage.PricingPriced
 	}
-	if p.LongContextAbove > 0 && u.PromptTokens > p.LongContextAbove && p.LongContext != nil {
+	if p.LongContextAbove > 0 && u.PromptTokens > p.LongContextAbove && p.LongContext != nil && hasTokenPrice(*p.LongContext) {
 		p = *p.LongContext
 	}
-	if p.InputPerMillion.IsZero() && p.OutputPerMillion.IsZero() {
+	if !hasTokenPrice(p) {
 		return nil, usage.PricingUnpricedModel
 	}
 
@@ -64,6 +67,12 @@ func Cost(u provider.Usage, p provider.Pricing, embedding bool) (*money.USD, usa
 		p.OutputPerMillion.PerMillion(int64(u.CompletionTokens)),
 	)
 	return &c, usage.PricingPriced
+}
+
+// hasTokenPrice reports whether p has an input or an output price, the
+// prices a completion is charged at.
+func hasTokenPrice(p provider.Pricing) bool {
+	return !p.InputPerMillion.IsZero() || !p.OutputPerMillion.IsZero()
 }
 
 // orElse is price, or fallback when price is zero.

@@ -78,8 +78,10 @@ type Gateway struct {
 	// exists before Initialize.
 	priceBook *model.PriceBook
 
-	// priceOverrides are every override WithPriceOverrides was given.
-	priceOverrides []model.PriceOverride
+	// priceOverrides are every override WithPriceOverrides was given, and
+	// priceOverridesErr is why the price book rejected them, if it did.
+	priceOverrides    []model.PriceOverride
+	priceOverridesErr error
 
 	// unpricedPolicy decides about requests to models with no price.
 	unpricedPolicy UnpricedPolicy
@@ -153,6 +155,9 @@ func New(opts ...Option) *Gateway {
 func (gw *Gateway) Initialize(_ context.Context) error {
 	if gw.initialized {
 		return nil
+	}
+	if gw.priceOverridesErr != nil {
+		return fmt.Errorf("nexus: price overrides: %w", gw.priceOverridesErr)
 	}
 
 	// Set defaults for unset services

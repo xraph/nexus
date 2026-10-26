@@ -2,9 +2,18 @@ package model
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/xraph/nexus/provider"
 )
+
+// ErrUnpricedLongContext rejects a price override whose long-context tier
+// has neither an input nor an output price. Cost would charge a long prompt
+// at the base price instead, which is not what the override says, and a
+// budget would be wrong about it. SetOverrides wraps it with the provider
+// and the model; match it with errors.Is.
+var ErrUnpricedLongContext = errors.New("nexus: long-context tier has no input or output price")
 
 // PriceOverride sets the price of Model at Provider, the registered name of
 // the provider that serves it. It wins over the provider's own list price
@@ -20,11 +29,19 @@ type PriceOverride struct {
 // provider or no model is ignored; of two entries for the same model at the
 // same provider the later wins. It is safe to call while requests are being
 // priced, so a host can reload its prices at runtime.
-func (b *PriceBook) SetOverrides(overrides []PriceOverride) {
+//
+// An entry whose LongContext tier has neither an input nor an output price
+// (and is not on a Free price) fails the whole call with
+// ErrUnpricedLongContext, naming the model and the provider, and the
+// overrides already set stay as they were.
+func (b *PriceBook) SetOverrides(overrides []PriceOverride) error {
 	set := make(map[string]map[string]provider.Pricing)
 	for _, o := range overrides {
 		if o.Provider == "" || o.Model == "" {
 			continue
+		}
+		if tier := o.Pricing.LongContext; tier != nil && !o.Pricing.Free && !hasTokenPrice(*tier) {
+			return fmt.Errorf("%w: model %s at %s", ErrUnpricedLongContext, o.Model, o.Provider)
 		}
 		if set[o.Provider] == nil {
 			set[o.Provider] = make(map[string]provider.Pricing)
@@ -34,6 +51,7 @@ func (b *PriceBook) SetOverrides(overrides []PriceOverride) {
 	b.mu.Lock()
 	b.overrides = set
 	b.mu.Unlock()
+	return nil
 }
 
 // Priced reports whether modelID has a price at providerName: Free, or any

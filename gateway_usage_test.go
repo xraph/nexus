@@ -702,6 +702,22 @@ func TestThePriceBookIsReadyBeforeInitialize(t *testing.T) {
 	}
 }
 
+func TestAnUnpricedLongContextOverrideFailsInitialize(t *testing.T) {
+	gw := nexus.New(nexus.WithDatabase(store.NewMemory()), nexus.WithProvider(&fakeProvider{name: "openai", price: listPrice}),
+		nexus.WithUnpricedPolicy(nexus.RefuseUnpriced),
+		nexus.WithPriceOverrides(model.PriceOverride{Provider: "openai", Model: "llama3-long", Pricing: provider.Pricing{
+			InputPerMillion: money.MustParse("0.2"), OutputPerMillion: money.MustParse("0.4"),
+			LongContextAbove: 1000, LongContext: &provider.Pricing{},
+		}}))
+	err := gw.Initialize(context.Background())
+	if !errors.Is(err, model.ErrUnpricedLongContext) || !strings.Contains(err.Error(), "llama3-long") {
+		t.Fatalf("Initialize = %v, want ErrUnpricedLongContext naming llama3-long", err)
+	}
+	if gw.Initialized() {
+		t.Fatal("a gateway with a rejected price override must not serve")
+	}
+}
+
 func TestWithUnpricedPolicyRefusesAnUnpricedModel(t *testing.T) {
 	fp := &fakeProvider{name: "openai", price: listPrice}
 	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
