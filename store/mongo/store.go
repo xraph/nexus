@@ -513,7 +513,13 @@ func (s *usageStore) Series(ctx context.Context, opts *usage.SeriesOptions) ([]u
 	if _, err := usage.FillSeries(opts, nil); err != nil {
 		return nil, err
 	}
+	if err := usage.ValidateMetadata(opts.Metadata); err != nil {
+		return nil, err
+	}
 	match := bson.M{"created_at": bson.M{"$gte": usage.BucketStart(opts.Start, opts.Bucket), "$lt": opts.End.UTC()}}
+	for k, v := range opts.Metadata {
+		match["metadata."+k] = v
+	}
 	if opts.TenantID != "" {
 		match["tenant_id"] = opts.TenantID
 	}
@@ -566,8 +572,14 @@ func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) (*usag
 	if err := paging.CheckCursor(opts.Cursor, id.PrefixUsage); err != nil {
 		return nil, err
 	}
+	if err := usage.ValidateMetadata(opts.Metadata); err != nil {
+		return nil, err
+	}
 	limit := paging.Limit(opts.Limit)
 	filter := bson.M{}
+	for k, v := range opts.Metadata {
+		filter["metadata."+k] = v
+	}
 	for field, v := range map[string]string{
 		"tenant_id": opts.TenantID, "key_id": opts.KeyID, "provider": opts.Provider,
 		"model": opts.Model, "outcome": string(opts.Outcome),

@@ -81,3 +81,29 @@ func TestRowFromAnOldBinaryReadsAsUnpriced(t *testing.T) {
 		t.Fatalf("old binary row = cost %v, status %s; want unknown and unpriced_model", got.CostUSD, got.PricingStatus)
 	}
 }
+
+// A binary from before metadata may still insert rows without the column.
+// Such a row reads back with an empty map and no filter matches it.
+func TestUsageMetadataMigrationKeepsOldRows(t *testing.T) {
+	ctx := context.Background()
+	db := storetest.OpenPostgresDB(t)
+	s := pgstore.New(db)
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	tn := storetest.InsertTenant(t, s)
+	rowID := id.NewUsageID().String()
+	if _, err := pgdriver.Unwrap(db).Exec(ctx,
+		`INSERT INTO nexus_usage_records (id, tenant_id, provider, model, total_tokens, cost_usd, pricing_status)
+         VALUES ($1, $2, 'openai', 'gpt-4o', 10, 0.5, 'priced')`, rowID, tn.ID.String()); err != nil {
+		t.Fatalf("insert as the old binary: %v", err)
+	}
+	got := storetest.FindRecord(t, s, id.MustParseUsageID(rowID))
+	if got.Metadata == nil || len(got.Metadata) != 0 {
+		t.Fatalf("old row metadata = %#v, want an empty, non-nil map", got.Metadata)
+	}
+	res, err := s.Usage().Query(ctx, &usage.QueryOptions{Metadata: map[string]string{"project": "p1"}})
+	if err != nil || len(res.Items) != 0 {
+		t.Fatalf("filtering over an old row = %v, %v; want no match", res, err)
+	}
+}

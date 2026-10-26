@@ -197,9 +197,14 @@ type usageModel struct {
 	// CreatedAt is conv.TimeText: fixed-width UTC with nanoseconds, so a
 	// window compares as text exactly as it would as time.
 	CreatedAt string `grove:"created_at,notnull"`
+	Metadata  string `grove:"metadata,notnull"`
 }
 
-func usageToModel(rec *usage.Record) *usageModel {
+func usageToModel(rec *usage.Record) (*usageModel, error) {
+	md, err := conv.MetadataJSON(rec.Metadata)
+	if err != nil {
+		return nil, err
+	}
 	cached := 0
 	if rec.Cached {
 		cached = 1
@@ -223,7 +228,8 @@ func usageToModel(rec *usage.Record) *usageModel {
 		Cached:           cached,
 		StatusCode:       rec.StatusCode,
 		CreatedAt:        conv.TimeText(rec.CreatedAt),
-	}
+		Metadata:         md,
+	}, nil
 }
 
 func usageFromModel(m *usageModel) (*usage.Record, error) {
@@ -256,6 +262,10 @@ func usageFromModel(m *usageModel) (*usage.Record, error) {
 	if err != nil {
 		return nil, err
 	}
+	md, err := conv.ParseMetadata(m.Metadata)
+	if err != nil {
+		return nil, err
+	}
 	return &usage.Record{
 		ID:               uid,
 		TenantID:         tid,
@@ -275,6 +285,7 @@ func usageFromModel(m *usageModel) (*usage.Record, error) {
 		Cached:           m.Cached == 1,
 		StatusCode:       m.StatusCode,
 		CreatedAt:        created,
+		Metadata:         md,
 	}, nil
 }
 

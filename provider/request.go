@@ -131,4 +131,7 @@ type EmbeddingRequest struct {
 	Dimensions int    `json:"dimensions,omitempty"`
 	TenantID   string `json:"-"`
 	KeyID      string `json:"-"`
+	// Metadata is stored on the usage record, where it can be filtered by
+	// (see usage.ValidateMetadata for the limits).
+	Metadata map[string]string `json:"-"`
 }

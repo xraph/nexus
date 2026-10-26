@@ -159,9 +159,14 @@ type usageModel struct {
 	Cached           bool      `grove:"cached"`
 	StatusCode       int       `grove:"status_code"`
 	CreatedAt        time.Time `grove:"created_at,notnull,default:current_timestamp"`
+	Metadata         string    `grove:"metadata,type:jsonb"`
 }
 
-func usageToModel(rec *usage.Record) *usageModel {
+func usageToModel(rec *usage.Record) (*usageModel, error) {
+	md, err := conv.MetadataJSON(rec.Metadata)
+	if err != nil {
+		return nil, err
+	}
 	return &usageModel{
 		ID:               rec.ID.String(),
 		TenantID:         conv.OptionalID(rec.TenantID),
@@ -181,7 +186,8 @@ func usageToModel(rec *usage.Record) *usageModel {
 		Cached:           rec.Cached,
 		StatusCode:       rec.StatusCode,
 		CreatedAt:        rec.CreatedAt.UTC(),
-	}
+		Metadata:         md,
+	}, nil
 }
 
 func usageFromModel(m *usageModel) (*usage.Record, error) {
@@ -210,6 +216,10 @@ func usageFromModel(m *usageModel) (*usage.Record, error) {
 	if usage.PricingStatus(m.PricingStatus).CostUnknown() {
 		cost = nil
 	}
+	md, err := conv.ParseMetadata(m.Metadata)
+	if err != nil {
+		return nil, err
+	}
 	return &usage.Record{
 		ID:               uid,
 		TenantID:         tid,
@@ -229,6 +239,7 @@ func usageFromModel(m *usageModel) (*usage.Record, error) {
 		Cached:           m.Cached,
 		StatusCode:       m.StatusCode,
 		CreatedAt:        m.CreatedAt,
+		Metadata:         md,
 	}, nil
 }
 

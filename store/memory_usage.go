@@ -103,6 +103,9 @@ func (s *memoryUsageStore) Series(_ context.Context, opts *usage.SeriesOptions) 
 	if _, err := usage.FillSeries(opts, nil); err != nil {
 		return nil, err
 	}
+	if err := usage.ValidateMetadata(opts.Metadata); err != nil {
+		return nil, err
+	}
 	from := usage.BucketStart(opts.Start, opts.Bucket)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -111,7 +114,7 @@ func (s *memoryUsageStore) Series(_ context.Context, opts *usage.SeriesOptions) 
 		if opts.TenantID != "" && r.TenantID.String() != opts.TenantID {
 			continue
 		}
-		if r.CreatedAt.Before(from) || !r.CreatedAt.Before(opts.End) {
+		if r.CreatedAt.Before(from) || !r.CreatedAt.Before(opts.End) || !hasMetadata(r, opts.Metadata) {
 			continue
 		}
 		points = append(points, pointOf(r))
@@ -137,6 +140,9 @@ func (s *memoryUsageStore) Query(_ context.Context, opts *usage.QueryOptions) (*
 	if err := paging.CheckCursor(opts.Cursor, id.PrefixUsage); err != nil {
 		return nil, err
 	}
+	if err := usage.ValidateMetadata(opts.Metadata); err != nil {
+		return nil, err
+	}
 	limit := paging.Limit(opts.Limit)
 	s.mu.RLock()
 	var rows []*usage.Record
@@ -149,6 +155,7 @@ func (s *memoryUsageStore) Query(_ context.Context, opts *usage.QueryOptions) (*
 		case opts.Outcome != "" && r.Outcome != opts.Outcome:
 		case !opts.StartTime.IsZero() && r.CreatedAt.Before(opts.StartTime):
 		case !opts.EndTime.IsZero() && !r.CreatedAt.Before(opts.EndTime):
+		case !hasMetadata(r, opts.Metadata):
 		case opts.Cursor != "" && r.ID.String() >= opts.Cursor:
 		default:
 			rows = append(rows, cloneRecord(r))
@@ -161,4 +168,15 @@ func (s *memoryUsageStore) Query(_ context.Context, opts *usage.QueryOptions) (*
 	}
 	page, next := paging.Trim(rows, limit, func(r *usage.Record) string { return r.ID.String() })
 	return &usage.QueryResult{Items: page, NextCursor: next}, nil
+}
+
+// hasMetadata reports whether r carries every pair of want. An empty want
+// matches every record.
+func hasMetadata(r *usage.Record, want map[string]string) bool {
+	for k, v := range want {
+		if got, ok := r.Metadata[k]; !ok || got != v {
+			return false
+		}
+	}
+	return true
 }

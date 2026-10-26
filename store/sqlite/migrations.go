@@ -237,6 +237,19 @@ DROP INDEX IF EXISTS idx_api_keys_status_expires;
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "usage_metadata",
+			Version: "20261024000001",
+			Comment: "Store caller metadata on usage records",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE usage_records ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE usage_records DROP COLUMN metadata`)
+				return err
+			},
+		},
 	)
 	return g
 }()

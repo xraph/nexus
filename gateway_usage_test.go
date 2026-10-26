@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -720,5 +721,39 @@ func TestWithUnpricedPolicyRefusesAnUnpricedModel(t *testing.T) {
 	}
 	if len(recs) != 2 {
 		t.Fatalf("got %d records, want 2", len(recs))
+	}
+}
+
+func TestUsageRecordCarriesRequestMetadata(t *testing.T) {
+	completion := map[string]string{"project": "p1", "run": "r1"}
+	embedding := map[string]string{"project": "p1"}
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		if _, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "gpt-4o", Metadata: completion,
+			Messages: []provider.Message{{Role: "user", Content: "hi"}}}); err != nil {
+			t.Fatalf("complete: %v", err)
+		}
+		if _, err := gw.Engine().Embed(ctx, &provider.EmbeddingRequest{Model: "embed-small", Input: []string{"x"}, Metadata: embedding}); err != nil {
+			t.Fatalf("embed: %v", err)
+		}
+		// The stored record is a copy, so a caller reusing its map changes nothing.
+		completion["project"], embedding["project"] = "changed", "changed"
+	}, nexus.WithProvider(&fakeProvider{name: "openai", price: listPrice}))
+	if len(recs) != 2 {
+		t.Fatalf("got %d records, want 2", len(recs))
+	}
+	want := map[string]map[string]string{
+		"completion": {"project": "p1", "run": "r1"},
+		"embedding":  {"project": "p1"},
+	}
+	got := map[string]map[string]string{}
+	for _, r := range recs {
+		if len(r.Metadata) == 2 {
+			got["completion"] = r.Metadata
+		} else {
+			got["embedding"] = r.Metadata
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("record metadata = %v, want %v", got, want)
 	}
 }

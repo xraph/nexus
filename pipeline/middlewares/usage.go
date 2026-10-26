@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -203,6 +204,11 @@ func (m *UsageMiddleware) newRecord(ctx context.Context, req *pipeline.Request, 
 	}
 	if kid, err := id.ParseKeyID(key); err == nil {
 		rec.KeyID = kid
+	}
+	// Metadata the identity stage refused never reaches a record, so the
+	// refusal itself can still be recorded. Record copies the map again.
+	if md := requestMetadata(req); usage.ValidateMetadata(md) == nil {
+		rec.Metadata = maps.Clone(md)
 	}
 	return rec
 }

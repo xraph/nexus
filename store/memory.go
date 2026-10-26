@@ -63,6 +63,10 @@ func cloneKey(k *key.APIKey) *key.APIKey {
 
 func cloneRecord(r *usage.Record) *usage.Record {
 	c := *r
+	c.Metadata = maps.Clone(r.Metadata)
+	if c.Metadata == nil {
+		c.Metadata = map[string]string{}
+	}
 	if r.CostUSD != nil {
 		v := *r.CostUSD
 		c.CostUSD = &v

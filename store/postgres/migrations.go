@@ -219,6 +219,25 @@ DROP INDEX IF EXISTS idx_nexus_api_keys_status_expires;
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "usage_metadata",
+			Version: "20261024000001",
+			Comment: "Store caller metadata on usage records and index it for filtering",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+ALTER TABLE nexus_usage_records ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}';
+CREATE INDEX IF NOT EXISTS idx_nexus_usage_metadata ON nexus_usage_records USING GIN (metadata jsonb_path_ops);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_nexus_usage_metadata;
+ALTER TABLE nexus_usage_records DROP COLUMN IF EXISTS metadata;
+`)
+				return err
+			},
+		},
 	)
 	return g
 }()

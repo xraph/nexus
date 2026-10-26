@@ -6,6 +6,7 @@ import (
 
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/pipeline"
+	"github.com/xraph/nexus/usage"
 )
 
 // ErrInvalidIdentity reports a tenant or key id that does not parse, or a
@@ -56,6 +57,14 @@ func (*IdentityMiddleware) Process(ctx context.Context, req *pipeline.Request, n
 			return nil, fmt.Errorf("%w: key %q", ErrInvalidIdentity, key)
 		}
 	}
+	if err := usage.ValidateMetadata(requestMetadata(req)); err != nil {
+		return nil, &pipeline.RefusalError{
+			Code:    pipeline.CodeInvalidRequest,
+			Status:  400,
+			Message: "invalid usage metadata",
+			Cause:   err,
+		}
+	}
 	setRequestIdentity(req, tenant, key)
 	ctx = pipeline.WithTenantID(pipeline.WithKeyID(ctx, key), tenant)
 	return next(ctx)
@@ -79,6 +88,17 @@ func requestIdentity(req *pipeline.Request) (tenant, key string) {
 		return req.Embedding.TenantID, req.Embedding.KeyID
 	}
 	return "", ""
+}
+
+// requestMetadata is the usage metadata the caller put on the request.
+func requestMetadata(req *pipeline.Request) map[string]string {
+	switch {
+	case req.Completion != nil:
+		return req.Completion.Metadata
+	case req.Embedding != nil:
+		return req.Embedding.Metadata
+	}
+	return nil
 }
 
 func setRequestIdentity(req *pipeline.Request, tenant, key string) {

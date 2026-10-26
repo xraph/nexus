@@ -3,6 +3,8 @@
 package conv
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -65,4 +67,34 @@ func ParseTimeText(s string) (time.Time, error) { return time.Parse(timeLayout, 
 func LikePattern(term string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return "%" + r.Replace(term) + "%"
+}
+
+// MetadataJSON is usage metadata as the JSON text a backend stores. A nil
+// map is stored as {}, never null, so every row holds an object.
+func MetadataJSON(m map[string]string) (string, error) {
+	if len(m) == 0 {
+		return "{}", nil
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "", fmt.Errorf("marshal usage metadata: %w", err)
+	}
+	return string(b), nil
+}
+
+// ParseMetadata reads what MetadataJSON wrote. An empty or null value, which
+// a row from before metadata existed may hold, reads as an empty, non-nil
+// map.
+func ParseMetadata(s string) (map[string]string, error) {
+	m := map[string]string{}
+	if s == "" {
+		return m, nil
+	}
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return nil, fmt.Errorf("unmarshal usage metadata: %w", err)
+	}
+	if m == nil {
+		m = map[string]string{}
+	}
+	return m, nil
 }

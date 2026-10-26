@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 
 	"github.com/xraph/nexus/money"
 )
@@ -46,7 +47,11 @@ func normalise(rec *Record) (*Record, error) {
 	if rec == nil {
 		return nil, errors.New("usage: record is nil")
 	}
+	if err := ValidateMetadata(rec.Metadata); err != nil {
+		return nil, err
+	}
 	r := *rec
+	r.Metadata = maps.Clone(rec.Metadata)
 	if r.PricingStatus == PricingCached {
 		if !r.Cached {
 			return nil, errors.New("usage: record is priced as cached but is not a cache hit")
