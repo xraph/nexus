@@ -112,6 +112,7 @@ The `usage_metadata` migration (version `20261024000001`, group `nexus`) adds th
 
 - `provider.ErrCredentialNotFound` is exported (it was unexported), and `StaticCredential` and `EnvCredential` return it.
 - A provider error wrapping `provider.ErrMissingAPIKey` or `provider.ErrMissingBaseURL` is now permanent, so the retry stage does not retry it.
+- A provider error wrapping `provider.ErrNotSupported` (a forced tool choice the model refuses, an effort it does not take, a `ToolChoice` that cannot be read) used to be retried and recorded as a 500 error. It is now a 400 `invalid_request` refusal: not retried, recorded at $0, and `errors.Is` still matches the provider's error.
 - The gateway clears any credential on the caller's context before the provider call, so `provider.WithCredential` on a context you pass to `Engine` has no effect. Only the credential the gateway resolved reaches the provider.
 
 Nexus trusts the base URL a resolver returns and sends the request body and the tenant's key there. If your tenants choose that URL, validate it on your side: allow only the schemes you mean to, refuse private, loopback, link-local and cloud metadata addresses, and check the resolved address at dial time against DNS rebinding.

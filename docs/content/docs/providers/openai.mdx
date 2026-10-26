@@ -98,6 +98,12 @@ openai.New(key,
 
 Reasoning models (the GPT-6 and GPT-5.6 families, `gpt-5.5`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano` and `o3`) reject `temperature` and `top_p`, so the provider leaves them off for those models, on any base URL.
 
+## Tool choice
+
+`CompletionRequest.ToolChoice` is sent in OpenAI's shape whatever shape you used: OpenAI's own (`"auto"`, `"none"`, `"required"`, `{"type":"function","function":{"name":...}}`), Anthropic's (`"any"`, `{"type":"any"}`, `{"type":"tool","name":...}`) or the typed `provider.ToolChoice`. `"any"` goes out as `"required"`. A value the provider cannot read fails before anything is sent, with an error that wraps `provider.ErrNotSupported`; the gateway refuses it with 400 `invalid_request` and does not retry it. Every provider built on this one (opencompat, groq, openrouter and the rest) and `azureopenai` do the same.
+
+`ThinkingConfig.Effort` is not sent to OpenAI: the provider has no `reasoning_effort` mapping, so the field is ignored here.
+
 ## Embedding dimensions
 
 `EmbeddingRequest.Dimensions` asks for a vector width. Zero keeps the model's default.

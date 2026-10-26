@@ -127,7 +127,7 @@ Keep your history append-only. If you edit an assistant turn, so its text or too
 
 ## Tool choice
 
-`CompletionRequest.ToolChoice` takes OpenAI's shape, and the provider maps it:
+`CompletionRequest.ToolChoice` takes OpenAI's shape (Anthropic's own and the typed `provider.ToolChoice` work too), and the provider maps it:
 
 | `ToolChoice` | Sent as |
 |--------------|---------|
@@ -136,7 +136,7 @@ Keep your history append-only. If you edit an assistant turn, so its text or too
 | `"required"` | `{"type":"any"}` |
 | `{"type":"function","function":{"name":"lookup"}}` | `{"type":"tool","name":"lookup"}` |
 
-A request with no tools sends no `tool_choice`. `"required"` or a named function on a model that refuses forced tool choice (`claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`) fails with `anthropic.ErrForcedToolChoice` before anything is sent. It wraps `provider.ErrNotSupported`. A `ToolChoice` the provider cannot parse also fails before anything is sent.
+A request with no tools sends no `tool_choice`. `"required"` or a named function on a model that refuses forced tool choice (`claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`) fails with `anthropic.ErrForcedToolChoice` before anything is sent. It wraps `provider.ErrNotSupported`. A `ToolChoice` the provider cannot parse also fails before anything is sent, with an error that wraps `provider.ErrNotSupported`. The gateway refuses all of these with 400 `invalid_request` and does not retry them.
 
 ## Prompt caching
 

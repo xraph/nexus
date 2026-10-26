@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	gometrics "github.com/xraph/go-utils/metrics"
@@ -311,9 +312,21 @@ func (m *ProviderCallMiddleware) route(ctx context.Context, req *provider.Comple
 }
 
 // permanentIfMisconfigured marks a provider error that another attempt
-// cannot fix, a missing key or base URL, as permanent, so the retry stage
-// gives up on it at once.
+// cannot fix as permanent, so the retry stage gives up on it at once. A
+// missing key or base URL stays an error. provider.ErrNotSupported is the
+// caller's mistake, raised before anything is sent (a forced tool choice
+// the model refuses, an effort it does not take, a tool_choice that cannot
+// be read): it becomes a 400 invalid_request refusal, recorded at $0, and
+// still matches the provider's error with errors.Is.
 func permanentIfMisconfigured(err error) error {
+	if errors.Is(err, provider.ErrNotSupported) {
+		return pipeline.Permanent(&pipeline.RefusalError{
+			Code:    pipeline.CodeInvalidRequest,
+			Status:  400,
+			Message: strings.TrimPrefix(err.Error(), "nexus: "),
+			Cause:   err,
+		})
+	}
 	if errors.Is(err, provider.ErrMissingAPIKey) || errors.Is(err, provider.ErrMissingBaseURL) {
 		return pipeline.Permanent(err)
 	}

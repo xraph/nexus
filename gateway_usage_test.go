@@ -3,6 +3,7 @@ package nexus_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
@@ -344,6 +345,63 @@ func TestARetriedRequestIsRecordedOnce(t *testing.T) {
 	}, nexus.WithProvider(p), nexus.WithMaxRetries(2))
 	if p.calls != 3 || len(recs) != 1 || recs[0].Outcome != usage.OutcomeOK {
 		t.Fatalf("calls %d, records %+v", p.calls, recs)
+	}
+}
+
+// errForced stands in for anthropic.ErrForcedToolChoice: a caller error a
+// provider raises before it sends anything.
+var errForced = fmt.Errorf("fake: forced tool choice is not supported by this model: %w", provider.ErrNotSupported)
+
+// refusingProvider fails every completion and stream with errForced and
+// counts the attempts.
+type refusingProvider struct {
+	*fakeProvider
+	attempts int
+}
+
+func (p *refusingProvider) Complete(context.Context, *provider.CompletionRequest) (*provider.CompletionResponse, error) {
+	p.attempts++
+	return nil, errForced
+}
+
+func (p *refusingProvider) CompleteStream(context.Context, *provider.CompletionRequest) (provider.Stream, error) {
+	p.attempts++
+	return nil, errForced
+}
+
+func TestACallerErrorFromAProviderIsRefusedNotRetried(t *testing.T) {
+	p := &refusingProvider{fakeProvider: &fakeProvider{name: "anthropic", price: listPrice}}
+	req := func() *provider.CompletionRequest {
+		return &provider.CompletionRequest{Model: "gpt-4o", ToolChoice: "required",
+			Messages: []provider.Message{{Role: "user", Content: "hi"}}}
+	}
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		_, err := gw.Engine().Complete(ctx, req())
+		if !errors.Is(err, errForced) || !errors.Is(err, provider.ErrNotSupported) {
+			t.Fatalf("Complete: err = %v, want the provider's error", err)
+		}
+		if status, code := pipeline.HTTPStatus(err); status != 400 || code != pipeline.CodeInvalidRequest {
+			t.Fatalf("Complete: status %d code %q, want 400 invalid_request", status, code)
+		}
+		if _, err = gw.Engine().CompleteStream(ctx, req()); !errors.Is(err, errForced) {
+			t.Fatalf("CompleteStream: err = %v, want the provider's error", err)
+		}
+		if status, code := pipeline.HTTPStatus(err); status != 400 || code != pipeline.CodeInvalidRequest {
+			t.Fatalf("CompleteStream: status %d code %q, want 400 invalid_request", status, code)
+		}
+	}, nexus.WithProvider(p), nexus.WithMaxRetries(2))
+	if p.attempts != 2 {
+		t.Fatalf("provider tried %d times, want 2 (one per request, no retry)", p.attempts)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("got %d records, want 2", len(recs))
+	}
+	for _, r := range recs {
+		if r.Outcome != usage.OutcomeRefused || r.StatusCode != 400 || r.RefusalCode != pipeline.CodeInvalidRequest ||
+			r.PricingStatus != usage.PricingNotCharged || r.CostUSD == nil || !r.CostUSD.IsZero() {
+			t.Fatalf("record = outcome %s status %d code %q pricing %s cost %v; want a 400 invalid_request refusal at $0",
+				r.Outcome, r.StatusCode, r.RefusalCode, r.PricingStatus, r.CostUSD)
+		}
 	}
 }
 
