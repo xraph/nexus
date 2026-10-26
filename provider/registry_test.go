@@ -2,6 +2,8 @@ package provider_test
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"testing"
 
 	"github.com/xraph/nexus/provider"
@@ -13,12 +15,13 @@ type mockProvider struct {
 	caps    provider.Capabilities
 	healthy bool
 	models  []provider.Model
+	err     error // returned by Models
 }
 
 func (m *mockProvider) Name() string                        { return m.name }
 func (m *mockProvider) Capabilities() provider.Capabilities { return m.caps }
 func (m *mockProvider) Models(_ context.Context) ([]provider.Model, error) {
-	return m.models, nil
+	return m.models, m.err
 }
 func (m *mockProvider) Complete(_ context.Context, _ *provider.CompletionRequest) (*provider.CompletionResponse, error) {
 	return &provider.CompletionResponse{Provider: m.name}, nil
@@ -418,17 +421,35 @@ func TestHealthy_PreservesOrder(t *testing.T) {
 	}
 }
 
-func TestForModel_ReturnsAllProviders(t *testing.T) {
-	// ForModel currently returns all providers (filtering not yet implemented).
+// listing returns a chat provider that lists the given models.
+func listing(name string, models ...string) *mockProvider {
+	p := newMock(name, provider.Capabilities{Chat: true}, true)
+	for _, id := range models {
+		p.models = append(p.models, provider.Model{ID: id, Provider: name})
+	}
+	return p
+}
+
+func TestRegistryForModelFiltersByModelList(t *testing.T) {
 	reg := provider.NewRegistry()
 
-	reg.Register(newMock("a", provider.Capabilities{Chat: true}, true))
-	reg.Register(newMock("b", provider.Capabilities{Chat: true}, true))
-	reg.Register(newMock("c", provider.Capabilities{Chat: true}, true))
+	broken := listing("broken", "gpt-4o")
+	broken.err = errors.New("models endpoint down")
+	reg.Register(listing("openrouter", "gpt-4o", "claude-opus-5-5"))
+	reg.Register(listing("anthropic", "claude-opus-5-5"))
+	reg.Register(broken)
+	reg.Register(listing("openai", "gpt-4o-mini", "gpt-4o"))
 
-	result := reg.ForModel("gpt-4o")
-	if len(result) != 3 {
-		t.Errorf("ForModel() returned %d, want 3", len(result))
+	got := make([]string, 0, 2)
+	for _, p := range reg.ForModel("gpt-4o") {
+		got = append(got, p.Name())
+	}
+	want := []string{"openrouter", "openai"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("ForModel(gpt-4o) = %v, want %v", got, want)
+	}
+	if len(reg.ForModel("llama3")) != 0 {
+		t.Fatalf("ForModel(llama3) must be empty when no provider lists it")
 	}
 }
 
@@ -444,8 +465,8 @@ func TestForModel_EmptyRegistry(t *testing.T) {
 func TestForModel_PreservesOrder(t *testing.T) {
 	reg := provider.NewRegistry()
 
-	reg.Register(newMock("alpha", provider.Capabilities{Chat: true}, true))
-	reg.Register(newMock("beta", provider.Capabilities{Chat: true}, true))
+	reg.Register(listing("alpha", "test-model"))
+	reg.Register(listing("beta", "test-model"))
 
 	result := reg.ForModel("test-model")
 	if len(result) != 2 {

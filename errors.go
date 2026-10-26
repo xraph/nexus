@@ -1,6 +1,15 @@
 package nexus
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/xraph/nexus/pipeline/middlewares"
+	"github.com/xraph/nexus/provider"
+)
+
+// ErrNotInitialized is returned by the engine's calls before
+// [Gateway.Initialize] has finished.
+var ErrNotInitialized = errors.New("nexus: gateway not initialized")
 
 var (
 	// Provider errors
@@ -50,7 +59,19 @@ var (
 	ErrBatchTooLarge = errors.New("nexus: batch exceeds maximum size")
 	ErrBatchNotFound = errors.New("nexus: batch job not found")
 
+	// ErrModelUnpriced refuses a request for a model with no price at the
+	// provider it was routed to (RefuseUnpriced). It is a *RefusalError with
+	// code model_unpriced and status 400.
+	ErrModelUnpriced = middlewares.ErrModelUnpriced
+
 	// Credentials
-	ErrCredentialExpired  = errors.New("nexus: provider credential expired")
-	ErrCredentialNotFound = errors.New("nexus: provider credential not found")
+	ErrCredentialExpired = errors.New("nexus: provider credential expired")
+	// ErrCredentialNotFound is provider.ErrCredentialNotFound: a credential
+	// provider returns it to serve a request with the provider's own key.
+	ErrCredentialNotFound = provider.ErrCredentialNotFound
+	// ErrCredentialUnavailable refuses a request whose credential could not
+	// be resolved, or that the chosen provider cannot use
+	// (WithCredentialProvider). It is a *RefusalError with code unavailable
+	// and status 503; nothing is sent to the provider.
+	ErrCredentialUnavailable = middlewares.ErrCredentialUnavailable
 )

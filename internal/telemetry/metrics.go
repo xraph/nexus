@@ -22,6 +22,7 @@ const (
 	MetricCacheLookups      = "nexus_cache_lookups_total"
 	MetricUsageInsertErrors = "nexus_usage_insert_errors_total"
 	MetricLimiterErrors     = "nexus_limiter_errors_total"
+	MetricUsageUnpriced     = "nexus_usage_unpriced_total"
 )
 
 // Metric label keys. Forge turns the dots into underscores on the scrape.
@@ -38,6 +39,9 @@ const (
 	LabelGuard     = "guard"
 	LabelKind      = "kind"
 	LabelResult    = "result"
+	// LabelProviderName is the provider's registered name on nexus metrics;
+	// the gen_ai ones use LabelProvider.
+	LabelProviderName = "provider"
 )
 
 // Histogram bounds, in the metric's unit.

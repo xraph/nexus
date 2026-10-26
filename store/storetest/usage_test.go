@@ -137,3 +137,14 @@ func TestUnknownAndNotChargedRoundTrip(t *testing.T) {
 		}
 	})
 }
+
+func TestUsageMetadataRoundTrips(t *testing.T) { storetest.Each(t, storetest.UsageMetadataRoundTrips) }
+func TestUsageQueryFiltersByMetadata(t *testing.T) {
+	storetest.Each(t, storetest.UsageQueryFiltersByMetadata)
+}
+func TestUsageSeriesFiltersByMetadata(t *testing.T) {
+	storetest.Each(t, storetest.UsageSeriesFiltersByMetadata)
+}
+func TestUsageMetadataFilterRejectsBadKeys(t *testing.T) {
+	storetest.Each(t, storetest.UsageMetadataFilterRejectsBadKeys)
+}

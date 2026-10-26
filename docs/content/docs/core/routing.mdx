@@ -3,7 +3,7 @@ title: Routing
 description: Pick which registered provider answers a request, with priority, round-robin, weighted, cost or latency strategies.
 ---
 
-The router picks which registered provider handles each request. You set one strategy for the whole gateway with `nexus.WithRouter`. If you don't, Nexus uses the priority strategy, which goes by the order you registered providers in.
+Nexus picks the provider for each request from the request itself first, then from the alias and the model, and only then from your routing strategy. You set one strategy for the whole gateway with `nexus.WithRouter`. If you don't, Nexus uses the priority strategy, which goes by the order you registered providers in.
 
 ```go
 import "github.com/xraph/nexus/router/strategies"
@@ -15,16 +15,44 @@ gw := nexus.New(
 )
 ```
 
-## What the router sees
+## How a provider is picked
 
-Read this before you register more than one provider. Every registered provider is a candidate for every request, and the router doesn't look at the model. It doesn't filter providers by the model they serve, it ignores `CompletionRequest.Provider`, and it ignores the `Provider` field of an alias target. So with OpenAI and Anthropic both registered, a request for `claude-3-5-haiku-20241022` can go to OpenAI, which rejects the model.
+Each completion or stream goes through four steps, and the first one that names a provider decides:
 
-Until routing takes the model into account, you have two ways to keep requests on the right provider:
+1. `CompletionRequest.Provider`, when the request sets it.
+2. The provider of the [alias](/docs/core/aliases) target the alias stage picked.
+3. The providers whose catalog lists the requested model, with the strategy choosing among them.
+4. The strategy, choosing among every registered provider.
 
-- Run one provider per gateway, or one per group of models that share a provider.
-- Write your own strategy (below) that reads `req.Model` and picks the matching candidate.
+So with OpenAI and Anthropic both registered, a request for `claude-sonnet-4-6` goes to Anthropic without you doing anything, because only Anthropic lists it. A price override counts as a listing too (see [Pricing](/docs/core/pricing#overriding-prices)), which is how you route a model the catalog doesn't know. Step 4 only runs for a model nobody lists, and there the strategy can pick a provider that rejects the model.
 
-The router also builds every candidate with `Healthy: true` and zero `Cost` and `Latency`. Nothing fills those fields in yet, which matters for the cost and latency strategies.
+A provider you name, in the request or in an alias target, is never swapped for another. If no provider by that name is registered, the request is refused with `middlewares.ErrUnknownProvider` (400 `invalid_request`), and it isn't retried. When the request names a provider and the alias has several targets, the alias stage only picks among targets for that provider (or targets with no provider). If none match, the model is left as the alias name.
+
+Name the provider whenever you know it. It's the only step that can't be changed by registering another provider later.
+
+```go
+resp, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{
+    Provider: "anthropic",
+    Model:    "claude-sonnet-4-6",
+    Messages: msgs,
+})
+```
+
+### Embeddings
+
+Embedding requests skip the alias step and only consider providers whose capabilities include embeddings:
+
+1. `EmbeddingRequest.Provider`, when it's set.
+2. The embeddings providers whose catalog lists the model, with the strategy choosing among them.
+3. The first registered provider that can embed.
+
+A named provider that isn't registered gets `ErrUnknownProvider`. A named provider that can't embed is refused with 400 `invalid_request`, and the error wraps `provider.ErrNotSupported`, so `errors.Is(err, provider.ErrNotSupported)` still matches. Neither is retried.
+
+An embedding that sets `Dimensions` is refused with `middlewares.ErrDimensionsUnsupported` (400, wrapping `provider.ErrNotSupported`) when the chosen provider can't return that width, and fails when a vector comes back at another length (`errors.Is(err, middlewares.ErrDimensionsMismatch)`). See [OpenAI](/docs/providers/openai#embedding-dimensions).
+
+### What the strategy sees
+
+The strategy only picks within step 3 or step 4. It gets every candidate with `Healthy: true` and zero `Cost` and `Latency`. Nothing fills those fields in yet, which matters for the cost and latency strategies.
 
 ## Strategies
 
@@ -33,12 +61,10 @@ The router also builds every candidate with `Healthy: true` and zero `Cost` and 
 | Priority (default) | `strategies.NewPriority(order ...string)` | The first provider named in `order`, otherwise the first one you registered |
 | Round-robin | `strategies.NewRoundRobin()` | Rotates through the providers, one request at a time |
 | Weighted | `strategies.NewWeighted(map[string]float64{"openai": 0.7, "anthropic": 0.3})` | Random pick by weight; a provider missing from the map gets weight 1 |
-| Cost-optimized | `strategies.NewCostOptimized()` | Picks the lowest `Candidate.Cost`. Every candidate has cost 0, so it picks the first registered provider |
-| Latency-optimized | `strategies.NewLatencyOptimized()` | Picks the lowest `Candidate.Latency`. Every candidate has latency 0, so it picks the first registered provider |
+| Cost-optimized | `strategies.NewCostOptimized()` | Picks the lowest `Candidate.Cost`. Every candidate has cost 0, so it picks the first candidate |
+| Latency-optimized | `strategies.NewLatencyOptimized()` | Picks the lowest `Candidate.Latency`. Every candidate has latency 0, so it picks the first candidate |
 
 `gw.RoutingStrategy()` returns the name of the strategy in use (`priority`, `round_robin`, `weighted`, `cost_optimized` or `latency_optimized`).
-
-Embedding requests don't go through the strategy. They go to the first registered provider whose capabilities include embeddings.
 
 ## Custom Strategy
 
@@ -53,37 +79,31 @@ type Strategy interface {
 
 `Candidate` carries the `Provider` plus `Weight`, `Priority`, `Healthy`, `Latency` and `Cost` fields. Only `Provider` and `Healthy` (always true) are set by the gateway today.
 
-This one sends each request to the provider that lists the requested model in its catalog, and falls back to the first candidate:
+This one keeps requests from tenants on a cheaper plan off one provider, and otherwise takes the first candidate:
 
 ```go
-type byModel struct{}
+type keepOff struct{ tenants map[string]bool }
 
-func (byModel) Name() string { return "by_model" }
+func (keepOff) Name() string { return "keep_off" }
 
-func (byModel) Select(ctx context.Context, req *provider.CompletionRequest, candidates []router.Candidate) (*router.Candidate, error) {
+func (k keepOff) Select(ctx context.Context, req *provider.CompletionRequest, candidates []router.Candidate) (*router.Candidate, error) {
     for i := range candidates {
-        models, err := candidates[i].Provider.Models(ctx)
-        if err != nil {
+        if k.tenants[pipeline.TenantID(ctx)] && candidates[i].Provider.Name() == "anthropic" {
             continue
         }
-        for _, m := range models {
-            if m.ID == req.Model {
-                return &candidates[i], nil
-            }
-        }
+        return &candidates[i], nil
     }
-    if len(candidates) == 0 {
-        return nil, nexus.ErrProviderNotFound
-    }
-    return &candidates[0], nil
+    return nil, nexus.ErrProviderNotFound
 }
 
 gw := nexus.New(
     nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
     nexus.WithProvider(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"))),
-    nexus.WithRouter(byModel{}),
+    nexus.WithRouter(keepOff{tenants: basicPlan}),
 )
 ```
+
+Your strategy never overrides steps 1 and 2. And in step 3 it only sees the providers that list the model, so it can't send a request to a provider that doesn't serve it.
 
 A strategy error is permanent: the retry stage doesn't retry it.
 

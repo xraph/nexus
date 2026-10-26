@@ -4,7 +4,7 @@
 //
 // Usage:
 //
-//	nexus.WithExtension(audithook.New(audithook.RecorderFunc(func(ctx context.Context, event AuditEvent) error {
+//	nexus.WithExtension(audit_hook.New(audit_hook.RecorderFunc(func(ctx context.Context, event *audit_hook.AuditEvent) error {
 //	    log.Println("audit:", event.Action, event.Resource)
 //	    return nil
 //	})))
@@ -21,15 +21,17 @@ import (
 	"github.com/xraph/nexus/provider"
 )
 
-// Recorder persists audit events.
+// Recorder persists audit events. It takes the event by pointer, like
+// chronicle's emitter and dispatch's audit_hook. Each call gets a fresh event
+// that the recorder may keep or modify.
 type Recorder interface {
-	Record(ctx context.Context, event AuditEvent) error
+	Record(ctx context.Context, event *AuditEvent) error
 }
 
 // RecorderFunc is a function adapter for Recorder.
-type RecorderFunc func(ctx context.Context, event AuditEvent) error
+type RecorderFunc func(ctx context.Context, event *AuditEvent) error
 
-func (f RecorderFunc) Record(ctx context.Context, event AuditEvent) error { return f(ctx, event) }
+func (f RecorderFunc) Record(ctx context.Context, event *AuditEvent) error { return f(ctx, event) }
 
 // AuditEvent is an audit log entry.
 type AuditEvent struct {
@@ -38,6 +40,7 @@ type AuditEvent struct {
 	Resource   Resource       `json:"resource"`
 	Category   Category       `json:"category"`
 	ActorID    string         `json:"actor_id,omitempty"` // tenant or key ID
+	TenantID   string         `json:"tenant_id,omitempty"`
 	ResourceID string         `json:"resource_id,omitempty"`
 	Details    map[string]any `json:"details,omitempty"`
 }
@@ -82,17 +85,18 @@ func New(recorder Recorder, opts ...Option) *Extension {
 func (e *Extension) Name() string { return "audit_hook" }
 
 // record is the internal helper that creates and records an audit event.
-func (e *Extension) record(ctx context.Context, action Action, resource Resource, category Category, resourceID string, kvPairs ...any) {
+func (e *Extension) record(ctx context.Context, action Action, resource Resource, category Category, resourceID, tenantID string, kvPairs ...any) {
 	if e.actions != nil && !e.actions[action] {
 		return
 	}
 
-	event := AuditEvent{
+	event := &AuditEvent{
 		Timestamp:  time.Now(),
 		Action:     action,
 		Resource:   resource,
 		Category:   category,
 		ResourceID: resourceID,
+		TenantID:   tenantID,
 	}
 
 	if len(kvPairs) > 0 {
@@ -117,26 +121,26 @@ func (e *Extension) record(ctx context.Context, action Action, resource Resource
 // ──────────────────────────────────────────────────
 
 func (e *Extension) OnRequestReceived(ctx context.Context, requestID id.RequestID, model, tenantID string) error {
-	e.record(ctx, ActionRequestReceived, ResourceRequest, CategoryRequest, requestID.String(),
+	e.record(ctx, ActionRequestReceived, ResourceRequest, CategoryRequest, requestID.String(), tenantID,
 		"model", model, "tenant_id", tenantID)
 	return nil
 }
 
 func (e *Extension) OnRequestCompleted(ctx context.Context, requestID id.RequestID, model, providerName string, elapsed time.Duration, inputTokens, outputTokens int) error {
-	e.record(ctx, ActionRequestCompleted, ResourceRequest, CategoryRequest, requestID.String(),
+	e.record(ctx, ActionRequestCompleted, ResourceRequest, CategoryRequest, requestID.String(), "",
 		"model", model, "provider", providerName, "elapsed_ms", elapsed.Milliseconds(),
 		"input_tokens", inputTokens, "output_tokens", outputTokens)
 	return nil
 }
 
 func (e *Extension) OnRequestFailed(ctx context.Context, requestID id.RequestID, model string, err error) error {
-	e.record(ctx, ActionRequestFailed, ResourceRequest, CategoryRequest, requestID.String(),
+	e.record(ctx, ActionRequestFailed, ResourceRequest, CategoryRequest, requestID.String(), "",
 		"model", model, "error", err.Error())
 	return nil
 }
 
 func (e *Extension) OnRequestCached(ctx context.Context, requestID id.RequestID, model string) error {
-	e.record(ctx, ActionRequestCached, ResourceRequest, CategoryRequest, requestID.String(),
+	e.record(ctx, ActionRequestCached, ResourceRequest, CategoryRequest, requestID.String(), "",
 		"model", model)
 	return nil
 }
@@ -146,18 +150,18 @@ func (e *Extension) OnRequestCached(ctx context.Context, requestID id.RequestID,
 // ──────────────────────────────────────────────────
 
 func (e *Extension) OnProviderFailed(ctx context.Context, providerName, model string, err error) error {
-	e.record(ctx, ActionProviderFailed, ResourceProvider, CategoryProvider, providerName,
+	e.record(ctx, ActionProviderFailed, ResourceProvider, CategoryProvider, providerName, "",
 		"model", model, "error", err.Error())
 	return nil
 }
 
 func (e *Extension) OnCircuitOpened(ctx context.Context, providerName string) error {
-	e.record(ctx, ActionCircuitOpened, ResourceProvider, CategoryProvider, providerName)
+	e.record(ctx, ActionCircuitOpened, ResourceProvider, CategoryProvider, providerName, "")
 	return nil
 }
 
 func (e *Extension) OnFallbackTriggered(ctx context.Context, from, to string) error {
-	e.record(ctx, ActionFallbackTriggered, ResourceProvider, CategoryProvider, from,
+	e.record(ctx, ActionFallbackTriggered, ResourceProvider, CategoryProvider, from, "",
 		"to", to)
 	return nil
 }
@@ -167,13 +171,13 @@ func (e *Extension) OnFallbackTriggered(ctx context.Context, from, to string) er
 // ──────────────────────────────────────────────────
 
 func (e *Extension) OnGuardrailBlocked(ctx context.Context, guardName string, requestID id.RequestID) error {
-	e.record(ctx, ActionGuardrailBlocked, ResourceGuardrail, CategorySecurity, guardName,
+	e.record(ctx, ActionGuardrailBlocked, ResourceGuardrail, CategorySecurity, guardName, "",
 		"request_id", requestID.String())
 	return nil
 }
 
 func (e *Extension) OnGuardrailRedacted(ctx context.Context, guardName, field string) error {
-	e.record(ctx, ActionGuardrailRedacted, ResourceGuardrail, CategorySecurity, guardName,
+	e.record(ctx, ActionGuardrailRedacted, ResourceGuardrail, CategorySecurity, guardName, "",
 		"field", field)
 	return nil
 }
@@ -183,23 +187,23 @@ func (e *Extension) OnGuardrailRedacted(ctx context.Context, guardName, field st
 // ──────────────────────────────────────────────────
 
 func (e *Extension) OnTenantCreated(ctx context.Context, tenantID id.TenantID) error {
-	e.record(ctx, ActionTenantCreated, ResourceTenant, CategoryTenant, tenantID.String())
+	e.record(ctx, ActionTenantCreated, ResourceTenant, CategoryTenant, tenantID.String(), tenantID.String())
 	return nil
 }
 
 func (e *Extension) OnTenantDisabled(ctx context.Context, tenantID id.TenantID) error {
-	e.record(ctx, ActionTenantDisabled, ResourceTenant, CategoryTenant, tenantID.String())
+	e.record(ctx, ActionTenantDisabled, ResourceTenant, CategoryTenant, tenantID.String(), tenantID.String())
 	return nil
 }
 
 func (e *Extension) OnKeyCreated(ctx context.Context, keyID id.KeyID, tenantID id.TenantID) error {
-	e.record(ctx, ActionKeyCreated, ResourceKey, CategoryTenant, keyID.String(),
+	e.record(ctx, ActionKeyCreated, ResourceKey, CategoryTenant, keyID.String(), tenantID.String(),
 		"tenant_id", tenantID.String())
 	return nil
 }
 
 func (e *Extension) OnKeyRevoked(ctx context.Context, keyID id.KeyID) error {
-	e.record(ctx, ActionKeyRevoked, ResourceKey, CategoryTenant, keyID.String())
+	e.record(ctx, ActionKeyRevoked, ResourceKey, CategoryTenant, keyID.String(), "")
 	return nil
 }
 
@@ -208,13 +212,13 @@ func (e *Extension) OnKeyRevoked(ctx context.Context, keyID id.KeyID) error {
 // ──────────────────────────────────────────────────
 
 func (e *Extension) OnBudgetWarning(ctx context.Context, tenantID id.TenantID, usedPct float64) error {
-	e.record(ctx, ActionBudgetWarning, ResourceTenant, CategoryBudget, tenantID.String(),
+	e.record(ctx, ActionBudgetWarning, ResourceTenant, CategoryBudget, tenantID.String(), tenantID.String(),
 		"used_pct", usedPct)
 	return nil
 }
 
 func (e *Extension) OnBudgetExceeded(ctx context.Context, tenantID id.TenantID) error {
-	e.record(ctx, ActionBudgetExceeded, ResourceTenant, CategoryBudget, tenantID.String())
+	e.record(ctx, ActionBudgetExceeded, ResourceTenant, CategoryBudget, tenantID.String(), tenantID.String())
 	return nil
 }
 
@@ -223,7 +227,7 @@ func (e *Extension) OnBudgetExceeded(ctx context.Context, tenantID id.TenantID) 
 // ──────────────────────────────────────────────────
 
 func (e *Extension) OnStreamStarted(ctx context.Context, requestID id.RequestID, model, providerName string) error {
-	e.record(ctx, ActionStreamStarted, ResourceRequest, CategoryRequest, requestID.String(),
+	e.record(ctx, ActionStreamStarted, ResourceRequest, CategoryRequest, requestID.String(), "",
 		"model", model, "provider", providerName)
 	return nil
 }
@@ -244,7 +248,7 @@ func (e *Extension) OnStreamCompleted(ctx context.Context, requestID id.RequestI
 			kv = append(kv, "finish_reason", final.Choices[0].FinishReason)
 		}
 	}
-	e.record(ctx, ActionStreamCompleted, ResourceRequest, CategoryRequest, requestID.String(), kv...)
+	e.record(ctx, ActionStreamCompleted, ResourceRequest, CategoryRequest, requestID.String(), "", kv...)
 	return nil
 }
 
@@ -253,7 +257,7 @@ func (e *Extension) OnStreamFailed(ctx context.Context, requestID id.RequestID, 
 	if err != nil {
 		msg = err.Error()
 	}
-	e.record(ctx, ActionStreamFailed, ResourceRequest, CategoryRequest, requestID.String(),
+	e.record(ctx, ActionStreamFailed, ResourceRequest, CategoryRequest, requestID.String(), "",
 		"model", model, "error", msg)
 	return nil
 }

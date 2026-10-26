@@ -2,14 +2,22 @@ package nexus
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/xraph/nexus/provider"
 )
 
 // Engine processes AI requests without any HTTP concerns.
 // It delegates to the pipeline for the actual processing.
+//
+// The engine exists from [New] on, but Complete, CompleteStream, Embed and
+// ListModels return [ErrNotInitialized] until [Gateway.Initialize] finishes.
 type Engine struct {
 	gw *Gateway
+
+	// ready is set after Initialize has assigned the pipeline and the other
+	// services, so a call that sees it true sees them all.
+	ready atomic.Bool
 }
 
 func newEngine(gw *Gateway) *Engine {
@@ -27,6 +35,9 @@ func NewEngine(opts ...Option) *Engine {
 
 // Complete sends a chat completion request through the full pipeline.
 func (e *Engine) Complete(ctx context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
+	if !e.ready.Load() {
+		return nil, ErrNotInitialized
+	}
 	if e.gw.pipeline == nil {
 		return nil, ErrProviderNotFound
 	}
@@ -35,6 +46,9 @@ func (e *Engine) Complete(ctx context.Context, req *provider.CompletionRequest) 
 
 // CompleteStream sends a streaming chat completion request.
 func (e *Engine) CompleteStream(ctx context.Context, req *provider.CompletionRequest) (provider.Stream, error) {
+	if !e.ready.Load() {
+		return nil, ErrNotInitialized
+	}
 	if e.gw.pipeline == nil {
 		return nil, ErrProviderNotFound
 	}
@@ -43,6 +57,9 @@ func (e *Engine) CompleteStream(ctx context.Context, req *provider.CompletionReq
 
 // Embed sends an embedding request.
 func (e *Engine) Embed(ctx context.Context, req *provider.EmbeddingRequest) (*provider.EmbeddingResponse, error) {
+	if !e.ready.Load() {
+		return nil, ErrNotInitialized
+	}
 	if e.gw.pipeline == nil {
 		return nil, ErrProviderNotFound
 	}
@@ -51,6 +68,9 @@ func (e *Engine) Embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 
 // ListModels returns available models across all providers.
 func (e *Engine) ListModels(ctx context.Context) ([]provider.Model, error) {
+	if !e.ready.Load() {
+		return nil, ErrNotInitialized
+	}
 	if e.gw.model != nil {
 		return e.gw.model.ListModels(ctx)
 	}

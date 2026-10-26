@@ -45,7 +45,21 @@ Tables are prefixed with `nexus_`. Quota, config and metadata are `jsonb` column
 
 - `nexus_tenants`: id, name, slug, status, quota, config, metadata, created_at, updated_at
 - `nexus_api_keys`: id, tenant_id, name, prefix, hash, scopes, status, expires_at, last_used_at, metadata, created_at
-- `nexus_usage_records`: id, tenant_id, key_id, request_id, provider, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, pricing_status, outcome, blocked_by, refusal_code, latency_ns, cached, status_code, created_at
+- `nexus_usage_records`: id, tenant_id, key_id, request_id, provider, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, pricing_status, outcome, blocked_by, refusal_code, latency_ns, cached, status_code, metadata, created_at
+
+### Usage metadata
+
+`metadata` holds the request's `Metadata` map as `jsonb`, `'{}'` when the request set none. A GIN index (`idx_nexus_usage_metadata`, `jsonb_path_ops`) backs filters, and `usage.QueryOptions.Metadata` or `usage.SeriesOptions.Metadata` match with `metadata @> ...`, so a record matches when it carries every pair you ask for.
+
+The `usage_metadata` migration (version `20261024000001`, group `nexus`) adds the column and builds the index. Adding a column with a constant default is quick, but `CREATE INDEX` blocks writes to `nexus_usage_records` while it builds, which on a large table can stall usage inserts for a while. To avoid that, create the column and the index yourself before you upgrade, with the index built concurrently (outside a transaction):
+
+```sql
+ALTER TABLE nexus_usage_records ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}';
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_nexus_usage_metadata
+    ON nexus_usage_records USING GIN (metadata jsonb_path_ops);
+```
+
+The migration then finds both and skips the work.
 
 ## Internals
 

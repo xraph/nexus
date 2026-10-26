@@ -19,7 +19,8 @@ type Registry interface {
 	// Count returns the number of registered providers.
 	Count() int
 
-	// ForModel returns providers that support a given model.
+	// ForModel returns the providers whose Models list the model, in
+	// registration order. A provider whose Models fails is left out.
 	ForModel(model string) []Provider
 
 	// WithCapability returns providers with a specific capability.
@@ -75,16 +76,21 @@ func (r *registry) Count() int {
 	return len(r.providers)
 }
 
-func (r *registry) ForModel(_ string) []Provider {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	result := make([]Provider, 0, len(r.order))
-	for _, name := range r.order {
-		p := r.providers[name]
-		// Check if provider supports the model by querying its model list
-		// For now, return all providers (actual filtering requires model catalog)
-		_ = p
-		result = append(result, p)
+func (r *registry) ForModel(model string) []Provider {
+	// A provider's Models may call out over the network, so the lock covers
+	// only the snapshot.
+	var result []Provider
+	for _, p := range r.All() {
+		models, err := p.Models(context.Background())
+		if err != nil {
+			continue
+		}
+		for _, m := range models {
+			if m.ID == model {
+				result = append(result, p)
+				break
+			}
+		}
 	}
 	return result
 }

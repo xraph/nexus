@@ -139,3 +139,25 @@ func TestAccumulator_ContextCanceled(t *testing.T) {
 		t.Fatal("expected partial response, got nil")
 	}
 }
+
+func TestAccumulatorCarriesNative(t *testing.T) {
+	t.Parallel()
+	native := &provider.NativeContent{Provider: "anthropic", Model: "m", Content: []byte(`[{"type":"text","text":"hi"}]`)}
+	chunks := []*provider.StreamChunk{
+		{Delta: provider.Delta{Content: "hi"}, FinishReason: "stop"},
+		{Kind: provider.EventMessageStop, Delta: provider.Delta{Native: native}},
+	}
+	resp, err := provider.Accumulate(context.Background(), testutil.NewFakeStream(chunks, nil))
+	if err != nil {
+		t.Fatalf("accumulate: %v", err)
+	}
+	if got := resp.Choices[0].Message.Native; got != native {
+		t.Fatalf("Message.Native = %v, want the stream's %v", got, native)
+	}
+	if got := resp.Choices[0].Message.Content; got != "hi" {
+		t.Fatalf("content = %q, want %q", got, "hi")
+	}
+	if resp.Choices[0].FinishReason != "stop" {
+		t.Fatalf("finish_reason = %q, want stop", resp.Choices[0].FinishReason)
+	}
+}

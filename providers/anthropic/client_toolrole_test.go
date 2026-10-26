@@ -13,7 +13,7 @@ import (
 // Anthropic tool_result / tool_use content blocks, otherwise the API rejects
 // the request with: messages: Unexpected role "tool".
 func TestToAnthropicRequest_toolFlowTranslatesToContentBlocks(t *testing.T) {
-	c := newClient("k", "https://example.test")
+	c := newClient("k", "https://example.test", APIVersion20230601, defaultTimeout)
 	req := &provider.CompletionRequest{
 		Model: "claude-opus-4-8",
 		Messages: []provider.Message{
@@ -27,7 +27,10 @@ func TestToAnthropicRequest_toolFlowTranslatesToContentBlocks(t *testing.T) {
 		},
 	}
 
-	got := c.toAnthropicRequest(req)
+	got, err := c.toAnthropicRequest(req, false)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
 
 	for i, m := range got.Messages {
 		if m.Role != "user" && m.Role != "assistant" {
@@ -67,7 +70,7 @@ func TestToAnthropicRequest_toolFlowTranslatesToContentBlocks(t *testing.T) {
 
 // Plain user/assistant text messages must still pass through untouched.
 func TestToAnthropicRequest_plainMessagesUnchanged(t *testing.T) {
-	c := newClient("k", "https://example.test")
+	c := newClient("k", "https://example.test", APIVersion20230601, defaultTimeout)
 	req := &provider.CompletionRequest{
 		Model: "claude-opus-4-8",
 		Messages: []provider.Message{
@@ -77,7 +80,10 @@ func TestToAnthropicRequest_plainMessagesUnchanged(t *testing.T) {
 		},
 	}
 
-	got := c.toAnthropicRequest(req)
+	got, err := c.toAnthropicRequest(req, false)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
 
 	if got.System != "be terse" {
 		t.Fatalf("system = %q, want %q", got.System, "be terse")

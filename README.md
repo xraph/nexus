@@ -85,10 +85,10 @@ You probably started by calling one provider's SDK straight from your handlers. 
 | You need | Nexus gives you |
 | --- | --- |
 | Several LLM providers behind one API | 30 released provider modules, an OpenAI-compatible HTTP API, and `Engine` for calls from Go |
-| Control over which provider answers | Priority, cost-optimized, latency-optimized, round-robin and weighted routing, plus model aliases with per-tenant overrides |
+| Control over which provider answers | Routing to the provider a request names, its alias target or the provider that lists the model, then priority, cost, latency, round-robin or weighted strategies, plus model aliases with per-tenant overrides |
 | Fewer paid calls for repeated prompts | Response caching in memory or Redis, and record-and-replay caching for streamed responses |
 | Safer prompts and outputs | Guardrails for PII (block, redact or warn), prompt injection, blocklists and custom regex |
-| Customers with their own limits | Tenants, `nxs_` gateway keys with scopes, RPM and TPM windows, daily request caps and monthly budgets in exact USD |
+| Customers with their own limits | Tenants, `nxs_` gateway keys with scopes, RPM and TPM windows, daily request caps, monthly budgets in exact USD, and each tenant's own provider keys |
 | Streaming that fits your client | OpenAI-style SSE, Nexus SSE with named events, NDJSON, and a bidirectional WebSocket at `/v1/realtime` |
 | A record of every request | Usage records with tokens, latency and cost, OpenTelemetry spans and GenAI metrics, and 19 lifecycle hooks for audit, webhooks and metrics |
 | Data in your own database | PostgreSQL, SQLite and MongoDB stores through [Grove](https://github.com/xraph/grove), or in memory |
@@ -108,7 +108,9 @@ Each provider lives in `providers/<name>` as its own module, so you only downloa
 
 `geminilive` and `openairealtime` (realtime audio) are in the repo too, but they haven't been tagged yet, so you can't `go get` them at a released version.
 
-Register as many as you like. If you don't pick a router, Nexus uses the priority strategy, which goes by the order you registered providers in:
+The `bedrock` catalog is out of date. It still lists an old Claude id at its old price and wasn't updated in v1.9.0, so price the Bedrock models you call with `nexus.WithPriceOverrides` until it is.
+
+Register as many as you like. A request goes to the provider it names in `Provider`, else to its alias target's provider, else to a provider whose catalog lists the model. Only a model nobody lists falls to the routing strategy, and without one Nexus uses the priority strategy, which goes by the order you registered providers in:
 
 ```go
 gw := nexus.New(
@@ -168,7 +170,8 @@ Every request runs through the same chain of middleware, whether it came in over
 | 30, 40 | Identity, then tenant status and key scopes | always |
 | 50 | Quota: token cap, daily requests, budget, RPM, TPM | always, with the default usage service |
 | 60 | Stream lifecycle hooks | always, short-circuits for non-streams |
-| 150 | Input guardrails | `WithGuard` |
+| 150 | Input and output guardrails | `WithGuard` |
+| 155 | Output guardrails for streams, buffered by default | a guard that checks output, or `WithStreamGuard` |
 | 200 | Transforms | `WithTransforms` |
 | 250, 260 | Alias resolution, then the tenant's model allow and block lists | aliases only with `WithAlias` |
 | 280 | Cache | `WithCache` or `WithStreamCache` |
@@ -227,7 +230,7 @@ app := forge.NewApp(forge.AppConfig{
 })
 ```
 
-Once the app has started, resolve the gateway with `forge.Inject[*nexus.Gateway](app.Container())`. The extension doesn't register HTTP routes itself today, so serve `proxy.New(gw.Engine())` or `api.New(gw).Handler()` where you want the API to live.
+The extension builds the gateway in `Register` and puts it in the container, so another extension can resolve it with `vessel.Inject[*nexus.Gateway](app.Container())` from its own `Register`. Its engine answers `nexus.ErrNotInitialized` until `Start` has run. The extension doesn't register HTTP routes, so serve `proxy.New(gw.Engine())` or `api.New(gw).Handler()` where you want the API to live. `base_path` and `disable_routes` are deprecated and ignored.
 
 ```yaml
 extensions:
@@ -265,6 +268,7 @@ The [Forge extension guide](https://www.xraph.com/docs/nexus/guides/forge-extens
 | --- | --- |
 | First gateway | [Getting started](https://www.xraph.com/docs/nexus/getting-started), [architecture](https://www.xraph.com/docs/nexus/architecture) |
 | Providers, routing and aliases | [Providers](https://www.xraph.com/docs/nexus/core/providers), [routing](https://www.xraph.com/docs/nexus/core/routing), [aliases](https://www.xraph.com/docs/nexus/core/aliases) |
+| Tenant keys and prices | [Tenant credentials](https://www.xraph.com/docs/nexus/core/credentials), [pricing](https://www.xraph.com/docs/nexus/core/pricing) |
 | Caching, guardrails and transforms | [Caching](https://www.xraph.com/docs/nexus/core/caching), [guardrails](https://www.xraph.com/docs/nexus/core/guardrails), [transforms](https://www.xraph.com/docs/nexus/core/transforms) |
 | Tenants and keys | [Multi-tenancy](https://www.xraph.com/docs/nexus/concepts/multi-tenancy), [identity](https://www.xraph.com/docs/nexus/concepts/identity) |
 | Streaming and the HTTP API | [Streaming guide](https://www.xraph.com/docs/nexus/guides/streaming), [HTTP API](https://www.xraph.com/docs/nexus/api-reference/http-api), [streaming API](https://www.xraph.com/docs/nexus/api-reference/streaming-api) |
@@ -272,6 +276,8 @@ The [Forge extension guide](https://www.xraph.com/docs/nexus/guides/forge-extens
 | Hooks, audit and tracing | [Plugins](https://www.xraph.com/docs/nexus/infrastructure/plugins), [audit](https://www.xraph.com/docs/nexus/infrastructure/audit), [observability](https://www.xraph.com/docs/nexus/infrastructure/observability) |
 
 The Go API is on [pkg.go.dev](https://pkg.go.dev/github.com/xraph/nexus), and each provider has its own page there under `github.com/xraph/nexus/providers/<name>`.
+
+Upgrading? [MIGRATION.md](MIGRATION.md) lists what changed in each release that can change how your code or your gateway behaves.
 
 ## Examples
 

@@ -39,14 +39,19 @@ type Choice struct {
 	FinishReason string  `json:"finish_reason"`
 }
 
-// Usage tracks token consumption.
+// Usage tracks token consumption. PromptTokens counts every input token,
+// cache reads and cache writes included. CacheReadTokens, CacheWriteTokens
+// and CacheWriteLongTokens are subsets of it: CacheWriteTokens counts every
+// cache write, and CacheWriteLongTokens is the part of those written for an
+// hour rather than five minutes.
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	ThinkingTokens   int `json:"thinking_tokens,omitempty"`
-	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens         int `json:"prompt_tokens"`
+	CompletionTokens     int `json:"completion_tokens"`
+	ThinkingTokens       int `json:"thinking_tokens,omitempty"`
+	CacheReadTokens      int `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens     int `json:"cache_write_tokens,omitempty"`
+	CacheWriteLongTokens int `json:"cache_write_long_tokens,omitempty"`
+	TotalTokens          int `json:"total_tokens"`
 }
 
 // EmbeddingResponse for embeddings.

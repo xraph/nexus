@@ -413,3 +413,51 @@ func TestCacheMiddleware_TenantCacheSwitchOffNeitherReplaysNorRecordsAStream(t *
 		t.Fatal("a stream was recorded for a tenant whose cache is off")
 	}
 }
+
+func TestCacheMiddleware_ARequestWithNoKeyIsNeverCached(t *testing.T) {
+	t.Parallel()
+
+	mw := middlewares.NewCache(cache.NewService(stores.NewMemory())).
+		WithStreamCache(stores.NewMemoryStream(), cache.StreamCacheOptions{Mode: cache.ReplayBurst})
+	newReq := func(typ pipeline.RequestType) *pipeline.Request {
+		// A channel cannot be encoded, so the request has no cache key.
+		return &pipeline.Request{
+			Completion: &provider.CompletionRequest{Model: "m", Messages: []provider.Message{{Role: "user", Content: make(chan int)}}},
+			Type:       typ,
+			State:      map[string]any{},
+		}
+	}
+	var calls int
+	next := func(context.Context) (*pipeline.Response, error) {
+		calls++
+		return &pipeline.Response{Completion: &provider.CompletionResponse{Model: "m"}}, nil
+	}
+	for range 2 {
+		if _, err := mw.Process(context.Background(), newReq(pipeline.RequestCompletion), next); err != nil {
+			t.Fatalf("process: %v", err)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("upstream called %d times, want 2: a request with no key must not be cached", calls)
+	}
+
+	streamNext := func(context.Context) (*pipeline.Response, error) {
+		calls++
+		return &pipeline.Response{Stream: testutil.NewFakeStream([]*provider.StreamChunk{{Delta: provider.Delta{Content: "x"}}}, nil)}, nil
+	}
+	for range 2 {
+		resp, err := mw.Process(context.Background(), newReq(pipeline.RequestStream), streamNext)
+		if err != nil {
+			t.Fatalf("stream process: %v", err)
+		}
+		for {
+			if _, e := resp.Stream.Next(context.Background()); e != nil {
+				break
+			}
+		}
+		_ = resp.Stream.Close()
+	}
+	if calls != 4 {
+		t.Fatalf("upstream called %d times in all, want 4: a stream with no key must not be cached", calls)
+	}
+}

@@ -137,6 +137,28 @@ func init() {
 			},
 		},
 		&migrate.Migration{
+			Name:    "usage_metadata",
+			Version: "20261024000001",
+			Comment: "Index usage metadata so records can be filtered by any key",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+				return mexec.CreateIndexes(ctx, colUsage, usageMetadataIndex())
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+				if err := mexec.DB().Collection(colUsage).Indexes().DropOne(ctx, "metadata.$**_1"); err != nil {
+					return fmt.Errorf("drop index metadata.$**_1 on %s: %w", colUsage, err)
+				}
+				return nil
+			},
+		},
+		&migrate.Migration{
 			Name:    "unique_key_hash",
 			Version: "20261008000002",
 			Comment: "A key hash is unique, so two replicas creating one key cannot leave two documents",
@@ -180,7 +202,7 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "provider", Value: 1}}},
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "provider", Value: 1}, {Key: "model", Value: 1}}},
-		}, usageOperatorIndexes()...),
+		}, append(usageOperatorIndexes(), usageMetadataIndex()...)...),
 	}
 }
 
@@ -209,5 +231,14 @@ func usageOperatorIndexes() []mongo.IndexModel {
 func keyHashIndex() []mongo.IndexModel {
 	return []mongo.IndexModel{
 		{Keys: bson.D{{Key: "hash", Value: 1}}, Options: options.Index().SetUnique(true)},
+	}
+}
+
+// usageMetadataIndex backs the metadata filter on a usage query or series,
+// whichever key it names. Added by the 20261024000001 migration, and kept in
+// migrationIndexes() for Store.Migrate.
+func usageMetadataIndex() []mongo.IndexModel {
+	return []mongo.IndexModel{
+		{Keys: bson.D{{Key: "metadata.$**", Value: 1}}},
 	}
 }

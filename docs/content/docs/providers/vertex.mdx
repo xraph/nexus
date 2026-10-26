@@ -1,6 +1,6 @@
 ---
 title: Google Vertex AI
-description: Use Vertex AI-hosted Gemini models with Nexus — GCP OAuth2 auth with project/location routing.
+description: Use Vertex AI-hosted Gemini models with Nexus, using GCP OAuth2 auth and project and location routing.
 ---
 
 The Vertex AI provider connects to Google Cloud's Vertex AI platform. It uses the same Gemini API format but with OAuth2 Bearer token authentication and project/location-based URL routing.
@@ -45,7 +45,7 @@ gw := nexus.New(
 | Streaming | Yes |
 | Embeddings | Yes |
 | Vision | Yes |
-| Tools | Yes |
+| Tools | Yes (`CompletionRequest.ToolChoice` is dropped) |
 | Thinking | No |
 
 ## Authentication
@@ -73,4 +73,4 @@ provider := vertex.New(
 |-------|---------|-----------|-------------|-------------|
 | `gemini-2.0-flash` | 1M | 8,192 | $0.10/M | $0.40/M |
 | `gemini-1.5-pro` | 2M | 8,192 | $1.25/M | $5.00/M |
-| `text-embedding-004` | 2,048 | — | $0.025/M | — |
+| `text-embedding-004` | 2,048 | n/a | $0.025/M | n/a |

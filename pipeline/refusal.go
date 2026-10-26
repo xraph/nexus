@@ -27,6 +27,7 @@ const (
 	CodeBudgetExceeded  = "budget_exceeded" // 429
 	CodeUnavailable     = "unavailable"     // 503
 	CodeContentBlocked  = "content_blocked" // 400, a guard block
+	CodeModelUnpriced   = "model_unpriced"  // 400, the unpriced-model policy
 )
 
 // RefusalError is the refusal every Nexus stage returns. Limit names the

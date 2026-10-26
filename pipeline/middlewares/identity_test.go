@@ -9,6 +9,7 @@ import (
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/pipeline/middlewares"
 	"github.com/xraph/nexus/provider"
+	"github.com/xraph/nexus/usage"
 )
 
 func runOnce(ctx context.Context, t *testing.T, mw pipeline.Middleware, req *pipeline.Request) (context.Context, error) {
@@ -75,6 +76,31 @@ func TestIdentityReconcilesContextAndRequest(t *testing.T) {
 			}
 			if inReq != c.want {
 				t.Fatalf("tenant in request = %q, want %q (later stages read the request)", inReq, c.want)
+			}
+		})
+	}
+}
+
+func TestIdentityRefusesInvalidMetadata(t *testing.T) {
+	bad := map[string]string{"a.b": "x"}
+	for name, req := range map[string]*pipeline.Request{
+		"completion": {Completion: &provider.CompletionRequest{Metadata: bad}, State: map[string]any{}},
+		"embedding":  {Embedding: &provider.EmbeddingRequest{Metadata: bad}, State: map[string]any{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			called := false
+			_, err := middlewares.NewIdentity().Process(context.Background(), req, func(context.Context) (*pipeline.Response, error) {
+				called = true
+				return &pipeline.Response{}, nil
+			})
+			if called {
+				t.Fatal("next was called for a refused request")
+			}
+			if !errors.Is(err, usage.ErrInvalidMetadata) {
+				t.Fatalf("err = %v, want one wrapping ErrInvalidMetadata", err)
+			}
+			if status, code := pipeline.HTTPStatus(err); status != 400 || code != pipeline.CodeInvalidRequest {
+				t.Fatalf("refusal = %d %s, want 400 invalid_request", status, code)
 			}
 		})
 	}

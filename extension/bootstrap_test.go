@@ -8,6 +8,7 @@ import (
 
 	"github.com/xraph/forge"
 
+	nexus "github.com/xraph/nexus"
 	"github.com/xraph/nexus/key"
 	"github.com/xraph/nexus/store"
 )
@@ -27,6 +28,7 @@ func startWith(t *testing.T, cfg Config) *Extension {
 	e.config = e.mergeWithDefaults(cfg)
 	e.resolveBootstrapAdminKey()
 	e.applyConfigToGatewayOpts()
+	e.gateway = nexus.New(e.gatewayOpts...)
 	if err := e.Start(context.Background()); err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -100,6 +102,7 @@ func TestAMalformedBootstrapAdminKeyFailsStartNamingItsSourceAndLength(t *testin
 			e.config = e.mergeWithDefaults(Config{BootstrapAdminKey: tc.cfg})
 			e.resolveBootstrapAdminKey()
 			e.applyConfigToGatewayOpts()
+			e.gateway = nexus.New(e.gatewayOpts...)
 			err := e.Start(context.Background())
 			if err == nil {
 				t.Fatal("start must fail on a malformed bootstrap admin key")

@@ -1,9 +1,9 @@
 ---
 title: OpenAI
-description: Use OpenAI models (GPT-4o, o1, embeddings) with Nexus.
+description: Use OpenAI's GPT models and embeddings with Nexus, including embedding dimensions and per-tenant keys.
 ---
 
-The OpenAI provider connects to the OpenAI API for chat completions, streaming, embeddings, vision, and tool calling.
+The OpenAI provider talks to OpenAI's Chat Completions and Embeddings APIs: chat, streaming, embeddings, vision and tool calling. Most of the OpenAI-compatible providers (Groq, Together, Fireworks and others) wrap it, so what this page says about requests applies to them too.
 
 ## Installation
 
@@ -11,42 +11,120 @@ The OpenAI provider connects to the OpenAI API for chat completions, streaming, 
 import "github.com/xraph/nexus/providers/openai"
 ```
 
-## Quick Start
+## Quick start
 
 ```go
-provider := openai.New(os.Getenv("OPENAI_API_KEY"))
-
 gw := nexus.New(
-    nexus.WithProvider(provider),
+    nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))),
 )
 ```
 
 ## Options
 
-| Option | Description |
-|--------|-------------|
-| `openai.WithBaseURL(url)` | Override the API base URL (default: `https://api.openai.com/v1`) |
-| `openai.WithOrgID(id)` | Set the `OpenAI-Organization` header |
-
-## Capabilities
-
-| Capability | Supported |
-|-----------|-----------|
-| Chat | Yes |
-| Streaming | Yes |
-| Embeddings | Yes |
-| Vision | Yes |
-| Tools | Yes |
-| Thinking | Yes (o-series models) |
+| Option | What it does |
+|--------|--------------|
+| `openai.WithBaseURL(url)` | Sends requests to another base URL (default `https://api.openai.com/v1`) |
+| `openai.WithOrgID(id)` | Sets the `OpenAI-Organization` header. It's left off requests that carry a tenant key |
+| `openai.WithTimeout(d)` | How long a request waits for response headers. Default 10 minutes |
+| `openai.WithMaxCompletionTokens(on)` | Sends `max_completion_tokens` on a base URL other than OpenAI's own |
 
 ## Models
 
-| Model | Context | Max Output | Input Price | Output Price |
-|-------|---------|-----------|-------------|-------------|
-| `gpt-4o` | 128K | 16,384 | $2.50/M | $10.00/M |
-| `gpt-4o-mini` | 128K | 16,384 | $0.15/M | $0.60/M |
-| `gpt-4-turbo` | 128K | 4,096 | $10.00/M | $30.00/M |
-| `o1` | 200K | 100K | $15.00/M | $60.00/M |
-| `o1-mini` | 128K | 65,536 | $3.00/M | $12.00/M |
-| `text-embedding-3-small` | 8,191 | — | $0.02/M | — |
-| `text-embedding-3-large` | 8,191 | — | $0.13/M | — |
+The catalog lists every model OpenAI's Chat Completions API served on 2026-10-25, plus the embedding models. Prices are USD per million tokens at the Standard tier, from `https://developers.openai.com/api/docs/pricing`, and the context windows and output limits come from each model's page under `https://developers.openai.com/api/docs/models`. Both were read on 2026-10-25.
+
+| Model | Context | Max output | Input | Cached input | Output | Notes |
+|-------|---------|------------|-------|--------------|--------|-------|
+| `gpt-6-astra` | 1.05M | 128K | $10.00 | $1.00 | $50.00 | No tools here |
+| `gpt-6.1-sol` | 1.05M | 128K | $2.00 | $0.10 | $10.00 | No tools here |
+| `gpt-6-sol` | 1.05M | 128K | $2.00 | $0.20 | $10.00 | No tools here |
+| `gpt-6-luna` | 1.05M | 128K | $0.10 | $0.01 | $0.50 | No tools here |
+| `gpt-5.6-sol` | 1.05M | 128K | $4.00 | $0.40 | $20.00 | Promotional price, at least through 2026-11-21 |
+| `gpt-5.6-terra` | 1.05M | 128K | $2.00 | $0.20 | $12.00 | |
+| `gpt-5.6-luna` | 1.05M | 128K | $0.20 | $0.02 | $1.20 | |
+| `gpt-5.5` | 1.05M | 128K | $5.00 | $0.50 | $30.00 | |
+| `gpt-5.4` | 1.05M | 128K | $2.50 | $0.25 | $15.00 | |
+| `gpt-5.4-mini` | 400K | 128K | $0.75 | $0.075 | $4.50 | |
+| `gpt-5.4-nano` | 400K | 128K | $0.20 | $0.02 | $1.25 | Deprecated |
+| `gpt-5.2` | 400K | 128K | $1.75 | $0.175 | $14.00 | |
+| `gpt-5.1` | 400K | 128K | $1.25 | $0.125 | $10.00 | Deprecated |
+| `gpt-5` | 400K | 128K | $1.25 | $0.125 | $10.00 | Deprecated |
+| `gpt-5-mini` | 400K | 128K | $0.25 | $0.025 | $2.00 | Deprecated |
+| `gpt-5-nano` | 400K | 128K | $0.05 | $0.005 | $0.40 | Deprecated |
+| `gpt-4.1` | 1,047,576 | 32,768 | $2.00 | $0.50 | $8.00 | Deprecated |
+| `gpt-4.1-mini` | 1,047,576 | 32,768 | $0.40 | $0.10 | $1.60 | Deprecated |
+| `gpt-4o` | 128K | 16,384 | $2.50 | $1.25 | $10.00 | Deprecated |
+| `gpt-4o-mini` | 128K | 16,384 | $0.15 | $0.075 | $0.60 | Deprecated |
+| `o3` | 200K | 100K | $2.00 | $0.50 | $8.00 | Deprecated |
+| `chat-latest` | 400K | 128K | $5.00 | $0.50 | $30.00 | |
+
+Dated snapshots that OpenAI still serves (`gpt-5.5-2026-04-23`, `gpt-4o-2024-08-06` and so on) are listed too, at their model's limits and prices.
+
+The GPT-6, GPT-5.6, GPT-5.5 and GPT-5.4 models charge more above 272,000 prompt tokens, and a request past that line is priced entirely at the long-context row. GPT-6 and GPT-5.6 also bill cache writes:
+
+| Model | Cache write | Above 272K: input | cached input | output | cache write |
+|-------|-------------|-------------------|--------------|--------|-------------|
+| `gpt-6-astra` | $12.50 | $20.00 | $2.00 | $75.00 | $25.00 |
+| `gpt-6.1-sol` | $2.50 | $4.00 | $0.20 | $15.00 | $5.00 |
+| `gpt-6-sol` | $2.50 | $4.00 | $0.40 | $15.00 | $5.00 |
+| `gpt-6-luna` | $0.125 | $0.20 | $0.02 | $0.75 | $0.25 |
+| `gpt-5.6-sol` | $5.00 | $8.00 | $0.80 | $30.00 | $10.00 |
+| `gpt-5.6-terra` | $2.50 | $4.00 | $0.40 | $18.00 | $5.00 |
+| `gpt-5.6-luna` | $0.25 | $0.40 | $0.04 | $1.80 | $0.50 |
+| `gpt-5.5` | | $10.00 | $1.00 | $45.00 | |
+| `gpt-5.4` | | $5.00 | $0.50 | $22.50 | |
+
+| Embedding model | Max input | Price |
+|-----------------|-----------|-------|
+| `text-embedding-3-small` | 8,192 | $0.02 |
+| `text-embedding-3-large` | 8,192 | $0.13 |
+| `text-embedding-ada-002` | 8,192 | $0.10 |
+
+Models OpenAI's model pages mark as shut down aren't listed, even where the pricing page still prices them: `o1`, `o1-mini`, `o3-mini`, `o4-mini`, `gpt-4-turbo`, `gpt-4`, `gpt-3.5-turbo`, `gpt-4.1-nano` and others. A request for one still goes through and records an unknown cost. Audio-only models (`gpt-audio` and its variants) are left out, since the provider sends no audio.
+
+The GPT-6 models take tools only through OpenAI's Responses API, or with a reasoning effort the provider does not send, so their catalog entries say they have no tools.
+
+Cached-input and cache-write tokens come from `prompt_tokens_details`, so they are priced at their own rates.
+
+## max_tokens and max_completion_tokens
+
+On OpenAI's own endpoint, `https://api.openai.com/v1`, the provider sends `CompletionRequest.MaxTokens` as `max_completion_tokens`, which current models require. That includes a request whose [tenant credential](/docs/core/credentials) points at that URL. Any other base URL gets `max_tokens`, which most OpenAI-compatible servers expect. If yours wants the newer field, turn it on:
+
+```go
+openai.New(key,
+    openai.WithBaseURL("https://llm.internal/v1"),
+    openai.WithMaxCompletionTokens(true),
+)
+```
+
+Reasoning models (the GPT-6 and GPT-5.6 families, `gpt-5.5`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano` and `o3`) reject `temperature` and `top_p`, so the provider leaves them off for those models, on any base URL.
+
+## Tool choice
+
+`CompletionRequest.ToolChoice` is sent in OpenAI's shape whatever shape you used: OpenAI's own (`"auto"`, `"none"`, `"required"`, `{"type":"function","function":{"name":...}}`), Anthropic's (`"any"`, `{"type":"any"}`, `{"type":"tool","name":...}`) or the typed `provider.ToolChoice`. `"any"` goes out as `"required"`. An object with a `type` this provider does not model, such as OpenAI's `{"type":"allowed_tools",...}` or `{"type":"custom",...}`, is sent unchanged. A malformed value (an unknown string, an object with no `type`, a function with no name) fails before anything is sent, with an error that wraps `provider.ErrNotSupported`; the gateway refuses it with 400 `invalid_request` and does not retry it. Every provider built on this one (opencompat, groq, openrouter and the rest) and `azureopenai` do the same.
+
+`ThinkingConfig.Effort` is not sent to OpenAI: the provider has no `reasoning_effort` mapping, so the field is ignored here.
+
+## Embedding dimensions
+
+`EmbeddingRequest.Dimensions` asks for a vector width. Zero keeps the model's default.
+
+```go
+resp, err := gw.Engine().Embed(ctx, &provider.EmbeddingRequest{
+    Provider:   "openai",
+    Model:      "text-embedding-3-small",
+    Input:      []string{"hello"},
+    Dimensions: 512,
+})
+```
+
+On OpenAI's own endpoint only the `text-embedding-3` models take a width. The gateway refuses any other model before calling OpenAI, with `middlewares.ErrDimensionsUnsupported` (400 `invalid_request`, wrapping `provider.ErrNotSupported`). On another base URL the provider passes the width through and lets the server decide. Either way the gateway checks what comes back, and a vector of a different length fails the call with an error that matches `middlewares.ErrDimensionsMismatch`.
+
+The provider decides by its configured base URL. A tenant credential that points an `openai` provider somewhere else is still held to OpenAI's rule, so use [opencompat](/docs/providers/opencompat) for tenants that bring their own server.
+
+## Timeouts
+
+`WithTimeout` bounds the wait for response headers, 10 minutes by default. A stream is not cut by it once headers arrive, so bound a whole call with the request context. A non-streamed call through the gateway is also bounded by `nexus.WithTimeout` (30 seconds by default).
+
+## Per-tenant keys
+
+The provider applies a per-request credential, key and base URL. A tenant key drops the configured `OpenAI-Organization` header, and a credential with a `BaseURL` never gets the configured key: with no key of its own, the request goes out with no `Authorization` header. See [Tenant Credentials](/docs/core/credentials).

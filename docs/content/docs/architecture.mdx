@@ -41,13 +41,14 @@ Every request flows through the pipeline middleware chain, sorted by priority:
 7. Quota (50): token cap, daily requests, monthly budget, RPM and TPM, and the gateway-wide rate limit
 8. Stream Lifecycle (60): extension hooks for streams, and the tenant's stream duration and token caps
 9. Guardrails (150): input checks before the call, output checks on a complete response, only with `WithGuard`
-10. Transforms (200): input and output transforms, only with `WithTransforms`
-11. Alias Resolution (250): rewrite a virtual model name to a concrete model, only with `WithAlias`
-12. Model Policy (260): the tenant's allowed and blocked models
-13. Cache (280): serve or store a cached response, only with a cache configured
-14. Retry (340): retry a failed provider call with backoff, when retries are above zero (2 by default)
-15. Custom middleware: yours, sorted into this list by its own priority
-16. Provider Call (350): pick a provider with the routing strategy and call it. Always last.
+10. Stream Guardrails (155): output checks on a streamed reply, when any guard runs on output or with `WithStreamGuard`
+11. Transforms (200): input and output transforms, only with `WithTransforms`
+12. Alias Resolution (250): rewrite a virtual model name to a concrete model, only with `WithAlias`
+13. Model Policy (260): the tenant's allowed and blocked models
+14. Cache (280): serve or store a cached response, only with a cache configured
+15. Retry (340): retry a failed provider call with backoff, when retries are above zero (2 by default)
+16. Custom middleware: yours, sorted into this list by its own priority
+17. Provider Call (350): pick a provider (the one the request names, the alias target's, the ones that list the model, then the routing strategy), resolve its credential and call it. Always last.
 
 The usage stage sits above everything that can refuse, replay or retry a request, so one request produces one usage record whatever happens below it. That includes a request the access or quota stage refuses, which is recorded as `refused` at $0.
 

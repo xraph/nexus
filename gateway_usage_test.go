@@ -3,7 +3,9 @@ package nexus_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +18,7 @@ import (
 	"github.com/xraph/nexus/guard"
 	"github.com/xraph/nexus/id"
 	"github.com/xraph/nexus/key"
+	"github.com/xraph/nexus/model"
 	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/pipeline"
 	"github.com/xraph/nexus/pipeline/middlewares"
@@ -345,6 +348,63 @@ func TestARetriedRequestIsRecordedOnce(t *testing.T) {
 	}
 }
 
+// errForced stands in for anthropic.ErrForcedToolChoice: a caller error a
+// provider raises before it sends anything.
+var errForced = fmt.Errorf("fake: forced tool choice is not supported by this model: %w", provider.ErrNotSupported)
+
+// refusingProvider fails every completion and stream with errForced and
+// counts the attempts.
+type refusingProvider struct {
+	*fakeProvider
+	attempts int
+}
+
+func (p *refusingProvider) Complete(context.Context, *provider.CompletionRequest) (*provider.CompletionResponse, error) {
+	p.attempts++
+	return nil, errForced
+}
+
+func (p *refusingProvider) CompleteStream(context.Context, *provider.CompletionRequest) (provider.Stream, error) {
+	p.attempts++
+	return nil, errForced
+}
+
+func TestACallerErrorFromAProviderIsRefusedNotRetried(t *testing.T) {
+	p := &refusingProvider{fakeProvider: &fakeProvider{name: "anthropic", price: listPrice}}
+	req := func() *provider.CompletionRequest {
+		return &provider.CompletionRequest{Model: "gpt-4o", ToolChoice: "required",
+			Messages: []provider.Message{{Role: "user", Content: "hi"}}}
+	}
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		_, err := gw.Engine().Complete(ctx, req())
+		if !errors.Is(err, errForced) || !errors.Is(err, provider.ErrNotSupported) {
+			t.Fatalf("Complete: err = %v, want the provider's error", err)
+		}
+		if status, code := pipeline.HTTPStatus(err); status != 400 || code != pipeline.CodeInvalidRequest {
+			t.Fatalf("Complete: status %d code %q, want 400 invalid_request", status, code)
+		}
+		if _, err = gw.Engine().CompleteStream(ctx, req()); !errors.Is(err, errForced) {
+			t.Fatalf("CompleteStream: err = %v, want the provider's error", err)
+		}
+		if status, code := pipeline.HTTPStatus(err); status != 400 || code != pipeline.CodeInvalidRequest {
+			t.Fatalf("CompleteStream: status %d code %q, want 400 invalid_request", status, code)
+		}
+	}, nexus.WithProvider(p), nexus.WithMaxRetries(2))
+	if p.attempts != 2 {
+		t.Fatalf("provider tried %d times, want 2 (one per request, no retry)", p.attempts)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("got %d records, want 2", len(recs))
+	}
+	for _, r := range recs {
+		if r.Outcome != usage.OutcomeRefused || r.StatusCode != 400 || r.RefusalCode != pipeline.CodeInvalidRequest ||
+			r.PricingStatus != usage.PricingNotCharged || r.CostUSD == nil || !r.CostUSD.IsZero() {
+			t.Fatalf("record = outcome %s status %d code %q pricing %s cost %v; want a 400 invalid_request refusal at $0",
+				r.Outcome, r.StatusCode, r.RefusalCode, r.PricingStatus, r.CostUSD)
+		}
+	}
+}
+
 func TestFailuresSayWhetherAProviderWasCalled(t *testing.T) {
 	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
 		_, _ = gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "gpt-4o"})
@@ -481,7 +541,9 @@ func TestARecordAfterShutdownIsCountedAndNotStored(t *testing.T) {
 	if err := gw.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
-	if _, err := gw.Engine().Complete(context.Background(), &provider.CompletionRequest{Model: "gpt-4o"}); err != nil {
+	// The engine refuses new calls after Shutdown, so run the pipeline
+	// directly, as a request already past the engine when Shutdown began.
+	if _, err := gw.Pipeline().Execute(context.Background(), &provider.CompletionRequest{Model: "gpt-4o"}); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 	res, err := s.Usage().Query(context.Background(), &usage.QueryOptions{Limit: 100})
@@ -657,5 +719,141 @@ func TestShutdownWaitsForACompletionStillWithTheProvider(t *testing.T) {
 	}
 	if gw.UsageInsertErrors() != 0 {
 		t.Fatalf("insert errors = %d, want 0", gw.UsageInsertErrors())
+	}
+}
+
+func TestWithPriceOverridesPricesAGatewayRequest(t *testing.T) {
+	fp := &fakeProvider{name: "openai", price: listPrice}
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		if _, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "llama3",
+			Messages: []provider.Message{{Role: "user", Content: "hi"}}}); err != nil {
+			t.Fatalf("complete: %v", err)
+		}
+	}, nexus.WithProvider(fp), nexus.WithPriceOverrides(model.PriceOverride{Provider: "openai", Model: "llama3",
+		Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.2"), OutputPerMillion: money.MustParse("0.4")}}))
+	if len(recs) != 1 {
+		t.Fatalf("got %d records, want 1", len(recs))
+	}
+	// 1234 × 0.2 / 1e6 + 567 × 0.4 / 1e6
+	if r := recs[0]; r.PricingStatus != usage.PricingPriced || r.CostUSD == nil || !r.CostUSD.Equal(money.MustParse("0.0004736")) {
+		t.Fatalf("record = cost %v status %s; want 0.0004736 priced", r.CostUSD, r.PricingStatus)
+	}
+}
+
+func TestThePriceBookIsReadyBeforeInitialize(t *testing.T) {
+	gw := nexus.New(nexus.WithProvider(&fakeProvider{name: "openai", price: listPrice}),
+		nexus.WithPriceOverrides(model.PriceOverride{Provider: "openai", Model: "llama3", Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.2")}}),
+		nexus.WithPriceOverrides(model.PriceOverride{Provider: "openai", Model: "mistral", Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.1")}}))
+	book := gw.PriceBook()
+	if book == nil {
+		t.Fatal("PriceBook() is nil before Initialize")
+	}
+	ctx := context.Background()
+	if !book.Priced(ctx, "openai", "llama3") || !book.Priced(ctx, "openai", "mistral") {
+		t.Fatalf("every WithPriceOverrides should apply")
+	}
+	if err := gw.Initialize(ctx); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	if gw.PriceBook() != book {
+		t.Fatalf("Initialize replaced the price book")
+	}
+}
+
+func TestAnUnpricedLongContextOverrideFailsInitialize(t *testing.T) {
+	gw := nexus.New(nexus.WithDatabase(store.NewMemory()), nexus.WithProvider(&fakeProvider{name: "openai", price: listPrice}),
+		nexus.WithUnpricedPolicy(nexus.RefuseUnpriced),
+		nexus.WithPriceOverrides(model.PriceOverride{Provider: "openai", Model: "llama3-long", Pricing: provider.Pricing{
+			InputPerMillion: money.MustParse("0.2"), OutputPerMillion: money.MustParse("0.4"),
+			LongContextAbove: 1000, LongContext: &provider.Pricing{},
+		}}))
+	err := gw.Initialize(context.Background())
+	if !errors.Is(err, model.ErrUnpricedLongContext) || !strings.Contains(err.Error(), "llama3-long") {
+		t.Fatalf("Initialize = %v, want ErrUnpricedLongContext naming llama3-long", err)
+	}
+	if gw.Initialized() {
+		t.Fatal("a gateway with a rejected price override must not serve")
+	}
+}
+
+func TestValidPricesSetBeforeInitializeClearAnEarlierRejection(t *testing.T) {
+	bad := model.PriceOverride{Provider: "openai", Model: "llama3-long", Pricing: provider.Pricing{
+		InputPerMillion: money.MustParse("0.2"), OutputPerMillion: money.MustParse("0.4"),
+		LongContextAbove: 1000, LongContext: &provider.Pricing{InputPerMillion: money.MustParse("0.4")},
+	}}
+	gw := nexus.New(nexus.WithDatabase(store.NewMemory()), nexus.WithProvider(&fakeProvider{name: "openai", price: listPrice}),
+		nexus.WithPriceOverrides(bad))
+	err := gw.Initialize(context.Background())
+	if !errors.Is(err, model.ErrUnpricedLongContext) || !strings.Contains(err.Error(), "PriceBook().SetOverrides") {
+		t.Fatalf("Initialize = %v, want ErrUnpricedLongContext and a hint to fix it", err)
+	}
+	good := bad
+	good.Pricing.LongContext = &provider.Pricing{InputPerMillion: money.MustParse("0.4"), OutputPerMillion: money.MustParse("0.8")}
+	if err := gw.PriceBook().SetOverrides([]model.PriceOverride{good}); err != nil {
+		t.Fatalf("SetOverrides: %v", err)
+	}
+	if err := gw.Initialize(context.Background()); err != nil {
+		t.Fatalf("Initialize after valid prices: %v", err)
+	}
+	if !gw.Initialized() {
+		t.Fatal("the gateway did not initialize")
+	}
+}
+
+func TestWithUnpricedPolicyRefusesAnUnpricedModel(t *testing.T) {
+	fp := &fakeProvider{name: "openai", price: listPrice}
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		_, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "o9",
+			Messages: []provider.Message{{Role: "user", Content: "hi"}}})
+		if !errors.Is(err, nexus.ErrModelUnpriced) {
+			t.Fatalf("err = %v, want ErrModelUnpriced", err)
+		}
+		if status, code := pipeline.HTTPStatus(err); status != 400 || code != "model_unpriced" {
+			t.Fatalf("status %d code %q", status, code)
+		}
+		if _, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "gpt-4o",
+			Messages: []provider.Message{{Role: "user", Content: "hi"}}}); err != nil {
+			t.Fatalf("a priced model was refused: %v", err)
+		}
+	}, nexus.WithProvider(fp), nexus.WithUnpricedPolicy(nexus.RefuseUnpriced))
+	if fp.calls != 1 {
+		t.Fatalf("provider called %d times, want 1 (the priced model only)", fp.calls)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("got %d records, want 2", len(recs))
+	}
+}
+
+func TestUsageRecordCarriesRequestMetadata(t *testing.T) {
+	completion := map[string]string{"project": "p1", "run": "r1"}
+	embedding := map[string]string{"project": "p1"}
+	recs := gateway(t, func(ctx context.Context, gw *nexus.Gateway) {
+		if _, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{Model: "gpt-4o", Metadata: completion,
+			Messages: []provider.Message{{Role: "user", Content: "hi"}}}); err != nil {
+			t.Fatalf("complete: %v", err)
+		}
+		if _, err := gw.Engine().Embed(ctx, &provider.EmbeddingRequest{Model: "embed-small", Input: []string{"x"}, Metadata: embedding}); err != nil {
+			t.Fatalf("embed: %v", err)
+		}
+		// The stored record is a copy, so a caller reusing its map changes nothing.
+		completion["project"], embedding["project"] = "changed", "changed"
+	}, nexus.WithProvider(&fakeProvider{name: "openai", price: listPrice}))
+	if len(recs) != 2 {
+		t.Fatalf("got %d records, want 2", len(recs))
+	}
+	want := map[string]map[string]string{
+		"completion": {"project": "p1", "run": "r1"},
+		"embedding":  {"project": "p1"},
+	}
+	got := map[string]map[string]string{}
+	for _, r := range recs {
+		if len(r.Metadata) == 2 {
+			got["completion"] = r.Metadata
+		} else {
+			got["embedding"] = r.Metadata
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("record metadata = %v, want %v", got, want)
 	}
 }

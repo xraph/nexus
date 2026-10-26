@@ -74,8 +74,18 @@ type Gateway struct {
 	// routerStrategy is the name of the routing strategy in use.
 	routerStrategy string
 
-	// priceBook prices requests for the usage stage.
+	// priceBook prices requests for the usage stage. New creates it, so it
+	// exists before Initialize.
 	priceBook *model.PriceBook
+
+	// priceOverrides are every override WithPriceOverrides was given.
+	priceOverrides []model.PriceOverride
+
+	// unpricedPolicy decides about requests to models with no price.
+	unpricedPolicy UnpricedPolicy
+
+	// credentials resolves each provider call's credential, nil for none.
+	credentials provider.CredentialProvider
 
 	// usageMW is the usage stage, kept so Shutdown can flush it.
 	usageMW *middlewares.UsageMiddleware
@@ -106,6 +116,11 @@ type Gateway struct {
 	// Custom middleware to add to the pipeline
 	customMiddleware []pipeline.Middleware
 
+	// streamGuards check each streamed chunk; streamGuardStrategy decides
+	// when streamed output reaches the consumer. See WithStreamGuardStrategy.
+	streamGuards        []guard.StreamGuard
+	streamGuardStrategy guard.StreamStrategy
+
 	// Stream lifecycle config — tunes per-chunk hook fan-out for streaming.
 	streamLifecycleCfg middlewares.StreamLifecycleConfig
 
@@ -114,15 +129,21 @@ type Gateway struct {
 	streamCacheCfg cache.StreamCacheOptions
 
 	initialized bool
+
+	// shutDown is set by Shutdown; Initialize refuses to run after it.
+	shutDown bool
 }
 
 // New creates a new Nexus Gateway with the given options.
 func New(opts ...Option) *Gateway {
+	providers := provider.NewRegistry()
 	gw := &Gateway{
 		config:     DefaultConfig(),
-		providers:  provider.NewRegistry(),
+		providers:  providers,
+		priceBook:  model.NewPriceBook(providers),
 		extensions: plugin.NewRegistry(),
 	}
+	gw.engine = newEngine(gw)
 
 	for _, opt := range opts {
 		opt(gw)
@@ -131,10 +152,21 @@ func New(opts ...Option) *Gateway {
 	return gw
 }
 
-// Initialize sets up all services and validates configuration.
+// Initialize sets up all services and validates configuration. A second
+// call on an initialized gateway does nothing. After Shutdown it fails with
+// an error that wraps ErrNotInitialized: a gateway is not restarted, so
+// create a new one.
 func (gw *Gateway) Initialize(_ context.Context) error {
+	if gw.shutDown {
+		return fmt.Errorf("nexus: gateway was shut down and cannot be initialized again: %w", ErrNotInitialized)
+	}
 	if gw.initialized {
 		return nil
+	}
+	// The price book remembers why its latest SetOverrides failed, so a host
+	// that then sets valid prices with PriceBook().SetOverrides can initialize.
+	if err := gw.priceBook.OverridesErr(); err != nil {
+		return fmt.Errorf("nexus: price overrides: %w (fix them, or set valid prices with PriceBook().SetOverrides, before Initialize)", err)
 	}
 
 	// Set defaults for unset services
@@ -182,7 +214,6 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 	if gw.config.EnableCache && gw.cache == nil && gw.streamCache == nil {
 		gw.cache = cache.NewService(stores.NewMemory())
 	}
-	gw.priceBook = model.NewPriceBook(gw.providers)
 	gw.wrapProviderTransports()
 
 	// Initialize model service
@@ -196,9 +227,6 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 		gw.router = router.NewService(s)
 		gw.routerStrategy = s.Name()
 	}
-
-	// Initialize engine
-	gw.engine = newEngine(gw)
 
 	if gw.limiter == nil {
 		gw.limiter = ratelimit.NewMemory()
@@ -214,6 +242,7 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 	}
 
 	gw.initialized = true
+	gw.engine.ready.Store(true)
 	if !gw.config.EnableUsage {
 		gw.logger.Warn("nexus: usage recording is off: the monthly budget will not apply",
 			"enable_usage", false)
@@ -289,6 +318,14 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 		b.Use(middlewares.NewGuardrail(gw.guard))
 	}
 
+	// Priority 155: output guards on streamed responses, when a guard
+	// checks output or a stream guard was registered
+	if hasOutputGuards(gw.guard) || len(gw.streamGuards) > 0 {
+		b.Use(middlewares.NewStreamGuardrail(gw.streamGuards, gw.streamGuardStrategy).
+			WithOutputGuards(gw.guard).
+			WithLogger(gw.logger))
+	}
+
 	// Priority 200: Transforms (if configured)
 	if gw.transforms != nil {
 		b.Use(middlewares.NewTransform(gw.transforms))
@@ -324,11 +361,31 @@ func (gw *Gateway) buildDefaultPipeline() (pipeline.Service, error) {
 	}
 
 	// Priority 350: Core provider call (always present, always last)
-	b.Use(middlewares.NewProviderCall(gw.router, gw.providers).
+	call := middlewares.NewProviderCall(gw.router, gw.providers).
 		WithModelCatalog(gw.priceBook).
-		WithMetrics(gw.metrics))
+		WithMetrics(gw.metrics)
+	if gw.unpricedPolicy != nil {
+		call = call.WithUnpricedPolicy(gw.priceBook, middlewares.UnpricedPolicy(gw.unpricedPolicy))
+	}
+	if gw.credentials != nil {
+		call = call.WithCredentialProvider(gw.credentials)
+	}
+	b.Use(call)
 
 	return b.Build()
+}
+
+// hasOutputGuards reports whether svc has a guard that checks output.
+func hasOutputGuards(svc guard.Service) bool {
+	if svc == nil {
+		return false
+	}
+	for _, g := range svc.List() {
+		if p := g.Phase(); p == guard.PhaseOutput || p == guard.PhaseBoth {
+			return true
+		}
+	}
+	return false
 }
 
 // wrapProviderTransports hands each registered provider that owns an HTTP
@@ -537,7 +594,8 @@ func (gw *Gateway) UsageInsertErrors() int64 {
 	return gw.usageMW.InsertErrors()
 }
 
-// PriceBook returns the price book the usage stage prices requests with.
+// PriceBook returns the price book the usage stage prices requests with. It
+// exists from New, so overrides can be set before Initialize.
 func (gw *Gateway) PriceBook() *model.PriceBook { return gw.priceBook }
 
 // Limiter is the RPM and TPM limiter in use.
@@ -561,8 +619,16 @@ func (gw *Gateway) FlushUsage(ctx context.Context) error {
 	return gw.usageMW.Flush(ctx)
 }
 
-// Health checks the health of the Gateway.
+// Initialized reports whether Initialize has succeeded and Shutdown has not
+// run since. The engine serves requests only while it is true.
+func (gw *Gateway) Initialized() bool { return gw.engine.ready.Load() }
+
+// Health reports whether the gateway serves requests. It returns
+// ErrNotInitialized before Initialize and after Shutdown, as the engine does.
 func (gw *Gateway) Health(_ context.Context) error {
+	if !gw.Initialized() {
+		return ErrNotInitialized
+	}
 	return nil
 }
 
@@ -571,13 +637,23 @@ func (gw *Gateway) Health(_ context.Context) error {
 // records still being stored, then closes the store. When ctx ends first,
 // the records not yet stored are lost: Shutdown logs how many and returns
 // the flush error, joined with any error from closing the store.
+//
+// Shutdown clears [Gateway.Initialized], so the engine refuses new calls with
+// [ErrNotInitialized]. It is safe on a gateway that was never initialized.
+// A gateway is not restarted after Shutdown: Initialize returns an error.
 func (gw *Gateway) Shutdown(ctx context.Context) error {
-	gw.logger.Info("nexus gateway shutting down")
+	gw.shutDown = true
+	gw.engine.ready.Store(false)
+	logger := gw.logger
+	if logger == nil {
+		logger = NewNoopLogger()
+	}
+	logger.Info("nexus gateway shutting down")
 	var flushErr error
 	if gw.usageMW != nil {
 		gw.usageMW.Close()
 		if err := gw.usageMW.Flush(ctx); err != nil {
-			gw.logger.Warn("nexus: usage records not stored at shutdown", "pending", gw.usageMW.Pending(), "error", err)
+			logger.Warn("nexus: usage records not stored at shutdown", "pending", gw.usageMW.Pending(), "error", err)
 			flushErr = fmt.Errorf("nexus: flushing usage records: %w", err)
 		}
 	}

@@ -286,3 +286,26 @@ func TestLegacyKeyExpiryIsNormalisedForTheStatusFilter(t *testing.T) {
 		}
 	}
 }
+
+// A row written before metadata existed reads back with an empty map, and
+// metadata can then be written and filtered on the migrated table.
+func TestUsageMetadataMigrationKeepsOldRows(t *testing.T) {
+	db := storetest.OpenSQLiteDB(t)
+	if _, err := sqlitedriver.Unwrap(db).Exec(context.Background(), legacyUsageSchema); err != nil {
+		t.Fatalf("legacy schema: %v", err)
+	}
+	rowID := id.NewUsageID().String()
+	insertLegacyRow(t, db, rowID, "2026-10-01 10:00:00", 0.5)
+	s := sqlitestore.New(db)
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	got := storetest.FindRecord(t, s, id.MustParseUsageID(rowID))
+	if got.Metadata == nil || len(got.Metadata) != 0 {
+		t.Fatalf("old row metadata = %#v, want an empty, non-nil map", got.Metadata)
+	}
+	res, err := s.Usage().Query(context.Background(), &usage.QueryOptions{Metadata: map[string]string{"project": "p1"}})
+	if err != nil || len(res.Items) != 0 {
+		t.Fatalf("filtering over an old row = %v, %v; want no match", res, err)
+	}
+}

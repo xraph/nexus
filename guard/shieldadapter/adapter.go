@@ -1,5 +1,7 @@
 // Package shieldadapter provides a guardrail adapter that bridges an external
 // Shield content safety engine to the Nexus guard.Guard interface.
+//
+// Deprecated: Shield ships its own guard, github.com/xraph/shield/integrations/nexusguard. This package will be removed in v2.
 package shieldadapter
 
 import (
@@ -24,6 +26,8 @@ type Result struct {
 }
 
 // Adapter bridges Shield to the Nexus guard.Guard interface.
+//
+// Deprecated: Shield ships its own guard, github.com/xraph/shield/integrations/nexusguard. This package will be removed in v2.
 type Adapter struct {
 	engine Engine
 	action guard.Action
@@ -33,6 +37,8 @@ type Adapter struct {
 var _ guard.Guard = (*Adapter)(nil)
 
 // New creates a Shield guard adapter.
+//
+// Deprecated: Shield ships its own guard, github.com/xraph/shield/integrations/nexusguard. This package will be removed in v2.
 func New(engine Engine) *Adapter {
 	return &Adapter{
 		engine: engine,
@@ -41,6 +47,8 @@ func New(engine Engine) *Adapter {
 }
 
 // NewWithAction creates a Shield guard adapter with a specific action.
+//
+// Deprecated: Shield ships its own guard, github.com/xraph/shield/integrations/nexusguard. This package will be removed in v2.
 func NewWithAction(engine Engine, action guard.Action) *Adapter {
 	return &Adapter{
 		engine: engine,

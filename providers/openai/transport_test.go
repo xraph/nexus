@@ -27,8 +27,8 @@ func TestWrapTransportCarriesEveryCall(t *testing.T) {
 
 	ct := &countingTransport{next: http.DefaultTransport}
 	p.WrapTransport(func(rt http.RoundTripper) http.RoundTripper {
-		if rt != nil {
-			t.Errorf("the client starts on the default transport, got %T", rt)
+		if tr, ok := rt.(*http.Transport); !ok || tr.ResponseHeaderTimeout != defaultTimeout {
+			t.Errorf("the client starts on its own transport with the response-header timeout, got %T", rt)
 		}
 		return ct
 	})

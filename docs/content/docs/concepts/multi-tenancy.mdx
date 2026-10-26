@@ -60,8 +60,12 @@ The daily cap is hard. Each request is charged to a UTC-day window in the limite
 The budget is soft, and softer than it looks. A request's cost is only known once it ends and nothing is reserved up front, so every request admitted while the stored spend is under the budget gets served. Sent one at a time, the request that crosses the budget finishes and the next one gets `budget_exceeded`. Sent together, they all pass the check, and the overshoot can reach every request in flight times its cost. Some spend is late or never counted at all:
 
 - a stream is counted when it closes, so a long realtime session is invisible to the budget until it ends;
-- a model with no price records no cost, so a budget never binds a tenant that only uses unpriced models;
+- a model with no price records no cost, so a budget never binds a tenant that only uses unpriced models (set `nexus.WithUnpricedPolicy(nexus.RefuseUnpriced)` to refuse those requests before they reach a provider, see [Pricing](/docs/core/pricing#models-with-no-price));
+- a priced call whose token counts never arrived records an unknown cost, and `RefuseUnpriced` does not prevent it: a stream that fails, or that the client closes, before its usage chunk; a call that fails after the provider has started on it; and a stream a `StreamGuard` blocks mid-stream. A blocked OpenAI-shaped stream has no usage yet. A blocked Anthropic stream has only its input tokens, from `message_start`, so it is priced without the output written before the block;
+- when the retry stage tries again, only the last attempt is recorded, so an earlier attempt the provider charged for adds nothing;
 - a record whose insert failed adds nothing (watch `gw.UsageInsertErrors()`).
+
+Records with an unknown cost are counted in `Unpriced` by `gw.Usage().Series` and in `UnpricedRequests` by the summary. No budget adds them up, so alert when `Unpriced` is above zero.
 
 If the budget has to hold, pair it with `RPM` and `MaxTokensPerReq`. Those two bound how many requests can be in flight and what each one can cost. Cost is read from the usage store, so every replica sees the same total.
 
@@ -127,6 +131,36 @@ A usage record carries the tenant the request was attributed to. Unattributed re
 summary, err := gw.Usage().Summary(ctx, tenantID, "month") // "day", "week" or "month"
 // summary.TotalTokens, summary.TotalCostUSD
 ```
+
+### Attributing spend inside a tenant
+
+When one tenant has several projects, runs or users of its own, put labels on the request's `Metadata`. They're stored on the usage record, and you can filter usage by them:
+
+```go
+resp, err := gw.Engine().Complete(ctx, &provider.CompletionRequest{
+    Model:    "claude-sonnet-4-6",
+    TenantID: tenantID,
+    Metadata: map[string]string{"project": projectID, "run": runID},
+    Messages: msgs,
+})
+
+points, err := gw.Usage().Series(ctx, &usage.SeriesOptions{
+    TenantID: tenantID,
+    Start:    monthStart,
+    End:      time.Now(),
+    Bucket:   usage.BucketDay,
+    Metadata: map[string]string{"project": projectID},
+})
+// sum points[i].CostUSD, and read points[i].Unpriced for requests with no known cost
+```
+
+`EmbeddingRequest.Metadata` works the same way, and `usage.QueryOptions.Metadata` filters single records. A filter matches records that carry every pair you give it. The key names are up to you. The gateway refuses a request with invalid metadata (400 `invalid_request`) before any provider call: at most `usage.MaxMetadataPairs` (16) pairs, keys of 1 to 64 letters, digits, `_` or `-`, and values up to `usage.MaxMetadataValueBytes` (256) bytes. `usage.ValidateMetadata` runs the same check, so you can check labels before you send them.
+
+Metadata is for in-process requests: the field isn't read from an HTTP request body. Each store indexes it, see [PostgreSQL](/docs/stores/postgres#usage-metadata).
+
+## Per-tenant provider keys
+
+A tenant can bring its own provider key, and for an OpenAI-compatible server its own base URL. The gateway asks your credential provider for it on each call, and falls back to the configured key when the tenant has none. See [Tenant Credentials](/docs/core/credentials).
 
 ## Budget events
 

@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -354,9 +356,11 @@ type usageStore struct {
 }
 
 func (s *usageStore) Insert(ctx context.Context, rec *usage.Record) error {
-	m := usageToModel(rec)
-	_, err := s.sdb.NewInsert(m).Exec(ctx)
+	m, err := usageToModel(rec)
 	if err != nil {
+		return fmt.Errorf("nexus/sqlite: insert usage: %w", err)
+	}
+	if _, err = s.sdb.NewInsert(m).Exec(ctx); err != nil {
 		return fmt.Errorf("nexus/sqlite: insert usage: %w", err)
 	}
 	return nil
@@ -452,10 +456,17 @@ func (s *usageStore) Series(ctx context.Context, opts *usage.SeriesOptions) ([]u
 	if _, err := usage.FillSeries(opts, nil); err != nil {
 		return nil, err
 	}
-	rows, err := s.sdb.Query(ctx,
-		`SELECT created_at, total_tokens, cost_usd, pricing_status FROM usage_records
-		  WHERE (? = '' OR tenant_id = ?) AND created_at >= ? AND created_at < ?`,
-		opts.TenantID, opts.TenantID, conv.TimeText(usage.BucketStart(opts.Start, opts.Bucket)), conv.TimeText(opts.End))
+	if err := usage.ValidateMetadata(opts.Metadata); err != nil {
+		return nil, err
+	}
+	query := `SELECT created_at, total_tokens, cost_usd, pricing_status FROM usage_records
+		  WHERE (? = '' OR tenant_id = ?) AND created_at >= ? AND created_at < ?`
+	args := []any{opts.TenantID, opts.TenantID, conv.TimeText(usage.BucketStart(opts.Start, opts.Bucket)), conv.TimeText(opts.End)}
+	for _, k := range slices.Sorted(maps.Keys(opts.Metadata)) {
+		query += ` AND json_extract(metadata, ?) = ?`
+		args = append(args, metadataPath(k), opts.Metadata[k])
+	}
+	rows, err := s.sdb.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("nexus/sqlite: series: %w", err)
 	}
@@ -496,6 +507,9 @@ func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) (*usag
 	if err := paging.CheckCursor(opts.Cursor, id.PrefixUsage); err != nil {
 		return nil, err
 	}
+	if err := usage.ValidateMetadata(opts.Metadata); err != nil {
+		return nil, err
+	}
 	limit := paging.Limit(opts.Limit)
 	var models []usageModel
 	q := s.sdb.NewSelect(&models).OrderExpr("id DESC").Limit(limit + 1)
@@ -506,6 +520,9 @@ func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) (*usag
 		if v != "" {
 			q = q.Where(col+" = ?", v)
 		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(opts.Metadata)) {
+		q = q.Where("json_extract(metadata, ?) = ?", metadataPath(k), opts.Metadata[k])
 	}
 	if !opts.StartTime.IsZero() {
 		q = q.Where("created_at >= ?", conv.TimeText(opts.StartTime))
@@ -530,3 +547,8 @@ func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) (*usag
 	page, next := paging.Trim(rows, limit, func(r *usage.Record) string { return r.ID.String() })
 	return &usage.QueryResult{Items: page, NextCursor: next}, nil
 }
+
+// metadataPath is the JSON path of a metadata key. The key was validated to
+// letters, digits, underscore and hyphen, so quoting it is enough; it is
+// still passed as a parameter, never spliced into the statement.
+func metadataPath(name string) string { return `$."` + name + `"` }

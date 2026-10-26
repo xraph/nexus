@@ -19,7 +19,7 @@ type CompletionRequest struct {
 
 	// Tool calling
 	Tools      []Tool `json:"tools,omitempty"`
-	ToolChoice any    `json:"tool_choice,omitempty"`
+	ToolChoice any    `json:"tool_choice,omitempty"` // honoured by anthropic, openai (and providers built on it) and azureopenai; others drop it
 
 	// Structured output
 	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
@@ -38,6 +38,10 @@ type ThinkingConfig struct {
 	Enabled         bool `json:"enabled,omitempty"`
 	BudgetTokens    int  `json:"budget_tokens,omitempty"`
 	IncludeThinking bool `json:"include_thinking,omitempty"`
+	// Effort steers how much the model thinks and spends: "low", "medium",
+	// "high", "xhigh" or "max". Empty keeps the model's default. A provider
+	// that knows the model rejects a level the model does not accept.
+	Effort string `json:"effort,omitempty"`
 }
 
 // Message represents a conversation message.
@@ -47,6 +51,10 @@ type Message struct {
 	Name       string     `json:"name,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
+
+	// Native is the assistant reply in the provider's own format. Keep it
+	// with the message and pass it back unchanged; see NativeContent.
+	Native *NativeContent `json:"-"`
 }
 
 // ContentPart for multimodal messages.
@@ -114,7 +122,16 @@ type JSONSchemaDef struct {
 // EmbeddingRequest for text embeddings.
 type EmbeddingRequest struct {
 	Model    string   `json:"model"`
+	Provider string   `json:"provider,omitempty"` // force specific provider
 	Input    []string `json:"input"`
-	TenantID string   `json:"-"`
-	KeyID    string   `json:"-"`
+	// Dimensions asks for vectors of exactly this many numbers; 0 keeps the
+	// model's default. The gateway refuses it for a provider that cannot
+	// honour it (see DimensionsAware) and fails a response whose vectors
+	// have another length.
+	Dimensions int    `json:"dimensions,omitempty"`
+	TenantID   string `json:"-"`
+	KeyID      string `json:"-"`
+	// Metadata is stored on the usage record, where it can be filtered by
+	// (see usage.ValidateMetadata for the limits).
+	Metadata map[string]string `json:"-"`
 }

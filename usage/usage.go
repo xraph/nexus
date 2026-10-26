@@ -33,6 +33,9 @@ type Record struct {
 	Cached        bool          `json:"cached"`
 	StatusCode    int           `json:"status_code"`
 	CreatedAt     time.Time     `json:"created_at"`
+	// Metadata is the caller's labels for the request (for example the
+	// project and run it belongs to). See ValidateMetadata for the limits.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // Summary aggregates usage over a period.
@@ -83,6 +86,9 @@ type QueryOptions struct {
 	EndTime   time.Time `json:"end_time,omitzero"`
 	Limit     int       `json:"limit,omitempty"`
 	Cursor    string    `json:"cursor,omitempty"`
+	// Metadata keeps records whose metadata holds every pair given, with an
+	// exactly equal value. An empty map filters nothing.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // QueryResult is one page of records. NextCursor is "" on the last page.

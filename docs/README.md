@@ -1,6 +1,6 @@
-# Sentinel Documentation
+# Nexus Documentation
 
-Documentation site for [Sentinel](https://github.com/xraph/sentinel) — a composable AI evaluation and testing framework for Go.
+Documentation site for [Nexus](https://github.com/xraph/nexus), an AI gateway and LLM proxy library for Go.
 
 Built with [Fumadocs](https://fumadocs.dev) and Next.js.
 

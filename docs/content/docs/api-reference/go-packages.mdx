@@ -38,7 +38,7 @@ The root module is `github.com/xraph/nexus`. Each provider, `config` and `grpcsr
 |---------|--------|-------------|
 | guard | `github.com/xraph/nexus/guard` | Guardrail interface, service, stream guard pieces |
 | guards | `github.com/xraph/nexus/guard/guards` | PII, injection, content filter and regex guards |
-| shieldadapter | `github.com/xraph/nexus/guard/shieldadapter` | Wraps any `shieldadapter.Engine` (a Shield-style content safety check) as a `guard.Guard` |
+| shieldadapter | `github.com/xraph/nexus/guard/shieldadapter` | Deprecated: use Shield's own guard, `github.com/xraph/shield/integrations/nexusguard`. Removed in v2 |
 | cache | `github.com/xraph/nexus/cache` | Cache interface, keys, semantic wrapper, stream cache |
 | stores | `github.com/xraph/nexus/cache/stores` | Memory and Redis caches and stream caches |
 | transform | `github.com/xraph/nexus/transform` | Input and output transforms |

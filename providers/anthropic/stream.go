@@ -18,14 +18,25 @@ type anthropicStream struct {
 	usage   *provider.Usage
 	done    bool
 	msgID   string
-	// inputTokens captured from message_start.
-	inputTokens int
+	// wireUsage merges the usage objects of message_start and message_delta:
+	// each event reports only some fields, and a later value replaces an
+	// earlier one.
+	wireUsage anthropicUsage
 
 	// toolBlocks maps Anthropic content-block indexes to in-flight tool
 	// metadata (id + name). content_block_start fires first, then a stream
 	// of input_json_delta chunks under the same index — we need the id+name
 	// to attach to each delta we emit.
 	toolBlocks map[int]toolBlockState
+
+	// blocks rebuilds the reply's content blocks by index for the native
+	// content sent on message_stop. replyModel is the model message_start
+	// named.
+	blocks     map[int]*nativeBlock
+	replyModel string
+	// nativeLost is set when a delta could not be folded into its block, so
+	// the rebuilt content would differ from the reply and is not sent.
+	nativeLost bool
 
 	stopAfterFunc func() bool
 }
@@ -41,6 +52,7 @@ func newAnthropicStream(ctx context.Context, body io.ReadCloser, model string) *
 		scanner:    bufio.NewScanner(body),
 		model:      model,
 		toolBlocks: make(map[int]toolBlockState),
+		blocks:     make(map[int]*nativeBlock),
 	}
 	if ctx != nil {
 		s.stopAfterFunc = context.AfterFunc(ctx, func() {
@@ -73,8 +85,7 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 		if strings.HasPrefix(line, "event: ") {
 			evt := strings.TrimPrefix(line, "event: ")
 			if evt == "message_stop" {
-				s.done = true
-				return nil, io.EOF
+				return s.stop()
 			}
 			continue
 		}
@@ -95,13 +106,16 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 		switch eventType {
 		case "message_start":
 			if msg, ok := raw["message"].(map[string]any); ok {
-				s.msgID, _ = msg["id"].(string) //nolint:errcheck // zero value is fine
-				if u, ok := msg["usage"].(map[string]any); ok {
-					if f, ok := u["input_tokens"].(float64); ok {
-						s.inputTokens = int(f)
-						s.usage = &provider.Usage{PromptTokens: s.inputTokens}
-					}
-				}
+				s.msgID, _ = msg["id"].(string)         //nolint:errcheck // zero value is fine
+				s.replyModel, _ = msg["model"].(string) //nolint:errcheck // zero value is fine
+			}
+			var ev struct {
+				Message struct {
+					Usage json.RawMessage `json:"usage"`
+				} `json:"message"`
+			}
+			if err := json.Unmarshal([]byte(data), &ev); err == nil {
+				s.mergeUsage(ev.Message.Usage)
 			}
 			return &provider.StreamChunk{
 				ID:       s.msgID,
@@ -115,6 +129,7 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 			continue
 
 		case "content_block_start":
+			s.startBlock(data)
 			// Capture tool_use metadata for subsequent input_json_delta chunks.
 			idx := indexOf(raw)
 			if block, ok := raw["content_block"].(map[string]any); ok {
@@ -131,6 +146,7 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 			continue
 
 		case "content_block_delta":
+			s.applyDelta(data)
 			delta, _ := raw["delta"].(map[string]any) //nolint:errcheck // zero value is fine
 			if delta == nil {
 				continue
@@ -208,20 +224,12 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 			}
 
 		case "message_delta":
-			// Final delta with stop_reason and usage.
-			if u, ok := raw["usage"].(map[string]any); ok {
-				out, _ := u["output_tokens"].(float64) //nolint:errcheck // zero value is fine
-				outputTokens := int(out)
-				promptTokens := s.inputTokens
-				if in, ok := u["input_tokens"].(float64); ok {
-					promptTokens = int(in)
-				}
-				total := promptTokens + outputTokens
-				s.usage = &provider.Usage{
-					PromptTokens:     promptTokens,
-					CompletionTokens: outputTokens,
-					TotalTokens:      total,
-				}
+			// Final delta with stop_reason and the cumulative usage.
+			var ev struct {
+				Usage json.RawMessage `json:"usage"`
+			}
+			if err := json.Unmarshal([]byte(data), &ev); err == nil {
+				s.mergeUsage(ev.Usage)
 			}
 			stopReason, _ := raw["stop_reason"].(string) //nolint:errcheck // zero value is fine
 			if stopReason == "" {
@@ -234,7 +242,11 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 				Provider:     "anthropic",
 				Model:        s.model,
 				FinishReason: mapStopReason(stopReason),
+				Usage:        s.usage,
 			}, nil
+
+		case "message_stop":
+			return s.stop()
 		}
 	}
 
@@ -244,6 +256,62 @@ func (s *anthropicStream) Next(ctx context.Context) (*provider.StreamChunk, erro
 
 	s.done = true
 	return nil, io.EOF
+}
+
+// stop ends the stream at message_stop. A reply with content blocks, all of
+// them rebuilt in full, ends with one EventMessageStop chunk carrying them as
+// Delta.Native; the next call returns io.EOF.
+func (s *anthropicStream) stop() (*provider.StreamChunk, error) {
+	s.done = true
+	if s.nativeLost {
+		return nil, io.EOF
+	}
+	model := s.replyModel
+	if model == "" {
+		model = s.model
+	}
+	native := newNative(model, nativeContent(s.blocks))
+	if native == nil {
+		return nil, io.EOF
+	}
+	return &provider.StreamChunk{
+		ID:       s.msgID,
+		Provider: "anthropic",
+		Model:    s.model,
+		Kind:     provider.EventMessageStop,
+		Delta:    provider.Delta{Native: native},
+	}, nil
+}
+
+// startBlock records a content_block_start event's block.
+func (s *anthropicStream) startBlock(data string) {
+	var ev struct {
+		Index        int             `json:"index"`
+		ContentBlock json.RawMessage `json:"content_block"`
+	}
+	if err := json.Unmarshal([]byte(data), &ev); err != nil || len(ev.ContentBlock) == 0 {
+		return
+	}
+	s.blocks[ev.Index] = newNativeBlock(ev.ContentBlock)
+}
+
+// applyDelta folds a content_block_delta event into its block. A delta of an
+// unknown type, for a block that never started, or that does not decode
+// loses content, so the reply then ends without native content and the turn
+// is rebuilt from its fields on replay.
+func (s *anthropicStream) applyDelta(data string) {
+	var ev struct {
+		Index int         `json:"index"`
+		Delta nativeDelta `json:"delta"`
+	}
+	if err := json.Unmarshal([]byte(data), &ev); err != nil {
+		s.nativeLost = true
+		return
+	}
+	b, ok := s.blocks[ev.Index]
+	if !ok || !b.apply(&ev.Delta) {
+		s.nativeLost = true
+	}
 }
 
 func (s *anthropicStream) Close() error {
@@ -256,6 +324,22 @@ func (s *anthropicStream) Close() error {
 
 func (s *anthropicStream) Usage() *provider.Usage {
 	return s.usage
+}
+
+// mergeUsage folds one event's usage object into the running usage. Fields
+// the event leaves out keep their earlier values. An absent or malformed
+// object changes nothing.
+func (s *anthropicStream) mergeUsage(raw json.RawMessage) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return
+	}
+	merged := s.wireUsage
+	if err := json.Unmarshal(raw, &merged); err != nil {
+		return
+	}
+	s.wireUsage = merged
+	u := merged.toProvider()
+	s.usage = &u
 }
 
 // indexOf reads the top-level `index` field from an Anthropic SSE event.

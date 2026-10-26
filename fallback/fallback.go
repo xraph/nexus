@@ -1,4 +1,10 @@
 // Package fallback defines the resilience and fallback subsystem.
+//
+// The service calls providers directly, outside the gateway pipeline, so it
+// bypasses credential resolution (nexus.WithCredentialProvider): every call
+// it makes uses each provider's configured key and base URL, whatever tenant
+// the request belongs to. Route tenant traffic through the gateway's Engine
+// instead.
 package fallback
 
 import (

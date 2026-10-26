@@ -34,6 +34,9 @@ type SeriesOptions struct {
 	Start    time.Time `json:"start"`
 	End      time.Time `json:"end"`
 	Bucket   Bucket    `json:"bucket"`
+	// Metadata keeps records whose metadata holds every pair given, with an
+	// exactly equal value. An empty map filters nothing.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // SeriesPoint is usage within one bucket. CostUSD sums priced requests;

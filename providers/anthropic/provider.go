@@ -4,32 +4,64 @@ package anthropic
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/xraph/nexus/provider"
 )
 
+// Anthropic API versions, sent as the anthropic-version header.
+const (
+	// APIVersion20230601 is the default version.
+	APIVersion20230601 = "2023-06-01"
+	// APIVersion20261021 rejects temperature, top_p and top_k on every
+	// model, so the provider drops them from every request.
+	APIVersion20261021 = "2026-10-21"
+)
+
+// defaultTimeout bounds the wait for response headers, matching the
+// Anthropic SDKs' default request timeout.
+const defaultTimeout = 10 * time.Minute
+
 // Provider implements the Nexus provider interface for Anthropic.
 type Provider struct {
-	apiKey  string
-	baseURL string
-	client  *client
+	apiKey     string
+	baseURL    string
+	apiVersion string
+	timeout    time.Duration
+	// blockBinding is the thinking block_binding prefix_mismatch_behavior,
+	// or "" to send none.
+	blockBinding string
+	// cache is the prompt caching setup; nil sends no cache_control.
+	cache  *CacheConfig
+	client *client
 }
 
-// New creates a new Anthropic provider.
+// New creates a new Anthropic provider. apiKey may be "" when every request
+// brings a tenant credential: a request whose context carries a
+// provider.Credential is sent with that credential's key and, when it sets
+// one, base URL instead of the configured ones.
 func New(apiKey string, opts ...Option) *Provider {
 	p := &Provider{
-		apiKey:  apiKey,
-		baseURL: "https://api.anthropic.com",
+		apiKey:     apiKey,
+		baseURL:    "https://api.anthropic.com",
+		apiVersion: APIVersion20230601,
+		timeout:    defaultTimeout,
 	}
 	for _, opt := range opts {
 		opt(p)
 	}
-	p.client = newClient(p.apiKey, p.baseURL)
+	p.client = newClient(p.apiKey, p.baseURL, p.apiVersion, p.timeout)
+	p.client.blockBinding = p.blockBinding
+	p.client.cache = p.cache
 	return p
 }
 
 // Name returns the provider identifier.
 func (p *Provider) Name() string { return "anthropic" }
+
+// AcceptsCredentials reports that the provider applies a per-request
+// provider.Credential (provider.CredentialAware).
+func (p *Provider) AcceptsCredentials() bool { return true }
 
 // Capabilities returns what this provider supports.
 func (p *Provider) Capabilities() provider.Capabilities {
@@ -80,8 +112,48 @@ func WithBaseURL(url string) Option {
 	return func(p *Provider) { p.baseURL = url }
 }
 
-// Compile-time check.
-var _ provider.Provider = (*Provider)(nil)
+// WithAPIVersion sets the anthropic-version header. The default is
+// APIVersion20230601.
+func WithAPIVersion(v string) Option {
+	return func(p *Provider) {
+		if v != "" {
+			p.apiVersion = v
+		}
+	}
+}
+
+// WithTimeout bounds how long a request waits for response headers. The
+// default is 10 minutes; a zero or negative d keeps it. Once headers arrive
+// a stream is not cut by it, however long it runs: bound the whole call with
+// the request context instead.
+func WithTimeout(d time.Duration) Option {
+	return func(p *Provider) {
+		if d > 0 {
+			p.timeout = d
+		}
+	}
+}
+
+// WithThinkingBlockBinding sets what the API does when a request's history
+// no longer matches the thinking blocks it signed: "drop_block" drops the
+// mismatched blocks, "error" fails the request. It adds the
+// thinking-binding-controls beta header and the thinking block_binding field
+// to requests whose thinking is adaptive, the only kind the API accepts it
+// on. Any other mode is ignored and the provider keeps its default, which
+// sends neither.
+func WithThinkingBlockBinding(mode string) Option {
+	return func(p *Provider) {
+		if mode == "drop_block" || mode == "error" {
+			p.blockBinding = mode
+		}
+	}
+}
+
+// Compile-time checks.
+var (
+	_ provider.Provider        = (*Provider)(nil)
+	_ provider.CredentialAware = (*Provider)(nil)
+)
 
 // WrapTransport wraps the transport of the HTTP client the provider sends its
 // requests through (provider.TransportWrapper). Nexus calls it once, from

@@ -21,7 +21,7 @@ type Provider interface {
 }
 ```
 
-`Models` returns a built-in catalog for each provider (IDs, context window, max output and list prices). The gateway prices usage from it. It isn't a live list from the provider's API, and a model that isn't in the catalog still gets sent through, it just records an unknown cost.
+`Models` returns a built-in catalog for each provider (IDs, context window, max output and list prices). The gateway prices usage from it and routes a request to the provider that lists its model. It isn't a live list from the provider's API. A model that isn't in any catalog still gets sent through, and it records an unknown cost unless you price it with [`WithPriceOverrides`](/docs/core/pricing#overriding-prices) or refuse it with an [unpriced policy](/docs/core/pricing#models-with-no-price). The `bedrock` catalog is out of date in this release, see [Amazon Bedrock](/docs/providers/bedrock#models).
 
 ## Built-in Providers
 
@@ -118,7 +118,7 @@ caps.Thinking   // extended thinking or reasoning
 caps.JSON       // structured JSON output
 ```
 
-The struct also carries `Images`, `Audio`, `Batch` and streaming-specific flags (`StreamingReasoning`, `StreamingTools`, `StreamingAudio`, `StreamingCitations`, `RealtimeAudio`). Embedding requests go to the first registered provider whose `Embeddings` flag is set.
+The struct also carries `Images`, `Audio`, `Batch` and streaming-specific flags (`StreamingReasoning`, `StreamingTools`, `StreamingAudio`, `StreamingCitations`, `RealtimeAudio`). An embedding request can only go to a provider whose `Embeddings` flag is set. See [Routing](/docs/core/routing#embeddings).
 
 ## Provider Health
 

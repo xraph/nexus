@@ -350,9 +350,11 @@ type usageStore struct {
 }
 
 func (s *usageStore) Insert(ctx context.Context, rec *usage.Record) error {
-	m := usageToModel(rec)
-	_, err := s.pgdb.NewInsert(m).Exec(ctx)
+	m, err := usageToModel(rec)
 	if err != nil {
+		return fmt.Errorf("nexus/postgres: insert usage: %w", err)
+	}
+	if _, err = s.pgdb.NewInsert(m).Exec(ctx); err != nil {
 		return fmt.Errorf("nexus/postgres: insert usage: %w", err)
 	}
 	return nil
@@ -445,13 +447,18 @@ func (s *usageStore) Series(ctx context.Context, opts *usage.SeriesOptions) ([]u
 	if _, err := usage.FillSeries(opts, nil); err != nil {
 		return nil, err
 	}
+	filter, err := metadataFilter(opts.Metadata)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.pgdb.Query(ctx,
 		`SELECT date_trunc($2, created_at, 'UTC'), COUNT(*), COALESCE(SUM(total_tokens), 0)::bigint,
 		        SUM(cost_usd), COUNT(*) FILTER (WHERE pricing_status IN ('unpriced_model', 'unknown'))
 		   FROM nexus_usage_records
 		  WHERE ($1 = '' OR tenant_id = $1) AND created_at >= $3 AND created_at < $4
+		    AND metadata @> $5::jsonb
 		  GROUP BY 1`,
-		opts.TenantID, string(opts.Bucket), usage.BucketStart(opts.Start, opts.Bucket), opts.End.UTC())
+		opts.TenantID, string(opts.Bucket), usage.BucketStart(opts.Start, opts.Bucket), opts.End.UTC(), filter)
 	if err != nil {
 		return nil, fmt.Errorf("nexus/postgres: series: %w", err)
 	}
@@ -487,6 +494,9 @@ func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) (*usag
 	if err := paging.CheckCursor(opts.Cursor, id.PrefixUsage); err != nil {
 		return nil, err
 	}
+	if err := usage.ValidateMetadata(opts.Metadata); err != nil {
+		return nil, err
+	}
 	limit := paging.Limit(opts.Limit)
 	var models []usageModel
 	q := s.pgdb.NewSelect(&models).OrderExpr(`id COLLATE "C" DESC`).Limit(limit + 1)
@@ -497,6 +507,13 @@ func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) (*usag
 		if v != "" {
 			q = q.Where(col+" = ?", v)
 		}
+	}
+	if len(opts.Metadata) > 0 {
+		filter, err := metadataFilter(opts.Metadata)
+		if err != nil {
+			return nil, err
+		}
+		q = q.Where("metadata @> ?::jsonb", filter)
 	}
 	if !opts.StartTime.IsZero() {
 		q = q.Where("created_at >= ?", opts.StartTime.UTC())
@@ -520,4 +537,14 @@ func (s *usageStore) Query(ctx context.Context, opts *usage.QueryOptions) (*usag
 	}
 	page, next := paging.Trim(rows, limit, func(r *usage.Record) string { return r.ID.String() })
 	return &usage.QueryResult{Items: page, NextCursor: next}, nil
+}
+
+// metadataFilter validates a metadata filter and returns it as the JSON
+// object the containment operator (@>) takes. An empty filter is {}, which
+// every row contains.
+func metadataFilter(m map[string]string) (string, error) {
+	if err := usage.ValidateMetadata(m); err != nil {
+		return "", err
+	}
+	return conv.MetadataJSON(m)
 }

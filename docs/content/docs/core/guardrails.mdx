@@ -3,7 +3,7 @@ title: Guardrails
 description: Check prompts and responses for PII, prompt injection, blocked words and your own regex rules.
 ---
 
-Guardrails inspect, and can rewrite, a request's messages before they reach a provider, and a completed response's messages before they reach the client. Add them with `nexus.WithGuard`, one call per guard. They run in the order you add them.
+Guardrails inspect, and can rewrite, a request's messages before they reach a provider, and a response's messages, streamed or not, before they reach the client. Add them with `nexus.WithGuard`, one call per guard. They run in the order you add them.
 
 ```go
 import (
@@ -28,7 +28,7 @@ type Guard interface {
 }
 ```
 
-`CheckInput` carries the `Messages`, the `TenantID` and a `Metadata` map. `CheckResult` says whether the content is `Blocked`, which `Action` applies, a `Reason`, and, when `Modified` is true, the rewritten `Messages`.
+`CheckInput` carries the `Messages`, the `TenantID` and a copy of the request's `Metadata`, so a guard can read it but can't change the request. `CheckResult` says whether the content is `Blocked`, which `Action` applies, a `Reason`, and, when `Modified` is true, the rewritten `Messages`.
 
 ## Built-in Guards
 
@@ -85,6 +85,20 @@ An output-phase block happens after the provider has answered and charged for it
 
 ## Streaming
 
-For a streamed request the input guards run as usual. Output guards don't run on a stream: the guardrail stage only checks complete, non-streamed responses.
+Output guards check streamed replies too. You don't have to wire anything: when any guard runs on output, the gateway adds the stream guardrail stage at priority 155, and by default it holds the reply back until the guards have passed it. You pick another strategy with `nexus.WithStreamGuardStrategy`.
 
-The `guard` package has the pieces for stream checks, a `StreamGuard` interface (a `Guard` plus `CheckChunk`) and `guard.NewGuardedStream(stream, streamGuards, strategy)` with `guard.StrategyBuffer`, `guard.StrategyPassthrough` and `guard.StrategyChunkwise`. None of the built-in guards implements `StreamGuard`, and the gateway doesn't add the stream guardrail stage (`middlewares.NewStreamGuardrail`) on its own. To use it, write a `StreamGuard` and add the stage with `nexus.WithMiddleware`.
+| Strategy | What the client gets |
+|----------|----------|
+| `guard.StrategyBuffer` (default) | Nothing until the reply has ended and passed. A block ends the stream with `*guard.BlockedError` before any chunk goes out. A redaction takes effect: the client gets a rebuilt stream with the rewritten text, the tool calls, the finish reason and the usage. The rebuilt stream has no reasoning, citations, audio or images, even where the original had them |
+| `guard.StrategyPassthrough` | Chunks as the provider sends them. The guards run when the provider ends the stream, and a block replaces `io.EOF` with `*guard.BlockedError`. Text that already went out can't be redacted, so the stream ends normally and the gateway logs a warning |
+| `guard.StrategyChunkwise` | Each chunk once your stream guards have passed it, then the same check at the end as passthrough |
+
+Pick passthrough for token-by-token chat, where a reply held back until it ends feels broken and your guards only block (a blocklist, say). The client sees text before the verdict, so a block can only stop the rest of the reply and tell the client. If you act on tool calls, run them only after the stream ends without an error, since a blocked reply never ends with `io.EOF`. When a redacting guard has to take effect, or when the client must never see blocked text, stay on buffer.
+
+The gateway decides whether to add the stream stage when `Initialize` runs, from the guards registered by then. An output guard you add later through `gw.Guard().Register` checks non-streamed replies but never reaches a stream, unless another output guard or a `WithStreamGuard` already put the stage in. Register your guards with `WithGuard` before `Initialize`.
+
+If you build the stage yourself with `middlewares.NewStreamGuardrail(guards, strategy)`, an empty strategy means buffer. Don't also add it with `WithMiddleware` on a gateway that adds its own, or every stream gets checked twice.
+
+A `StreamGuard` is a `Guard` with a `CheckChunk` method, and you add one with `nexus.WithStreamGuard`. It checks every chunk under buffer and chunkwise. Passthrough doesn't run it, and none of the built-in guards implement it.
+
+Whatever the strategy, a reply a guard blocked or rewrote never carries its native content (the provider's own copy of the reply, with the original text and thinking).

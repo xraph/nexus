@@ -6,6 +6,7 @@ package opencompat
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/providers/openai"
@@ -13,27 +14,44 @@ import (
 
 // Provider wraps the OpenAI provider with a custom name and base URL.
 type Provider struct {
-	name   string
-	inner  *openai.Provider
-	caps   provider.Capabilities
-	models []provider.Model
+	name      string
+	inner     *openai.Provider
+	innerOpts []openai.Option
+	caps      provider.Capabilities
+	models    []provider.Model
 }
 
-// New creates a generic OpenAI-compatible provider.
+// New creates a generic OpenAI-compatible provider. baseURL and apiKey may
+// be "" when every request brings a tenant provider.Credential: a request
+// whose context carries one is sent with its key and, when it sets one,
+// base URL. A request with no base URL from either fails with
+// provider.ErrMissingBaseURL before any network call.
+//
+// The default capabilities are chat, streaming, tools (streamed too), JSON
+// output and embeddings, which most OpenAI-compatible servers support;
+// WithCapabilities replaces them.
 func New(name, baseURL, apiKey string, opts ...Option) *Provider {
 	p := &Provider{
-		name:  name,
-		inner: openai.New(apiKey, openai.WithBaseURL(baseURL)),
+		name: name,
 		caps: provider.Capabilities{
-			Chat:      true,
-			Streaming: true,
+			Chat:           true,
+			Streaming:      true,
+			Embeddings:     true,
+			Tools:          true,
+			JSON:           true,
+			StreamingTools: true,
 		},
 	}
 	for _, opt := range opts {
 		opt(p)
 	}
+	p.inner = openai.New(apiKey, append([]openai.Option{openai.WithBaseURL(baseURL)}, p.innerOpts...)...)
 	return p
 }
+
+// AcceptsCredentials reports that the provider applies a per-request
+// provider.Credential (provider.CredentialAware).
+func (p *Provider) AcceptsCredentials() bool { return true }
 
 // Name returns the provider identifier.
 func (p *Provider) Name() string { return p.name }
@@ -71,6 +89,11 @@ func (p *Provider) Embed(ctx context.Context, req *provider.EmbeddingRequest) (*
 	return resp, nil
 }
 
+// SupportsDimensions reports true for every model: the request's
+// dimensions go to the endpoint as they are, and the gateway fails a
+// response whose vectors have another length (provider.DimensionsAware).
+func (p *Provider) SupportsDimensions(string) bool { return true }
+
 // Healthy returns true if the provider is reachable.
 func (p *Provider) Healthy(ctx context.Context) bool {
 	return p.inner.Healthy(ctx)
@@ -84,13 +107,31 @@ func WithCapabilities(caps provider.Capabilities) Option {
 	return func(p *Provider) { p.caps = caps }
 }
 
+// WithTimeout bounds how long a request waits for response headers. The
+// default is 10 minutes; a zero or negative d keeps it. Once headers arrive
+// a stream is not cut by it: bound the whole call with the request context.
+func WithTimeout(d time.Duration) Option {
+	return func(p *Provider) { p.innerOpts = append(p.innerOpts, openai.WithTimeout(d)) }
+}
+
+// WithMaxCompletionTokens sends the output cap as max_completion_tokens
+// instead of max_tokens, for a server that wants the newer field. Off by
+// default, since most OpenAI-compatible servers expect max_tokens.
+func WithMaxCompletionTokens(on bool) Option {
+	return func(p *Provider) { p.innerOpts = append(p.innerOpts, openai.WithMaxCompletionTokens(on)) }
+}
+
 // WithModels sets the model list.
 func WithModels(models []provider.Model) Option {
 	return func(p *Provider) { p.models = models }
 }
 
-// Compile-time check.
-var _ provider.Provider = (*Provider)(nil)
+// Compile-time checks.
+var (
+	_ provider.Provider        = (*Provider)(nil)
+	_ provider.CredentialAware = (*Provider)(nil)
+	_ provider.DimensionsAware = (*Provider)(nil)
+)
 
 // WrapTransport wraps the transport of the HTTP client the provider sends its
 // requests through (provider.TransportWrapper). Nexus calls it once, from

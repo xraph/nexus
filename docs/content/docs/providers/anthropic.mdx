@@ -1,9 +1,9 @@
 ---
 title: Anthropic
-description: Use Anthropic Claude models with Nexus — vision, tools, and extended thinking.
+description: Use Anthropic Claude models with Nexus, with thinking, effort, tool choice, prompt caching and per-tenant keys.
 ---
 
-The Anthropic provider connects to the Anthropic Messages API for chat completions, streaming, vision, tool calling, and extended thinking.
+The Anthropic provider talks to the Anthropic Messages API. It handles chat, streaming, vision, tool calling and thinking, and it shapes each request to what the model accepts, so you can send the same `CompletionRequest` to any Claude model.
 
 ## Installation
 
@@ -11,38 +11,160 @@ The Anthropic provider connects to the Anthropic Messages API for chat completio
 import "github.com/xraph/nexus/providers/anthropic"
 ```
 
-## Quick Start
+## Quick start
 
 ```go
-provider := anthropic.New(os.Getenv("ANTHROPIC_API_KEY"))
-
 gw := nexus.New(
-    nexus.WithProvider(provider),
+    nexus.WithProvider(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"))),
 )
 ```
 
+`New("")` is fine when every request brings a [tenant credential](/docs/core/credentials). A request with no key from either place fails with `provider.ErrMissingAPIKey` before anything is sent.
+
 ## Options
 
-| Option | Description |
-|--------|-------------|
-| `anthropic.WithBaseURL(url)` | Override the API base URL (default: `https://api.anthropic.com`) |
-
-## Capabilities
-
-| Capability | Supported |
-|-----------|-----------|
-| Chat | Yes |
-| Streaming | Yes |
-| Embeddings | No |
-| Vision | Yes |
-| Tools | Yes |
-| Thinking | Yes |
+| Option | What it does |
+|--------|--------------|
+| `anthropic.WithBaseURL(url)` | Sends requests to another base URL (default `https://api.anthropic.com`) |
+| `anthropic.WithAPIVersion(v)` | Sets the `anthropic-version` header. The default is `anthropic.APIVersion20230601` |
+| `anthropic.WithTimeout(d)` | How long a request waits for response headers. Default 10 minutes |
+| `anthropic.WithPromptCaching(cfg)` | Turns on prompt caching. Off by default |
+| `anthropic.WithThinkingBlockBinding(mode)` | What the API does when a replayed history no longer matches its signed thinking: `"drop_block"` or `"error"` |
 
 ## Models
 
-| Model | Context | Max Output | Input Price | Output Price |
-|-------|---------|-----------|-------------|-------------|
-| `claude-sonnet-4-5-20250514` | 200K | 8,192 | $3.00/M | $15.00/M |
-| `claude-opus-4-5-20250630` | 200K | 8,192 | $15.00/M | $75.00/M |
-| `claude-3-5-haiku-20241022` | 200K | 8,192 | $0.80/M | $4.00/M |
-| `claude-3-5-sonnet-20241022` | 200K | 8,192 | $3.00/M | $15.00/M |
+Prices are USD per million tokens, read from Anthropic's pricing page on 2026-10-24. Every model takes text and image input, tools, JSON output and thinking.
+
+| Model | Context | Max output | Input | Output | 5m cache write | 1h cache write | Cache read |
+|-------|---------|------------|-------|--------|----------------|----------------|------------|
+| `claude-opus-5-5` | 1M | 128K | $4.00 | $20.00 | $5.00 | $8.00 | $0.20 |
+| `claude-sonnet-5-5` | 1M | 128K | $2.00 | $10.00 | $2.50 | $4.00 | $0.10 |
+| `claude-haiku-5-5` | 1M | 128K | $0.10 | $0.50 | $0.125 | $0.20 | $0.01 |
+| `claude-haiku-5-5`, prompts above 100K | | | $0.50 | $2.50 | $0.625 | $1.00 | $0.05 |
+| `claude-fable-5-1` | 1M | 128K | $10.00 | $50.00 | $12.50 | $20.00 | $0.25 |
+| `claude-fable-5` | 1M | 128K | $10.00 | $50.00 | $12.50 | $20.00 | $1.00 |
+| `claude-opus-5` | 1M | 128K | $5.00 | $25.00 | $6.25 | $10.00 | $0.50 |
+| `claude-sonnet-5` | 1M | 128K | $2.00 | $10.00 | $2.50 | $4.00 | $0.20 |
+| `claude-opus-4-8` | 1M | 128K | $5.00 | $25.00 | $6.25 | $10.00 | $0.50 |
+| `claude-opus-4-7` | 1M | 128K | $5.00 | $25.00 | $6.25 | $10.00 | $0.50 |
+| `claude-opus-4-6` | 1M | 128K | $5.00 | $25.00 | $6.25 | $10.00 | $0.50 |
+| `claude-sonnet-4-6` | 1M | 128K | $3.00 | $15.00 | $3.75 | $6.00 | $0.30 |
+| `claude-haiku-4-5`, `claude-haiku-4-5-20251001` | 200K | 64K | $1.00 | $5.00 | $1.25 | $2.00 | $0.10 |
+| `claude-opus-4-5`, `claude-opus-4-5-20251101` | 200K | 64K | $5.00 | $25.00 | $6.25 | $10.00 | $0.50 |
+| `claude-sonnet-4-5`, `claude-sonnet-4-5-20250929` | 200K | 64K | $3.00 | $15.00 | $3.75 | $6.00 | $0.30 |
+
+`claude-sonnet-4-5` is deprecated and retires on 2026-11-30. A Haiku 5.5 request whose prompt, cache tokens included, runs past 100,000 tokens is priced entirely at the second row (see [Pricing](/docs/core/pricing#long-context-prices)).
+
+An id that isn't in the table still goes through. It records an unknown cost unless you give it a price with `WithPriceOverrides`, and it gets the defaults described below for unlisted models.
+
+Usage maps Anthropic's counts onto the [token convention](/docs/core/pricing#the-token-convention): `PromptTokens` is `input_tokens` plus the cache reads and writes, and the 1-hour writes land in `CacheWriteLongTokens`.
+
+## What each model accepts
+
+Claude models differ in what they take. The provider knows the table below and fixes the request before it's sent, so you don't have to.
+
+| Model | Thinking when you turn it off | Temperature and top_p | Forced tool choice | Effort levels |
+|-------|-------------------------------|-----------------------|--------------------|---------------|
+| `claude-opus-5-5`, `claude-fable-5-1` | Always on; no field is sent | Dropped | Refused | low to max, with xhigh |
+| `claude-fable-5` | Always on; no field is sent | Dropped | Yes | low to max, with xhigh |
+| `claude-sonnet-5-5` | `between_tools` | Dropped | Refused | low to max, with xhigh |
+| `claude-opus-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-sonnet-5`, `claude-haiku-5-5` | `disabled` | Dropped | Yes | low to max, with xhigh |
+| `claude-opus-4-6`, `claude-sonnet-4-6` | `disabled` | Kept | Yes | low, medium, high, max |
+| `claude-opus-4-5` | Budget thinking, off | Kept | Yes | low, medium, high |
+| `claude-sonnet-4-5`, `claude-haiku-4-5` | Budget thinking, off | Kept | Yes | None |
+
+Temperature and top_p are dropped without an error on models that reject them. With `WithAPIVersion(anthropic.APIVersion20261021)` they are dropped on every model, because that API version rejects them everywhere.
+
+### Default max_tokens
+
+Anthropic requires `max_tokens`. When you leave `MaxTokens` at zero, the provider picks one:
+
+| Request | Default |
+|---------|---------|
+| `Complete` on a listed model | `min(16000, max output)` |
+| `CompleteStream` on a listed model | `min(64000, max output)` |
+| Any call on an unlisted model | 8192 |
+
+The non-streamed default stays low so a long answer finishes well inside the response-header timeout. Set `MaxTokens` yourself when you want more. With budget thinking, `max_tokens` has to be larger than the budget, so the provider raises it to the budget plus 4096 when it is not, capped at the model's max output.
+
+### Thinking
+
+`CompletionRequest.Thinking` maps onto each model's thinking field:
+
+```go
+req.Thinking = &provider.ThinkingConfig{
+    Enabled:         true,
+    IncludeThinking: true,   // ask for a summary of the thinking
+    Effort:          "high", // output_config.effort
+}
+```
+
+- A nil `Thinking` sends no thinking field.
+- On adaptive models, `Enabled` sends `{"type":"adaptive"}`. Off sends `{"type":"disabled"}`, or `{"type":"between_tools"}` on `claude-sonnet-5-5`, which rejects `disabled`.
+- Always-on models think whatever you send. Off sends no field, unless `IncludeThinking` is set.
+- `IncludeThinking` adds `"display":"summarized"` to adaptive thinking. Current models leave the thinking text empty without it.
+- Budget models (`claude-opus-4-5`, `claude-sonnet-4-5`, `claude-haiku-4-5`) get `{"type":"enabled","budget_tokens":N}` when `Enabled` is set, with N raised to at least 1024, the API's minimum. Off sends nothing.
+- An unlisted model gets budget thinking when `BudgetTokens` is above zero, and adaptive thinking otherwise.
+
+`Effort` goes to `output_config.effort`. A level the model does not take (see the table) fails with an error wrapping `provider.ErrNotSupported` before any request is sent. For an unlisted model it is passed through unchecked.
+
+## Replaying thinking across tool turns
+
+With thinking on, Claude signs its thinking blocks, and on the next turn the API checks that the earlier assistant turns still match what it signed. The unified `Message` fields cannot carry those blocks, so each reply also carries them in `Message.Native`, in Anthropic's own wire format:
+
+```go
+resp, err := gw.Engine().Complete(ctx, req)
+// ...
+history = append(history, resp.Choices[0].Message) // keep Native with it
+// run the tool calls, append the tool results, send history again
+```
+
+Store `Choices[0].Message` with its `Native` field and send it back unchanged. The provider then sends the stored content as it is, thinking blocks and signatures included. When you stream, the last chunk (`provider.EventMessageStop`) carries it in `Delta.Native`, and `provider.Accumulate` puts it on the message for you.
+
+Keep your history append-only. If you edit an assistant turn, so its text or tool calls no longer match `Native`, the provider rebuilds that turn from the unified fields without its thinking. Some models then reject the request, and with tool use and thinking on the API may refuse a tool call turn that lost its thinking. `WithThinkingBlockBinding` decides what the API does on a mismatch: `"drop_block"` drops the blocks that no longer match, `"error"` fails the request. It applies only to adaptive thinking and adds the `thinking-binding-controls-2026-08-01` beta header. Any other value is ignored.
+
+`Native` is never serialized (`json:"-"`), so it does not survive your own JSON storage unless you save it separately. The response and stream caches drop it, so a cached reply has none. An output guard that rewrites or blocks a reply drops it too, so redacted text never comes back through `Native`.
+
+## Tool choice
+
+`CompletionRequest.ToolChoice` takes OpenAI's shape (Anthropic's own and the typed `provider.ToolChoice` work too), and the provider maps it:
+
+| `ToolChoice` | Sent as |
+|--------------|---------|
+| `"auto"` | `{"type":"auto"}` |
+| `"none"` | `{"type":"none"}` |
+| `"required"` | `{"type":"any"}` |
+| `{"type":"function","function":{"name":"lookup"}}` | `{"type":"tool","name":"lookup"}` |
+
+A request with no tools sends no `tool_choice`. `"required"` or a named function on a model that refuses forced tool choice (`claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`) fails with `anthropic.ErrForcedToolChoice` before anything is sent. It wraps `provider.ErrNotSupported`. A `ToolChoice` the provider cannot parse also fails before anything is sent, with an error that wraps `provider.ErrNotSupported`. The gateway refuses all of these with 400 `invalid_request` and does not retry them.
+
+## Prompt caching
+
+```go
+anthropic.New(key, anthropic.WithPromptCaching(anthropic.CacheConfig{
+    TTL:      anthropic.CacheTTL1h, // or CacheTTL5m, the default
+    Messages: true,                 // also cache the conversation so far
+}))
+```
+
+With caching on, the provider puts a cache breakpoint on the system prompt and on the last tool definition. `Messages: true` also caches the conversation tail through the top-level automatic `cache_control`. Every breakpoint uses the same TTL, because the API rejects a longer TTL after a shorter one, and an empty or unknown TTL means five minutes. The provider never edits your messages, so replayed `Native` content stays exactly as it was. Cache reads and writes show up in the usage and are priced at their own rates.
+
+Caching is off by default. Then the system prompt goes out as a plain string and no `cache_control` is sent anywhere.
+
+## Timeouts
+
+`WithTimeout` bounds the wait for response headers, 10 minutes by default. Once headers arrive, a stream is not cut by it, however long it runs, so bound a whole call with the request context. A non-streamed call through the gateway is also bounded by `nexus.WithTimeout` (30 seconds by default).
+
+## Finish reasons
+
+| Anthropic `stop_reason` | `FinishReason` |
+|-------------------------|----------------|
+| `end_turn` | `stop` |
+| `max_tokens` | `length` |
+| `tool_use` | `tool_calls` |
+| `refusal` | `content_filter` |
+| `pause_turn` | `pause_turn` |
+
+## Per-tenant keys
+
+The provider applies a per-request credential, so one Anthropic provider can serve every tenant on its own key. A credential with a `BaseURL` must bring its own key: the configured key is never sent to a URL a resolver chose. See [Tenant Credentials](/docs/core/credentials).

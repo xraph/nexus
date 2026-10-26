@@ -6,7 +6,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/providers/anthropic"
@@ -220,7 +223,7 @@ func TestComplete_DefaultMaxTokens(t *testing.T) {
 
 	ctx := context.Background()
 	_, err := p.Complete(ctx, &provider.CompletionRequest{
-		Model: "claude-sonnet-4-5-20250514",
+		Model: "claude-sonnet-4-5",
 		Messages: []provider.Message{
 			{Role: "user", Content: "Hello"},
 		},
@@ -235,8 +238,9 @@ func TestComplete_DefaultMaxTokens(t *testing.T) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		t.Fatalf("failed to unmarshal request body: %v", err)
 	}
-	if maxTokens, ok := req["max_tokens"].(float64); !ok || int(maxTokens) != 4096 {
-		t.Errorf("default max_tokens = %v, want 4096", req["max_tokens"])
+	// Non-streamed default: min(16000, MaxOutput); Sonnet 4.5 allows 64000.
+	if maxTokens, ok := req["max_tokens"].(float64); !ok || int(maxTokens) != 16000 {
+		t.Errorf("default max_tokens = %v, want 16000", req["max_tokens"])
 	}
 }
 
@@ -295,7 +299,7 @@ func TestComplete_APIError(t *testing.T) {
 	}
 }
 
-func TestComplete_StopReasonMapping(t *testing.T) {
+func TestStopReasonsMap(t *testing.T) {
 	tests := []struct {
 		name       string
 		stopReason string
@@ -304,6 +308,8 @@ func TestComplete_StopReasonMapping(t *testing.T) {
 		{"end_turn", "end_turn", "stop"},
 		{"max_tokens", "max_tokens", "length"},
 		{"tool_use", "tool_use", "tool_calls"},
+		{"refusal", "refusal", "content_filter"},
+		{"pause_turn", "pause_turn", "pause_turn"},
 	}
 
 	for _, tt := range tests {
@@ -331,6 +337,72 @@ func TestComplete_StopReasonMapping(t *testing.T) {
 	}
 }
 
+func TestUsageReadsCacheTokens(t *testing.T) {
+	p, mock := newMockProvider(t)
+	resp := anthropicCompletionResp()
+	resp["usage"] = map[string]any{
+		"input_tokens":                100,
+		"cache_read_input_tokens":     600,
+		"cache_creation_input_tokens": 300,
+		"cache_creation": map[string]any{
+			"ephemeral_5m_input_tokens": 200,
+			"ephemeral_1h_input_tokens": 100,
+		},
+		"output_tokens": 50,
+	}
+	mock.Ctrl.SetCompletion(resp)
+
+	got, err := p.Complete(context.Background(), &provider.CompletionRequest{
+		Model:    "claude-opus-5-5",
+		Messages: []provider.Message{{Role: "user", Content: "Hello"}},
+	})
+	if err != nil {
+		t.Fatalf("Complete() error: %v", err)
+	}
+	want := provider.Usage{
+		PromptTokens:         1000,
+		CompletionTokens:     50,
+		CacheReadTokens:      600,
+		CacheWriteTokens:     300,
+		CacheWriteLongTokens: 100,
+		TotalTokens:          1050,
+	}
+	if got.Usage != want {
+		t.Errorf("Usage = %+v, want %+v", got.Usage, want)
+	}
+}
+
+func TestCompleteHonoursTheResponseHeaderTimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-release:
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(anthropicCompletionResp())
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+
+	p := anthropic.New("test-key", anthropic.WithBaseURL(srv.URL), anthropic.WithTimeout(50*time.Millisecond))
+
+	start := time.Now()
+	_, err := p.Complete(context.Background(), &provider.CompletionRequest{
+		Model:    "claude-opus-5-5",
+		Messages: []provider.Message{{Role: "user", Content: "Hello"}},
+	})
+	if err == nil {
+		t.Fatal("Complete() succeeded, want a response-header timeout")
+	}
+	if !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("err = %v, want it to mention a timeout", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("Complete() returned after %v, want within 1s", elapsed)
+	}
+}
+
 // --------------------------------------------------------------------
 // CompleteStream (mock)
 // --------------------------------------------------------------------
@@ -345,6 +417,12 @@ func TestCompleteStream(t *testing.T) {
 				"id":    "msg_stream1",
 				"model": "claude-sonnet-4-5-20250514",
 			},
+		}),
+		"",
+		testutil.AnthropicEventJSON("content_block_start", map[string]any{
+			"type":          "content_block_start",
+			"index":         0,
+			"content_block": map[string]any{"type": "text", "text": ""},
 		}),
 		"",
 		testutil.AnthropicEventJSON("content_block_delta", map[string]any{
@@ -436,9 +514,17 @@ func TestCompleteStream(t *testing.T) {
 		t.Errorf("text chunk[1].Delta.Content = %q, want %q", textChunks[1].Delta.Content, " world")
 	}
 
-	// Final chunk should carry the finish reason regardless of preceding frames.
-	if chunks[len(chunks)-1].FinishReason != "stop" {
-		t.Errorf("final chunk FinishReason = %q, want %q", chunks[len(chunks)-1].FinishReason, "stop")
+	// The reply ends with one message_stop frame carrying its content
+	// blocks; the message_delta frame before it carries the finish reason.
+	last := chunks[len(chunks)-1]
+	if last.Kind != provider.EventMessageStop || last.Delta.Native == nil {
+		t.Fatalf("final chunk = %+v, want an EventMessageStop chunk carrying Native", last)
+	}
+	if got := string(last.Delta.Native.Content); got != `[{"text":"Hello world","type":"text"}]` {
+		t.Errorf("final chunk Native.Content = %s", got)
+	}
+	if reason := chunks[len(chunks)-2].FinishReason; reason != "stop" {
+		t.Errorf("message_delta chunk FinishReason = %q, want %q", reason, "stop")
 	}
 
 	// Usage should be captured

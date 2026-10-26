@@ -55,9 +55,13 @@ type StreamCache interface {
 
 // StreamKey derives a deterministic cache key for a streaming request.
 // Adds a "stream:" prefix to the standard request key so streaming and
-// non-streaming caches don't collide if a single backend hosts both.
+// non-streaming caches don't collide if a single backend hosts both. Like
+// Key, it returns "" for a request that must not be cached.
 func StreamKey(req *provider.CompletionRequest) string {
 	base := Key(req)
+	if base == "" {
+		return ""
+	}
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "stream:%s", base)
 	return fmt.Sprintf("%x", h.Sum(nil))

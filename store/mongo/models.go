@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"fmt"
+	"maps"
 	"strconv"
 	"time"
 
@@ -202,6 +203,8 @@ type usageModel struct {
 	Cached        bool      `grove:"cached"            bson:"cached"`
 	StatusCode    int       `grove:"status_code"       bson:"status_code"`
 	CreatedAt     time.Time `grove:"created_at"        bson:"created_at"`
+	// Metadata is a subdocument; a document from before it existed has none.
+	Metadata map[string]string `grove:"metadata"          bson:"metadata"`
 }
 
 // decimalOf writes an exact amount as Decimal128, or null when unknown.
@@ -249,6 +252,8 @@ func usageToModel(rec *usage.Record) (*usageModel, error) {
 	if err != nil {
 		return nil, err
 	}
+	md := make(map[string]string, len(rec.Metadata))
+	maps.Copy(md, rec.Metadata)
 	return &usageModel{
 		ID:               rec.ID.String(),
 		TenantID:         conv.OptionalID(rec.TenantID),
@@ -268,6 +273,7 @@ func usageToModel(rec *usage.Record) (*usageModel, error) {
 		Cached:           rec.Cached,
 		StatusCode:       rec.StatusCode,
 		CreatedAt:        rec.CreatedAt.UTC(),
+		Metadata:         md,
 	}, nil
 }
 
@@ -303,6 +309,8 @@ func usageFromModel(m *usageModel) (*usage.Record, error) {
 	case status.CostUnknown():
 		cost = nil
 	}
+	md := make(map[string]string, len(m.Metadata))
+	maps.Copy(md, m.Metadata)
 	return &usage.Record{
 		ID:               uid,
 		TenantID:         tid,
@@ -322,5 +330,6 @@ func usageFromModel(m *usageModel) (*usage.Record, error) {
 		Cached:           m.Cached,
 		StatusCode:       m.StatusCode,
 		CreatedAt:        m.CreatedAt,
+		Metadata:         md,
 	}, nil
 }

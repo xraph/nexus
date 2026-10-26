@@ -8,7 +8,7 @@ description: Record lifecycle events for compliance and debugging with the audit
 ```go
 import "github.com/xraph/nexus/audit_hook"
 
-recorder := audit_hook.RecorderFunc(func(ctx context.Context, event audit_hook.AuditEvent) error {
+recorder := audit_hook.RecorderFunc(func(ctx context.Context, event *audit_hook.AuditEvent) error {
     log.Printf("audit: %s %s %s", event.Action, event.Resource, event.ResourceID)
     return nil
 })
@@ -18,7 +18,7 @@ gw := nexus.New(
 )
 ```
 
-`audit_hook.New(recorder, opts...)` takes any `audit_hook.Recorder` (a single `Record(ctx, event) error` method). `audit_hook.WithLogger(l)` gives it a go-utils logger for recorder errors.
+`audit_hook.New(recorder, opts...)` takes any `audit_hook.Recorder` (a single `Record(ctx, *AuditEvent) error` method, the same shape as chronicle's emitter). Each call gets its own `*AuditEvent`, so a recorder may keep or modify it. `audit_hook.WithLogger(l)` gives it a go-utils logger for recorder errors.
 
 ## Audit Events
 
@@ -31,6 +31,7 @@ type AuditEvent struct {
     Resource   Resource
     Category   Category
     ActorID    string // never set by audit_hook today
+    TenantID   string // set by the request, tenant, key and budget hooks
     ResourceID string
     Details    map[string]any
 }
@@ -67,4 +68,16 @@ audit_hook.New(recorder,
 
 ## Sending events to Chronicle
 
-Nothing wires `audit_hook` to Chronicle for you, in Forge or out of it. Write a `Recorder` that writes each `AuditEvent` to your Chronicle instance (or any other audit store) and pass it to `audit_hook.New`. In a Forge app, add it with `nexusext.WithGatewayOption(nexus.WithExtension(audit_hook.New(recorder)))`.
+Nothing wires `audit_hook` to Chronicle for you, in Forge or out of it. Write a `RecorderFunc` that maps each `*AuditEvent` onto a Chronicle call and pass it to `audit_hook.New`:
+
+```go
+recorder := audit_hook.RecorderFunc(func(ctx context.Context, ev *audit_hook.AuditEvent) error {
+    return chronicle.Info(ctx, string(ev.Action), string(ev.Resource), ev.ResourceID).
+        Category(string(ev.Category)).
+        TenantID(ev.TenantID).
+        Meta(ev.Details).
+        Record()
+})
+```
+
+`TenantID` is empty for events the gateway can't tie to a tenant, such as provider and stream events. In a Forge app, add the extension with `nexusext.WithGatewayOption(nexus.WithExtension(audit_hook.New(recorder)))`.
