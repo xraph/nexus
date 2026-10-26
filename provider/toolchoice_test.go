@@ -2,6 +2,8 @@ package provider_test
 
 import (
 	"encoding/json"
+	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/xraph/nexus/provider"
@@ -59,5 +61,31 @@ func TestParseToolChoice(t *testing.T) {
 				t.Fatalf("got (%+v, %v), want (%+v, %v)", got, ok, tt.want, tt.ok)
 			}
 		})
+	}
+}
+
+func TestParseToolChoiceErrorsAreNotSupported(t *testing.T) {
+	for _, in := range []any{"sometimes", 42, map[string]any{"type": "function"}, json.RawMessage(`{`)} {
+		if _, _, err := provider.ParseToolChoice(in); !errors.Is(err, provider.ErrNotSupported) {
+			t.Errorf("ParseToolChoice(%v) = %v, want an error wrapping ErrNotSupported", in, err)
+		}
+	}
+}
+
+func TestToolChoiceInOpenAIShape(t *testing.T) {
+	tests := []struct {
+		in   provider.ToolChoice
+		want any
+	}{
+		{provider.ToolChoice{Mode: provider.ToolChoiceAuto}, "auto"},
+		{provider.ToolChoice{Mode: provider.ToolChoiceNone}, "none"},
+		{provider.ToolChoice{Mode: provider.ToolChoiceRequired}, "required"},
+		{provider.ToolChoice{Mode: provider.ToolChoiceFunction, Function: "f"}, map[string]any{"type": "function", "function": map[string]any{"name": "f"}}},
+		{provider.ToolChoice{}, nil},
+	}
+	for _, tt := range tests {
+		if got := tt.in.OpenAI(); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%+v.OpenAI() = %#v, want %#v", tt.in, got, tt.want)
+		}
 	}
 }

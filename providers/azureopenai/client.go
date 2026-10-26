@@ -90,7 +90,10 @@ func (c *client) embeddingsURL() string {
 }
 
 func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
-	oaiReq := c.toOAIRequest(req)
+	oaiReq, err := c.toOAIRequest(req)
+	if err != nil {
+		return nil, err
+	}
 	oaiReq.Stream = false
 
 	body, err := json.Marshal(oaiReq)
@@ -126,7 +129,10 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 }
 
 func (c *client) completeStream(ctx context.Context, req *provider.CompletionRequest) (provider.Stream, error) {
-	oaiReq := c.toOAIRequest(req)
+	oaiReq, err := c.toOAIRequest(req)
+	if err != nil {
+		return nil, err
+	}
 	oaiReq.Stream = true
 
 	body, err := json.Marshal(oaiReq)
@@ -237,7 +243,18 @@ func (c *client) setHeaders(req *http.Request) {
 	req.Header.Set("api-key", c.apiKey)
 }
 
-func (c *client) toOAIRequest(req *provider.CompletionRequest) *oaiRequest {
+// toOAIRequest builds the chat request. The tool choice is sent in
+// OpenAI's shape whichever shape the caller used; one that cannot be read
+// fails before any request is sent.
+func (c *client) toOAIRequest(req *provider.CompletionRequest) (*oaiRequest, error) {
+	var toolChoice any
+	tc, ok, err := provider.ParseToolChoice(req.ToolChoice)
+	if err != nil {
+		return nil, fmt.Errorf("azureopenai: %w", err)
+	}
+	if ok {
+		toolChoice = tc.OpenAI()
+	}
 	messages := make([]oaiMessage, len(req.Messages))
 	for i, m := range req.Messages {
 		messages[i] = oaiMessage{
@@ -265,9 +282,9 @@ func (c *client) toOAIRequest(req *provider.CompletionRequest) *oaiRequest {
 		TopP:           req.TopP,
 		Stop:           req.Stop,
 		Tools:          req.Tools,
-		ToolChoice:     req.ToolChoice,
+		ToolChoice:     toolChoice,
 		ResponseFormat: req.ResponseFormat,
-	}
+	}, nil
 }
 
 func (c *client) fromOAIResponse(resp *oaiResponse, elapsed time.Duration) *provider.CompletionResponse {

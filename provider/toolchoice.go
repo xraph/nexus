@@ -29,8 +29,32 @@ type ToolChoice struct {
 // OpenAI's shape ("auto", "none", "required", or
 // {"type":"function","function":{"name":...}}) and, for callers that already
 // speak Anthropic, {"type":"auto"|"any"|"none"} and {"type":"tool","name":...}.
-// The bare string "any" is read as required. ok is false for nil.
+// The bare string "any" is read as required. ok is false for nil. A value
+// it cannot read fails with an error that wraps ErrNotSupported, so the
+// gateway refuses the request as the caller's mistake and does not retry it.
 func ParseToolChoice(v any) (tc ToolChoice, ok bool, err error) {
+	tc, ok, err = parseToolChoice(v)
+	if err != nil {
+		return ToolChoice{}, false, fmt.Errorf("%w: %w", err, ErrNotSupported)
+	}
+	return tc, ok, nil
+}
+
+// OpenAI returns tc in OpenAI's tool_choice shape: the string "auto",
+// "none" or "required", or {"type":"function","function":{"name":...}}.
+// It returns nil for a mode it does not know, such as the zero ToolChoice.
+func (tc ToolChoice) OpenAI() any {
+	switch tc.Mode {
+	case ToolChoiceAuto, ToolChoiceNone, ToolChoiceRequired:
+		return string(tc.Mode)
+	case ToolChoiceFunction:
+		return map[string]any{"type": "function", "function": map[string]any{"name": tc.Function}}
+	default:
+		return nil
+	}
+}
+
+func parseToolChoice(v any) (ToolChoice, bool, error) {
 	switch x := v.(type) {
 	case nil:
 		return ToolChoice{}, false, nil

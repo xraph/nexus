@@ -212,7 +212,10 @@ func (u openAIUsage) toUsage() provider.Usage {
 
 func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
 	_, base, _ := c.effective(ctx)
-	oaiReq := c.toOpenAIRequest(req, c.sendsMaxCompletionTokens(base))
+	oaiReq, err := c.toOpenAIRequest(req, c.sendsMaxCompletionTokens(base))
+	if err != nil {
+		return nil, err
+	}
 	oaiReq.Stream = false
 
 	body, err := json.Marshal(oaiReq)
@@ -248,7 +251,10 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 
 func (c *client) completeStream(ctx context.Context, req *provider.CompletionRequest) (provider.Stream, error) {
 	_, base, _ := c.effective(ctx)
-	oaiReq := c.toOpenAIRequest(req, c.sendsMaxCompletionTokens(base))
+	oaiReq, err := c.toOpenAIRequest(req, c.sendsMaxCompletionTokens(base))
+	if err != nil {
+		return nil, err
+	}
 	oaiReq.Stream = true
 	// Ask OpenAI to emit a final chunk carrying token usage. Without this,
 	// streaming requests silently bypass billing.
@@ -359,8 +365,13 @@ func (c *client) ping(ctx context.Context) error {
 // toOpenAIRequest builds the chat request. completionTokens sends the
 // output cap as max_completion_tokens instead of max_tokens. A model that
 // rejects sampling parameters (traits) is sent neither temperature nor
-// top_p.
-func (c *client) toOpenAIRequest(req *provider.CompletionRequest, completionTokens bool) *openAIRequest {
+// top_p. The tool choice is sent in OpenAI's shape whichever shape the
+// caller used; one that cannot be read fails before any request is sent.
+func (c *client) toOpenAIRequest(req *provider.CompletionRequest, completionTokens bool) (*openAIRequest, error) {
+	toolChoice, err := openAIToolChoice(req.ToolChoice)
+	if err != nil {
+		return nil, err
+	}
 	messages := make([]openAIMessage, len(req.Messages))
 	for i, m := range req.Messages {
 		messages[i] = openAIMessage{
@@ -387,7 +398,7 @@ func (c *client) toOpenAIRequest(req *provider.CompletionRequest, completionToke
 		TopP:           req.TopP,
 		Stop:           req.Stop,
 		Tools:          req.Tools,
-		ToolChoice:     req.ToolChoice,
+		ToolChoice:     toolChoice,
 		ResponseFormat: req.ResponseFormat,
 	}
 	if completionTokens {
@@ -398,7 +409,21 @@ func (c *client) toOpenAIRequest(req *provider.CompletionRequest, completionToke
 	if t, _ := modelTraitsFor(req.Model); t.reasoning {
 		out.Temperature, out.TopP = nil, nil
 	}
-	return out
+	return out, nil
+}
+
+// openAIToolChoice reads a CompletionRequest.ToolChoice in any shape
+// provider.ParseToolChoice accepts (OpenAI's, Anthropic's, the typed
+// provider.ToolChoice) and returns it in OpenAI's, or nil for none.
+func openAIToolChoice(v any) (any, error) {
+	tc, ok, err := provider.ParseToolChoice(v)
+	if err != nil {
+		return nil, fmt.Errorf("openai: %w", err)
+	}
+	if !ok {
+		return nil, nil
+	}
+	return tc.OpenAI(), nil
 }
 
 func (c *client) fromOpenAIResponse(resp *openAIResponse, elapsed time.Duration) *provider.CompletionResponse {
