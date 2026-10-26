@@ -142,8 +142,11 @@ func (m *CacheMiddleware) Process(ctx context.Context, req *pipeline.Request, ne
 		return next(ctx)
 	}
 
-	// Generate cache key
+	// Generate cache key. A request that cannot be keyed is not cached.
 	key := cache.Key(keyReq)
+	if key == "" {
+		return next(ctx)
+	}
 
 	// Check cache
 	// The store may hand every caller the same object, so a hit gets its own
@@ -227,6 +230,9 @@ func (m *CacheMiddleware) handleStream(ctx context.Context, req *pipeline.Reques
 	}
 
 	key := cache.StreamKey(keyReq)
+	if key == "" {
+		return next(ctx)
+	}
 
 	// Cache hit: replay stored frames as a synthesized stream.
 	var frames []cache.StreamFrame

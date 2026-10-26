@@ -17,7 +17,7 @@ Things that change for you:
 - When a request names a provider and the alias has several targets, only targets for that provider (or with no provider) are picked.
 - Embeddings follow the same idea: `EmbeddingRequest.Provider` (new, with a `"provider"` JSON tag), then the embeddings providers that list the model, then the first one that can embed. A named provider that cannot embed is refused with 400 `invalid_request`, and `errors.Is(err, provider.ErrNotSupported)` still matches.
 - A price override makes its provider count as listing the model, so routing follows your overrides.
-- Cache keys now include the requested provider. Entries cached before the upgrade miss once and expire by their TTL.
+- Cache keys now include the requested provider, the system prompt, each message's name, tool calls and tool call id, the tool choice, the thinking settings and the response format. Before, requests that differed only in those fields shared an entry. Entries cached before the upgrade miss once and expire by their TTL.
 
 If you relied on a strategy to spread one model across providers that all list it, it still does: the strategy picks among the providers that list the model.
 

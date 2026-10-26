@@ -49,7 +49,7 @@ There's no TTL argument: each store applies its own. `Get` returns `nil, nil` on
 
 ## Cache Keys
 
-`cache.Key(req)` hashes the tenant ID, the model, every message's role and content, and the temperature, `max_tokens`, `top_p`, stop sequences and tools when they're set. The tenant is part of the key, so one tenant is never served another's cached completion. If the request and the context name different tenants, the request skips the cache entirely.
+`cache.Key(req)` hashes the tenant ID, the named provider, the model, the system prompt, every message's role, content, name, tool calls and tool call id, and the temperature, `max_tokens`, `top_p`, stop sequences, tools, tool choice, thinking settings (effort included) and response format when they're set. Two agent turns that differ only in a tool call's id or arguments get different keys. A tool choice is keyed by what it means, so `"required"` and Anthropic's `{"type":"any"}` share an entry. A request with a field that cannot be encoded as JSON gets no key and skips the cache. The tenant is part of the key, so one tenant is never served another's cached completion. If the request and the context name different tenants, the request skips the cache entirely.
 
 A hit comes back with `Cached: true` on the response. The cache stores a copy, so an output guard's redaction or an output transform never changes the stored entry.
 
