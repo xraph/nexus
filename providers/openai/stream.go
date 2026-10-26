@@ -128,11 +128,7 @@ func (s *openAIStream) Next(ctx context.Context) (*provider.StreamChunk, error) 
 				} `json:"delta"`
 				FinishReason *string `json:"finish_reason"`
 			} `json:"choices"`
-			Usage *struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-				TotalTokens      int `json:"total_tokens"`
-			} `json:"usage,omitempty"`
+			Usage *openAIUsage `json:"usage,omitempty"`
 		}
 
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
@@ -140,11 +136,8 @@ func (s *openAIStream) Next(ctx context.Context) (*provider.StreamChunk, error) 
 		}
 
 		if chunk.Usage != nil {
-			s.usage = &provider.Usage{
-				PromptTokens:     chunk.Usage.PromptTokens,
-				CompletionTokens: chunk.Usage.CompletionTokens,
-				TotalTokens:      chunk.Usage.TotalTokens,
-			}
+			u := chunk.Usage.toUsage()
+			s.usage = &u
 			// OpenAI emits a final `usage` chunk with empty choices when
 			// stream_options.include_usage=true. Surface it as EventUsage
 			// so middleware (billing, accumulators) can capture it without

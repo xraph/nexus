@@ -14,11 +14,18 @@ import (
 	"github.com/xraph/nexus/provider"
 )
 
+// officialBaseURL is OpenAI's own API endpoint, the provider's default.
+const officialBaseURL = "https://api.openai.com/v1"
+
 type client struct {
 	apiKey  string
 	baseURL string
 	orgID   string
 	http    *http.Client
+
+	// maxCompletionTokens sends max_completion_tokens on any base URL
+	// (WithMaxCompletionTokens). OpenAI's own endpoint always gets it.
+	maxCompletionTokens bool
 }
 
 func newClient(apiKey, baseURL, orgID string, timeout time.Duration) *client {
@@ -81,6 +88,19 @@ func (c *client) effective(ctx context.Context) (key, base, org string) {
 	}
 }
 
+// isOfficial reports whether base is OpenAI's own endpoint.
+func isOfficial(base string) bool {
+	return strings.TrimRight(base, "/") == officialBaseURL
+}
+
+// sendsMaxCompletionTokens reports whether a request sent to base caps its
+// output with max_completion_tokens. OpenAI's own endpoint wants it (its
+// reasoning models reject max_tokens); many compatible servers (Ollama,
+// vLLM, LM Studio) still expect max_tokens, so elsewhere it is opt-in.
+func (c *client) sendsMaxCompletionTokens(base string) bool {
+	return c.maxCompletionTokens || isOfficial(base)
+}
+
 // newRequest builds a request for path on the effective base URL, carrying
 // the effective key, and returns that key so an error can leave it out. It
 // fails before any I/O when there is no base URL.
@@ -121,17 +141,18 @@ func apiError(status int, body []byte, key string) error {
 
 // openAIRequest is the OpenAI chat completion request format.
 type openAIRequest struct {
-	Model          string                   `json:"model"`
-	Messages       []openAIMessage          `json:"messages"`
-	MaxTokens      int                      `json:"max_tokens,omitempty"`
-	Temperature    *float64                 `json:"temperature,omitempty"`
-	TopP           *float64                 `json:"top_p,omitempty"`
-	Stop           []string                 `json:"stop,omitempty"`
-	Stream         bool                     `json:"stream,omitempty"`
-	StreamOptions  *openAIStreamOptions     `json:"stream_options,omitempty"`
-	Tools          []provider.Tool          `json:"tools,omitempty"`
-	ToolChoice     any                      `json:"tool_choice,omitempty"`
-	ResponseFormat *provider.ResponseFormat `json:"response_format,omitempty"`
+	Model               string                   `json:"model"`
+	Messages            []openAIMessage          `json:"messages"`
+	MaxTokens           int                      `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int                      `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64                 `json:"temperature,omitempty"`
+	TopP                *float64                 `json:"top_p,omitempty"`
+	Stop                []string                 `json:"stop,omitempty"`
+	Stream              bool                     `json:"stream,omitempty"`
+	StreamOptions       *openAIStreamOptions     `json:"stream_options,omitempty"`
+	Tools               []provider.Tool          `json:"tools,omitempty"`
+	ToolChoice          any                      `json:"tool_choice,omitempty"`
+	ResponseFormat      *provider.ResponseFormat `json:"response_format,omitempty"`
 }
 
 type openAIStreamOptions struct {
@@ -159,15 +180,39 @@ type openAIResponse struct {
 		Message      openAIMessage `json:"message"`
 		FinishReason string        `json:"finish_reason"`
 	} `json:"choices"`
-	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	} `json:"usage"`
+	Usage openAIUsage `json:"usage"`
+}
+
+// openAIUsage is a chat completion's token usage. prompt_tokens counts the
+// cached and cache-written tokens too.
+type openAIUsage struct {
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	TotalTokens         int `json:"total_tokens"`
+	PromptTokensDetails *struct {
+		CachedTokens     int `json:"cached_tokens"`
+		CacheWriteTokens int `json:"cache_write_tokens"`
+	} `json:"prompt_tokens_details,omitempty"`
+}
+
+// toUsage maps OpenAI's usage, cache reads and writes included, onto
+// provider.Usage. The cache counts are parts of PromptTokens there too.
+func (u openAIUsage) toUsage() provider.Usage {
+	out := provider.Usage{
+		PromptTokens:     u.PromptTokens,
+		CompletionTokens: u.CompletionTokens,
+		TotalTokens:      u.TotalTokens,
+	}
+	if d := u.PromptTokensDetails; d != nil {
+		out.CacheReadTokens = d.CachedTokens
+		out.CacheWriteTokens = d.CacheWriteTokens
+	}
+	return out
 }
 
 func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error) {
-	oaiReq := c.toOpenAIRequest(req)
+	_, base, _ := c.effective(ctx)
+	oaiReq := c.toOpenAIRequest(req, c.sendsMaxCompletionTokens(base))
 	oaiReq.Stream = false
 
 	body, err := json.Marshal(oaiReq)
@@ -202,7 +247,8 @@ func (c *client) complete(ctx context.Context, req *provider.CompletionRequest) 
 }
 
 func (c *client) completeStream(ctx context.Context, req *provider.CompletionRequest) (provider.Stream, error) {
-	oaiReq := c.toOpenAIRequest(req)
+	_, base, _ := c.effective(ctx)
+	oaiReq := c.toOpenAIRequest(req, c.sendsMaxCompletionTokens(base))
 	oaiReq.Stream = true
 	// Ask OpenAI to emit a final chunk carrying token usage. Without this,
 	// streaming requests silently bypass billing.
@@ -236,6 +282,9 @@ func (c *client) embed(ctx context.Context, req *provider.EmbeddingRequest) (*pr
 	payload := map[string]any{
 		"model": req.Model,
 		"input": req.Input,
+	}
+	if req.Dimensions > 0 {
+		payload["dimensions"] = req.Dimensions
 	}
 
 	body, err := json.Marshal(payload)
@@ -307,7 +356,11 @@ func (c *client) ping(ctx context.Context) error {
 	return nil
 }
 
-func (c *client) toOpenAIRequest(req *provider.CompletionRequest) *openAIRequest {
+// toOpenAIRequest builds the chat request. completionTokens sends the
+// output cap as max_completion_tokens instead of max_tokens. A model that
+// rejects sampling parameters (traits) is sent neither temperature nor
+// top_p.
+func (c *client) toOpenAIRequest(req *provider.CompletionRequest, completionTokens bool) *openAIRequest {
 	messages := make([]openAIMessage, len(req.Messages))
 	for i, m := range req.Messages {
 		messages[i] = openAIMessage{
@@ -327,10 +380,9 @@ func (c *client) toOpenAIRequest(req *provider.CompletionRequest) *openAIRequest
 		}}, messages...)
 	}
 
-	return &openAIRequest{
+	out := &openAIRequest{
 		Model:          req.Model,
 		Messages:       messages,
-		MaxTokens:      req.MaxTokens,
 		Temperature:    req.Temperature,
 		TopP:           req.TopP,
 		Stop:           req.Stop,
@@ -338,6 +390,15 @@ func (c *client) toOpenAIRequest(req *provider.CompletionRequest) *openAIRequest
 		ToolChoice:     req.ToolChoice,
 		ResponseFormat: req.ResponseFormat,
 	}
+	if completionTokens {
+		out.MaxCompletionTokens = req.MaxTokens
+	} else {
+		out.MaxTokens = req.MaxTokens
+	}
+	if t, _ := modelTraitsFor(req.Model); t.reasoning {
+		out.Temperature, out.TopP = nil, nil
+	}
+	return out
 }
 
 func (c *client) fromOpenAIResponse(resp *openAIResponse, elapsed time.Duration) *provider.CompletionResponse {
@@ -379,12 +440,8 @@ func (c *client) fromOpenAIResponse(resp *openAIResponse, elapsed time.Duration)
 		Model:    resp.Model,
 		Created:  time.Unix(resp.Created, 0),
 		Choices:  choices,
-		Usage: provider.Usage{
-			PromptTokens:     resp.Usage.PromptTokens,
-			CompletionTokens: resp.Usage.CompletionTokens,
-			TotalTokens:      resp.Usage.TotalTokens,
-		},
-		Latency: elapsed,
+		Usage:    resp.Usage.toUsage(),
+		Latency:  elapsed,
 	}
 }
 

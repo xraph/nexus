@@ -21,6 +21,19 @@ import (
 // name; match it with errors.Is.
 var ErrUnknownProvider error = &pipeline.RefusalError{Code: pipeline.CodeInvalidRequest, Status: 400, Message: "unknown provider"}
 
+// ErrDimensionsUnsupported refuses an embedding that asks for a width
+// (EmbeddingRequest.Dimensions) the routed provider cannot return: it does
+// not implement provider.DimensionsAware, or it answers false for the model.
+// The provider is never called and the refusal is not retried. It wraps
+// provider.ErrNotSupported and is wrapped with the provider and model;
+// match it with errors.Is.
+var ErrDimensionsUnsupported error = &pipeline.RefusalError{
+	Code:    pipeline.CodeInvalidRequest,
+	Status:  400,
+	Message: "embedding dimensions not supported",
+	Cause:   provider.ErrNotSupported,
+}
+
 // ProviderCallMiddleware is the core middleware that routes to a provider and
 // executes the request. It is the pipeline's terminal stage and always runs last.
 //
@@ -32,7 +45,10 @@ var ErrUnknownProvider error = &pipeline.RefusalError{Code: pipeline.CodeInvalid
 // router choosing among them), else to the first embeddings provider. A named
 // provider is never swapped for another: one that is not registered is
 // refused with ErrUnknownProvider, and one that cannot embed is refused as an
-// invalid request wrapping provider.ErrNotSupported.
+// invalid request wrapping provider.ErrNotSupported. An embedding that asks
+// for Dimensions is refused with ErrDimensionsUnsupported when the chosen
+// provider cannot honour them, and fails when any returned vector has
+// another length.
 //
 // Every call to a provider gets a client span that follows the OpenTelemetry
 // GenAI conventions: "chat {model}" or "embeddings {model}", with
@@ -172,6 +188,9 @@ func (m *ProviderCallMiddleware) handleEmbedding(ctx context.Context, req *pipel
 	if err != nil {
 		return nil, err
 	}
+	if refused := checkDimensions(p, req.Embedding); refused != nil {
+		return nil, refused
+	}
 	if refused := m.checkPriced(ctx, p, req.Embedding.Model, true); refused != nil {
 		return nil, refused
 	}
@@ -185,7 +204,15 @@ func (m *ProviderCallMiddleware) handleEmbedding(ctx context.Context, req *pipel
 	ctx, call := m.startGenAICall(ctx, telemetry.OperationEmbeddings, p, req.Type, req.Embedding.Model)
 	defer call.endIfPanicking()
 	resp, err := p.Embed(ctx, req.Embedding)
+	if err == nil {
+		err = checkWidth(p.Name(), req.Embedding, resp)
+	}
 	call.end(ctx, embeddingResult(resp), err)
+	var wrongWidth *dimensionsMismatchError
+	if errors.As(err, &wrongWidth) {
+		// Another attempt would be charged and come back as wide.
+		return nil, pipeline.Permanent(err)
+	}
 	if err != nil {
 		return nil, permanentIfMisconfigured(fmt.Errorf("nexus: provider %s embed: %w", p.Name(), err))
 	}
@@ -291,4 +318,52 @@ func permanentIfMisconfigured(err error) error {
 		return pipeline.Permanent(err)
 	}
 	return err
+}
+
+// checkDimensions refuses an embedding that asks for a width p cannot
+// return for its model.
+func checkDimensions(p provider.Provider, emb *provider.EmbeddingRequest) error {
+	if emb.Dimensions <= 0 {
+		return nil
+	}
+	if da, ok := p.(provider.DimensionsAware); ok && da.SupportsDimensions(emb.Model) {
+		return nil
+	}
+	return pipeline.Permanent(fmt.Errorf("%w: provider %s cannot return %d dimensions for model %q",
+		ErrDimensionsUnsupported, p.Name(), emb.Dimensions, emb.Model))
+}
+
+// checkWidth fails a response whose vectors are not the width the request
+// asked for. A compatible server that ignores the field would otherwise
+// hand a fixed-width vector column the wrong size.
+func checkWidth(providerName string, emb *provider.EmbeddingRequest, resp *provider.EmbeddingResponse) error {
+	if emb.Dimensions <= 0 || resp == nil {
+		return nil
+	}
+	for _, v := range resp.Embeddings {
+		if len(v) != emb.Dimensions {
+			return &dimensionsMismatchError{
+				provider: providerName,
+				model:    resp.Model,
+				got:      len(v),
+				want:     emb.Dimensions,
+				usage:    resp.Usage,
+			}
+		}
+	}
+	return nil
+}
+
+// dimensionsMismatchError is an embedding the provider served, and charged
+// for, at the wrong width. It carries the response's usage so the usage
+// stage can still price the call.
+type dimensionsMismatchError struct {
+	provider  string
+	model     string
+	got, want int
+	usage     provider.Usage
+}
+
+func (e *dimensionsMismatchError) Error() string {
+	return fmt.Sprintf("nexus: provider %s returned %d dimensions, want %d", e.provider, e.got, e.want)
 }

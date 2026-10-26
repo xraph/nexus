@@ -89,6 +89,11 @@ func (p *Provider) Embed(ctx context.Context, req *provider.EmbeddingRequest) (*
 	return resp, nil
 }
 
+// SupportsDimensions reports true for every model: the request's
+// dimensions go to the endpoint as they are, and the gateway fails a
+// response whose vectors have another length (provider.DimensionsAware).
+func (p *Provider) SupportsDimensions(string) bool { return true }
+
 // Healthy returns true if the provider is reachable.
 func (p *Provider) Healthy(ctx context.Context) bool {
 	return p.inner.Healthy(ctx)
@@ -109,6 +114,13 @@ func WithTimeout(d time.Duration) Option {
 	return func(p *Provider) { p.innerOpts = append(p.innerOpts, openai.WithTimeout(d)) }
 }
 
+// WithMaxCompletionTokens sends the output cap as max_completion_tokens
+// instead of max_tokens, for a server that wants the newer field. Off by
+// default, since most OpenAI-compatible servers expect max_tokens.
+func WithMaxCompletionTokens(on bool) Option {
+	return func(p *Provider) { p.innerOpts = append(p.innerOpts, openai.WithMaxCompletionTokens(on)) }
+}
+
 // WithModels sets the model list.
 func WithModels(models []provider.Model) Option {
 	return func(p *Provider) { p.models = models }
@@ -118,6 +130,7 @@ func WithModels(models []provider.Model) Option {
 var (
 	_ provider.Provider        = (*Provider)(nil)
 	_ provider.CredentialAware = (*Provider)(nil)
+	_ provider.DimensionsAware = (*Provider)(nil)
 )
 
 // WrapTransport wraps the transport of the HTTP client the provider sends its

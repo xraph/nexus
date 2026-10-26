@@ -20,6 +20,8 @@ type Provider struct {
 	orgID   string
 	timeout time.Duration
 	client  *client
+
+	maxCompletionTokens bool
 }
 
 // New creates a new OpenAI provider. A request whose context carries a
@@ -28,13 +30,14 @@ type Provider struct {
 func New(apiKey string, opts ...Option) *Provider {
 	p := &Provider{
 		apiKey:  apiKey,
-		baseURL: "https://api.openai.com/v1",
+		baseURL: officialBaseURL,
 		timeout: defaultTimeout,
 	}
 	for _, opt := range opts {
 		opt(p)
 	}
 	p.client = newClient(p.apiKey, p.baseURL, p.orgID, p.timeout)
+	p.client.maxCompletionTokens = p.maxCompletionTokens
 	return p
 }
 
@@ -83,6 +86,20 @@ func (p *Provider) Embed(ctx context.Context, req *provider.EmbeddingRequest) (*
 	return p.client.embed(ctx, req)
 }
 
+// SupportsDimensions reports whether an embedding of model can ask for a
+// width (provider.DimensionsAware). On OpenAI's own endpoint only the
+// text-embedding-3 models can. On any other base URL the endpoint decides,
+// so it answers true and the gateway checks the length of what comes back.
+// It judges by the configured base URL; a tenant credential's base URL is
+// not known until the call.
+func (p *Provider) SupportsDimensions(model string) bool {
+	if !isOfficial(p.baseURL) {
+		return true
+	}
+	t, _ := modelTraitsFor(model)
+	return t.embeddingDimensions
+}
+
 // Healthy returns true if the provider is reachable.
 func (p *Provider) Healthy(ctx context.Context) bool {
 	return p.client.ping(ctx) == nil
@@ -108,6 +125,14 @@ func WithTimeout(d time.Duration) Option {
 	}
 }
 
+// WithMaxCompletionTokens sends the output cap as max_completion_tokens on
+// any base URL. OpenAI's own endpoint (https://api.openai.com/v1) always
+// gets max_completion_tokens; other base URLs get max_tokens, which most
+// OpenAI-compatible servers expect, unless this is on.
+func WithMaxCompletionTokens(on bool) Option {
+	return func(p *Provider) { p.maxCompletionTokens = on }
+}
+
 // WithOrgID sets the OpenAI organization ID.
 func WithOrgID(orgID string) Option {
 	return func(p *Provider) { p.orgID = orgID }
@@ -117,6 +142,7 @@ func WithOrgID(orgID string) Option {
 var (
 	_ provider.Provider        = (*Provider)(nil)
 	_ provider.CredentialAware = (*Provider)(nil)
+	_ provider.DimensionsAware = (*Provider)(nil)
 )
 
 // WrapTransport wraps the transport of the HTTP client the provider sends its

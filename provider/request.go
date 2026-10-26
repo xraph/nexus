@@ -124,6 +124,11 @@ type EmbeddingRequest struct {
 	Model    string   `json:"model"`
 	Provider string   `json:"provider,omitempty"` // force specific provider
 	Input    []string `json:"input"`
-	TenantID string   `json:"-"`
-	KeyID    string   `json:"-"`
+	// Dimensions asks for vectors of exactly this many numbers; 0 keeps the
+	// model's default. The gateway refuses it for a provider that cannot
+	// honour it (see DimensionsAware) and fails a response whose vectors
+	// have another length.
+	Dimensions int    `json:"dimensions,omitempty"`
+	TenantID   string `json:"-"`
+	KeyID      string `json:"-"`
 }

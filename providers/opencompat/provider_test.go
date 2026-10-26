@@ -518,3 +518,41 @@ func TestMultipleOptions(t *testing.T) {
 		t.Errorf("model ID = %q, want %q", gotModels[0].ID, "model-a")
 	}
 }
+
+func TestOpenCompatPassesDimensionsThrough(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	mock.Ctrl.SetEmbedding(json.RawMessage(testutil.DefaultEmbeddingResponse()))
+	p := opencompat.New("x", mock.Server.URL, "k")
+
+	if !p.SupportsDimensions("any-embed-model") {
+		t.Fatal("opencompat passes dimensions through to the endpoint, for any model")
+	}
+	if _, err := p.Embed(context.Background(), &provider.EmbeddingRequest{Model: "e", Input: []string{"hi"}, Dimensions: 256}); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(mock.Ctrl.GetLastBody(), &body); err != nil {
+		t.Fatalf("body: %v", err)
+	}
+	if body["dimensions"] != float64(256) {
+		t.Fatalf("dimensions = %v, want 256", body["dimensions"])
+	}
+	var _ provider.DimensionsAware = p
+}
+
+func TestOpenCompatCanOptIntoMaxCompletionTokens(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	p := opencompat.New("x", mock.Server.URL, "k", opencompat.WithMaxCompletionTokens(true))
+	if _, err := p.Complete(context.Background(), &provider.CompletionRequest{
+		Model: "m", MaxTokens: 50, Messages: []provider.Message{{Role: "user", Content: "hi"}},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(mock.Ctrl.GetLastBody(), &body); err != nil {
+		t.Fatalf("body: %v", err)
+	}
+	if body["max_completion_tokens"] != float64(50) || body["max_tokens"] != nil {
+		t.Fatalf("max_completion_tokens = %v, max_tokens = %v; want 50 and none", body["max_completion_tokens"], body["max_tokens"])
+	}
+}

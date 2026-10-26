@@ -215,6 +215,7 @@ func (m *UsageMiddleware) classify(ctx context.Context, rec *usage.Record, req *
 
 	var blocked *guard.BlockedError
 	var refused pipeline.Refusal
+	var wrongWidth *dimensionsMismatchError
 	switch {
 	case errors.As(err, &blocked):
 		rec.Outcome, rec.BlockedBy, rec.StatusCode = usage.OutcomeBlocked, blocked.Guard, 400
@@ -254,6 +255,11 @@ func (m *UsageMiddleware) classify(ctx context.Context, rec *usage.Record, req *
 		if errors.As(err, &re) && re.Unattributed {
 			rec.TenantID, rec.KeyID = id.TenantID{}, id.KeyID{}
 		}
+	case errors.As(err, &wrongWidth):
+		// The provider served and charged for vectors of the wrong width.
+		rec.Outcome, rec.StatusCode = usage.OutcomeError, 500
+		setTokens(rec, wrongWidth.usage)
+		m.price(ctx, rec, wrongWidth.usage, true, wrongWidth.model)
 	case err != nil:
 		rec.Outcome, rec.StatusCode = usage.OutcomeError, 500
 		if rec.Provider == "" {

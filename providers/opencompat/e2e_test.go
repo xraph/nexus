@@ -249,3 +249,38 @@ func TestOpenCompatChosenBaseURLGoesKeyless(t *testing.T) {
 		t.Fatal("the configured base URL was called")
 	}
 }
+
+// embeddingOfWidth is an OpenAI-shaped embedding answer with one vector of n
+// numbers, from a server that may ignore the requested dimensions.
+func embeddingOfWidth(n int) json.RawMessage {
+	b, err := json.Marshal(map[string]any{
+		"object": "list", "model": "local-embed",
+		"data":  []map[string]any{{"object": "embedding", "index": 0, "embedding": make([]float64, n)}},
+		"usage": map[string]any{"prompt_tokens": 3, "total_tokens": 3},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+func TestDimensionsLengthIsCheckedThroughTheGateway(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	gw := compatGateway(t, endpoint{APIKey: "t", BaseURL: mock.Server.URL})
+	embed := func() (*provider.EmbeddingResponse, error) {
+		return gw.Engine().Embed(context.Background(), &provider.EmbeddingRequest{
+			Provider: compatName, Model: "local-embed", Input: []string{"hello"}, Dimensions: 1024,
+		})
+	}
+
+	mock.Ctrl.SetEmbedding(embeddingOfWidth(768))
+	if _, err := embed(); err == nil || !strings.Contains(err.Error(), "768") || !strings.Contains(err.Error(), "1024") {
+		t.Fatalf("err = %v, want one naming 768 and 1024", err)
+	}
+
+	mock.Ctrl.SetEmbedding(embeddingOfWidth(1024))
+	resp, err := embed()
+	if err != nil || len(resp.Embeddings[0]) != 1024 {
+		t.Fatalf("Embed = %v, %v; want one 1024-long vector", resp, err)
+	}
+}
