@@ -104,7 +104,7 @@ The `usage_metadata` migration (version `20261024000001`, group `nexus`) adds th
 
 - `provider.Pricing` gains cache read, 5-minute and 1-hour cache write, and long-context prices. `provider.Usage` gains `CacheWriteLongTokens`. `PromptTokens` includes the cache tokens, and the cache counts are parts of it. If you wrote a provider, report usage that way.
 - `nexus.WithPriceOverrides` and `gw.PriceBook().SetOverrides` set or replace prices per provider and model. An override whose long-context tier has no input or output price is rejected with `model.ErrUnpricedLongContext`: `SetOverrides` returns it, and with `WithPriceOverrides` so does `Initialize`. A long-context tier with no price never makes a request unpriced; the request is charged at the base price.
-- An unpriced request is still served by default, but it is now counted in `nexus_usage_unpriced_total{provider}` and logged once per provider and model. `nexus.WithUnpricedPolicy(nexus.RefuseUnpriced)` refuses it with 400 `model_unpriced` before the call, so budgets cannot miss spend.
+- An unpriced request is still served by default, but it is now counted in `nexus_usage_unpriced_total{provider}` and logged once per provider and model. `nexus.WithUnpricedPolicy(nexus.RefuseUnpriced)` refuses it with 400 `model_unpriced` before the call, so budgets cannot miss spend on unpriced models. A priced call whose token counts never arrive (a stream that fails or is closed before its usage chunk, a mid-stream `StreamGuard` block, a call that fails after the provider started on it) still records an unknown cost that no budget counts; alert on `Unpriced > 0` in `gw.Usage().Series`.
 
 ### Tenant credentials
 

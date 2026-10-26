@@ -338,7 +338,10 @@ type UnpricedPolicy func(ctx context.Context, tenantID, providerName, modelID st
 // WithUnpricedPolicy sets the policy for requests to models with no price.
 // Without one every such request is served, counted in
 // nexus_usage_unpriced_total and warned about once per provider and model.
-// Pass RefuseUnpriced so per-tenant budgets cannot miss spend. The policy
+// Pass RefuseUnpriced so per-tenant budgets cannot miss spend on unpriced
+// models. A priced call whose token counts never arrive (a stream that fails
+// or is closed before its usage, a mid-stream StreamGuard block) still
+// records an unknown cost; usage Series counts those in Unpriced. The policy
 // is part of the default pipeline: one set with WithPipeline does not get it
 // (add middlewares.NewProviderCall(...).WithUnpricedPolicy yourself).
 func WithUnpricedPolicy(p UnpricedPolicy) Option {

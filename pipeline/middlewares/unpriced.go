@@ -25,7 +25,8 @@ var ErrModelUnpriced error = &pipeline.RefusalError{Code: pipeline.CodeModelUnpr
 type UnpricedPolicy func(ctx context.Context, tenantID, providerName, modelID string) error
 
 // RefuseUnpriced is the policy that refuses every request for a model with
-// no price, so no spend a budget cannot see reaches a provider.
+// no price, so no request for an unpriced model reaches a provider. A priced
+// call whose token counts never arrive still records an unknown cost.
 func RefuseUnpriced(_ context.Context, _, providerName, modelID string) error {
 	return fmt.Errorf("%w: %s at %s", ErrModelUnpriced, modelID, providerName)
 }

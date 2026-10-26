@@ -111,4 +111,6 @@ A `nil` error serves the request. A `*pipeline.RefusalError` refuses it at $0, a
 
 ## Budgets and unpriced usage
 
-A tenant's monthly budget adds up priced spend only. An unpriced request has no cost to add, so a tenant that only calls unpriced models never reaches its budget. With `RefuseUnpriced`, or a policy of your own that refuses, no unpriced request reaches a provider, and the budget cannot miss spend that way. See [Multi-Tenancy](/docs/concepts/multi-tenancy#quotas) for the other ways a budget can be exceeded.
+A tenant's monthly budget adds up priced spend only. An unpriced request has no cost to add, so a tenant that only calls unpriced models never reaches its budget. With `RefuseUnpriced`, or a policy of your own that refuses, no request for an unpriced model reaches a provider, and the budget cannot miss spend on unpriced models.
+
+A priced call can still record an unknown cost, because its token counts never arrived: a stream that fails or is closed before its usage chunk, a call that fails after the provider started on it, or a stream a `StreamGuard` blocks mid-stream. The policy cannot see these coming, and no budget counts them. `Series` counts them in `Unpriced`, so alert when it is above zero. See [Multi-Tenancy](/docs/concepts/multi-tenancy#quotas) for these and the other ways a budget can be exceeded.
