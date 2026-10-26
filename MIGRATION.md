@@ -2,7 +2,7 @@
 
 ## v1.9.0
 
-Upgrade the root module, `config` and every provider module you use to v1.9.0 together. This release needs Forge v1.13.0 and Grove v1.9.1 (with `pgdriver`, `sqlitedriver` and `mongodriver` v1.9.1) or later. Run your store's migration before the new version takes traffic, and read the Postgres note under [Usage metadata](#usage-metadata) first if your usage table is large.
+Upgrade the root module, `config` and every provider module you use to v1.9.0 together. This release needs Forge v1.13.1 and Grove v1.10.0 (with `pgdriver`, `sqlitedriver` and `mongodriver` v1.10.0) or later. Run your store's migration before the new version takes traffic, and read the Postgres note under [Usage metadata](#usage-metadata) first if your usage table is large.
 
 The one compile break is the audit recorder's signature. Everything else is new fields, options and errors, so your code builds as it is, and some of it behaves differently. That's what this section is about.
 
