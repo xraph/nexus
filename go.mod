@@ -8,7 +8,7 @@ require (
 	github.com/openai/openai-go v1.12.0
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/shopspring/decimal v1.4.0
-	github.com/xraph/forge v1.13.1
+	github.com/xraph/forge v1.13.2
 	github.com/xraph/go-utils v1.5.0
 	github.com/xraph/grove v1.10.0
 	github.com/xraph/grove/drivers/mongodriver v1.10.0
