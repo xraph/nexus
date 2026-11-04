@@ -18,7 +18,8 @@ func WithProvider(p provider.Provider) Option {
 	}
 }
 
-// WithDatabase sets the persistence store.
+// WithDatabase sets the persistence store. The host owns it: Stop does not
+// close it.
 func WithDatabase(s store.Store) Option {
 	return func(e *Extension) {
 		e.gatewayOpts = append(e.gatewayOpts, nexus.WithDatabase(s))

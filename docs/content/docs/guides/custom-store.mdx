@@ -18,7 +18,7 @@ type Store interface {
 }
 ```
 
-Pass yours with `nexus.WithDatabase(s)`. The gateway builds its tenant, key and usage services on top, and `gw.Shutdown` calls `Close`. It doesn't call `Migrate` for you (the Forge extension does, on start), so call it once at startup.
+Pass yours with `nexus.WithDatabase(s)`. The gateway builds its tenant, key and usage services on top, and `gw.Shutdown` leaves it open: the store is yours, so close it after `Shutdown` returns (the Forge extension leaves a store or `grove.DB` the host handed it open too). It doesn't call `Migrate` for you (the Forge extension does, on start), so call it once at startup.
 
 ## The sub-stores
 

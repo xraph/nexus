@@ -53,8 +53,13 @@ type Gateway struct {
 	config *Config
 	engine *Engine
 	store  store.Store
-	auth   auth.Provider //nolint:staticcheck // kept for the deprecated WithAuth until the v1 break
-	logger Logger
+
+	// ownsStore is true when Initialize built the store itself. A store
+	// handed in with WithDatabase belongs to the caller, and Shutdown leaves
+	// it open.
+	ownsStore bool
+	auth      auth.Provider //nolint:staticcheck // kept for the deprecated WithAuth until the v1 break
+	logger    Logger
 
 	// Core services (all interface-based)
 	providers provider.Registry
@@ -172,6 +177,7 @@ func (gw *Gateway) Initialize(_ context.Context) error {
 	// Set defaults for unset services
 	if gw.store == nil {
 		gw.store = store.NewMemory()
+		gw.ownsStore = true
 	}
 	if gw.logger == nil {
 		gw.logger = NewNoopLogger()
@@ -634,7 +640,9 @@ func (gw *Gateway) Health(_ context.Context) error {
 
 // Shutdown gracefully stops all services. It stops the usage stage taking
 // new records, waits until ctx is done for the streams still open and the
-// records still being stored, then closes the store. When ctx ends first,
+// records still being stored, then closes the store only if the gateway
+// built it. A store passed to [WithDatabase] belongs to the caller, who closes
+// it after Shutdown. When ctx ends first,
 // the records not yet stored are lost: Shutdown logs how many and returns
 // the flush error, joined with any error from closing the store.
 //
@@ -658,7 +666,7 @@ func (gw *Gateway) Shutdown(ctx context.Context) error {
 		}
 	}
 	var closeErr error
-	if gw.store != nil {
+	if gw.store != nil && gw.ownsStore {
 		closeErr = gw.store.Close()
 	}
 	return errors.Join(flushErr, closeErr)

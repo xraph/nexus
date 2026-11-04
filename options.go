@@ -35,7 +35,8 @@ func WithConfig(cfg *Config) Option {
 	return func(gw *Gateway) { gw.config = cfg }
 }
 
-// WithDatabase sets the persistence store.
+// WithDatabase sets the persistence store. The caller owns it: Shutdown
+// does not close it.
 func WithDatabase(s store.Store) Option {
 	return func(gw *Gateway) { gw.store = s }
 }
