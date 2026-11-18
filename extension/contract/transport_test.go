@@ -31,6 +31,10 @@ type wireRig struct {
 	csrf  string
 }
 
+// wireOperator is the signed-in user every wire command is sent as. The CSRF
+// token is minted for it, since forge binds a token to the caller.
+var wireOperator = &dashauth.UserInfo{Subject: "operator"}
+
 func newWireRig(t *testing.T) wireRig {
 	t.Helper()
 	gw := testGateway(t)
@@ -41,12 +45,14 @@ func newWireRig(t *testing.T) wireRig {
 		t.Fatal(err)
 	}
 	csrf := security.NewCSRFManager()
-	return wireRig{h: transport.NewHandlerWithCSRF(r, w, d, nil, csrf), store: s, gw: gw, csrf: csrf.GenerateToken()}
+	return wireRig{h: transport.NewHandlerWithCSRF(r, w, d, nil, csrf), store: s, gw: gw, csrf: csrf.GenerateTokenFor(transport.CSRFIdentity(wireOperator))}
 }
 func (r wireRig) call(intent, payload, token, idem string) *httptest.ResponseRecorder {
 	body, _ := json.Marshal(dash.Request{Envelope: "v1", Kind: dash.KindCommand, Contributor: "nexus", Intent: intent, IntentVersion: 1, Payload: json.RawMessage(payload), CSRF: token, IdempotencyKey: idem})
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/dashboard/v1", bytes.NewReader(body))
-	req = req.WithContext(dashauth.WithUser(req.Context(), &dashauth.UserInfo{Subject: "operator"}))
+	req.Header.Set("Content-Type", "application/json")
+
+	req = req.WithContext(dashauth.WithUser(req.Context(), wireOperator))
 	w := httptest.NewRecorder()
 	r.h.ServeHTTP(w, req)
 	return w
